@@ -46,7 +46,7 @@ func TestUnifiedPanelsRenderAndResize(t *testing.T) {
 	u, s := newTestUI(t)
 	u.App.ForceDraw()
 	text := snapshot(s)
-	for _, want := range []string{"Collections", "Request", "Results / live events", "READ ONLY", "http-get"} {
+	for _, want := range []string{"Collections", "Request", "Structured results", "READ ONLY", "http-get"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
 		}

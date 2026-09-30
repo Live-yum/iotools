@@ -43,6 +43,8 @@ jobs:
         env:
           CGO_ENABLED: '0'
         run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o dist/${{ matrix.binary }} ./cmd/iotools
+      - name: Verify standalone runtime dependencies
+        run: go run ./scripts/verifybinary dist/${{ matrix.binary }}
       - name: Binary smoke test
         shell: bash
         run: |

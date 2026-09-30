@@ -42,7 +42,12 @@ Redirect CLI output to a private file if you want an explicit capture.
 
 - Left: saved requests, with protocol and action labels
 - Right: selected request source; profile variables remain unexpanded
-- Bottom: response/event stream with timestamps; bounded to 128 recent events
+- Bottom: protocol-native views; F2 switches to timestamped raw events (128 recent)
+  - MQTT: hierarchical topic tree with latest values and retain/QoS
+  - OPC UA: node browser; Enter browses, r reads, s watches, Backspace returns
+  - Kafka: sorted topic/partition table; Enter consumes selected topic read-only
+  - Modbus: register table with pins, labels, u16 trend sparklines and snapshot deltas
+  - HTTP and other results: expandable structured response trees
 - Top: request filter; F6 selects an environment profile
 - Tab / Shift-Tab changes focus; Enter / F5 runs; F4 edits; F8 cancels; ? opens help
 - YAML editor: Ctrl-S validates and atomically saves, Esc discards changes
@@ -59,11 +64,11 @@ claim that every upstream feature is already reproduced.
   response status/headers/body, explicit redirects (not automatically followed)
 - Kafka: brokers/topics/partitions/offsets, groups and lag, create/delete/configure
   topics, produce and bounded consume, search, TLS/mTLS and SASL PLAIN/SCRAM,
-  Schema Registry and Kafka Connect REST operations
+  Schema Registry-backed Avro keys/values and Kafka Connect REST operations
 - MQTT: MQTT 3.1.1 publish/subscribe/read-one, multiple wildcard subscriptions,
   retained values, exact-topic retained cleanup, QoS 0/1/2, TLS/mTLS/auth
 - Modbus: TCP and serial RTU, unit selection, coils/discrete/input/holding reads,
-  register/coil writes, periodic samples, integer/hex/binary/float interpretations
+  register/coil writes, periodic samples, integer/hex/binary/float interpretations, register table/trends
 - OPC UA: endpoint discovery, bounded address-space browse with continuation,
   reads, typed writes/method calls, data-change subscriptions, anonymous/password/
   X509 identity, fail-closed encrypted endpoint trust verification
@@ -84,7 +89,7 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o iotools-arm64 ./cmd/iotools
 
 CI runs on native Windows x64, Linux ARM64 and Linux x64. Tests create isolated
 loopback protocol servers, exercise actual wire exchanges, verify TUI drawing and
-editor behavior, and reject insecure writes and TLS failures. The Kafka fixture is
+editor behavior, protocol-native result views, repeated-run/cancel/quit flows, and reject insecure writes and TLS failures. The Kafka fixture is
 `kfake`, a protocol-compatible simulator, not a production Kafka distribution.
 Physical serial devices and external industrial hardware are never touched.
 Test/build artifacts are tied to the exact source SHA. Check the run result rather
@@ -92,7 +97,7 @@ than assuming a workflow file alone proves platform support.
 
 ## Configuration and security
 
-[Configuration reference](docs/configuration.md) · [Security model](docs/security.md)
+[Configuration reference](docs/configuration.md) · [TUI workflows](docs/tui.md) · [Kafka/Avro](docs/kafka.md) · [Security model](docs/security.md)
 
 The repository is Apache-2.0. Upstream functional inspiration includes
 [MTUI](https://github.com/inowattio/MTUI), [ktea](https://github.com/jonas-grgt/ktea),

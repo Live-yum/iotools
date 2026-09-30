@@ -40,6 +40,18 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		}
 		return runHTTP(ctx, h, emit)
 	}
+	registry, err := newKafkaRegistry(r)
+	if err != nil {
+		return err
+	}
+	defer registry.close()
+	if r.Action == "produce" || r.Action == "consume" {
+		for _, part := range []string{"key", "value"} {
+			if _, err := kafkaFormat(r, part); err != nil {
+				return err
+			}
+		}
+	}
 	seeds := strings.Split(strings.TrimPrefix(r.Endpoint, "kafka://"), ",")
 	for _, s := range seeds {
 		if strings.TrimSpace(s) == "" {
@@ -174,7 +186,15 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		if topic == "" {
 			return fmt.Errorf("topic required")
 		}
-		record := &kgo.Record{Topic: topic, Key: []byte(r.String("key", "")), Value: []byte(r.String("value", ""))}
+		key, err := kafkaEncode(ctx, r, registry, "key")
+		if err != nil {
+			return err
+		}
+		value, err := kafkaEncode(ctx, r, registry, "value")
+		if err != nil {
+			return err
+		}
+		record := &kgo.Record{Topic: topic, Key: key, Value: value}
 		if len(record.Value) > maxBody {
 			return fmt.Errorf("record exceeds 4 MiB")
 		}
@@ -197,14 +217,19 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 			it := fetches.RecordIter()
 			for !it.Done() && n < limit {
 				v := it.Next()
-				if filter != "" && !strings.Contains(string(v.Value), filter) {
+				value, err := kafkaDecode(ctx, r, registry, "value", v.Value)
+				if err != nil {
+					return err
+				}
+				key, err := kafkaDecode(ctx, r, registry, "key", v.Key)
+				if err != nil {
+					return err
+				}
+				rendered, _ := json.Marshal(value)
+				if filter != "" && !strings.Contains(string(rendered), filter) && !strings.Contains(fmt.Sprint(value), filter) {
 					continue
 				}
-				var value any
-				if json.Unmarshal(v.Value, &value) != nil {
-					value = string(v.Value)
-				}
-				send(emit, "record", map[string]any{"topic": v.Topic, "partition": v.Partition, "offset": v.Offset, "key": string(v.Key), "value": value, "timestamp": v.Timestamp, "headers": v.Headers})
+				send(emit, "record", map[string]any{"topic": v.Topic, "partition": v.Partition, "offset": v.Offset, "key": key, "value": value, "timestamp": v.Timestamp, "headers": v.Headers})
 				n++
 			}
 		}

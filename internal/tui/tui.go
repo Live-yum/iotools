@@ -22,6 +22,7 @@ const help = `IOTOOLS • keyboard reference
 Tab / Shift-Tab   Cycle requests, details, results, search
 ↑ ↓ / j k        Select saved request
 Enter / F5       Run selected request (writes require confirmation)
+F2               Switch raw / protocol-native results
 F4               Edit collection YAML inside this terminal
 F6               Select environment profile
 F8               Cancel running request / subscription
@@ -53,6 +54,11 @@ type UI struct {
 	quitting               bool
 	mu                     sync.Mutex
 	events                 []string
+	inspector              *inspector
+	resultPages            *tview.Pages
+	visual                 bool
+	lastRequest            config.Request
+	navigation             []config.Request
 	focus                  int
 }
 
@@ -82,11 +88,14 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	u.detail.SetBorder(true).SetTitle(" Request ")
 	u.result = tview.NewTextView().SetWrap(false)
 	u.result.SetBorder(true).SetTitle(" Results / live events ")
+	u.inspector = newInspector(u)
+	u.resultPages = tview.NewPages().AddPage("raw", u.result, true, false).AddPage("visual", u.inspector.pages, true, true)
+	u.visual = true
 	u.status = tview.NewTextView().SetTextColor(tcell.ColorAqua)
 	u.search = tview.NewInputField().SetLabel(" Filter: ")
 	u.search.SetChangedFunc(func(s string) { u.populate(s) })
 	top := tview.NewFlex().AddItem(u.list, 30, 1, true).AddItem(u.detail, 0, 2, false)
-	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.search, 1, 0, false).AddItem(top, 0, 1, true).AddItem(u.result, 0, 1, false).AddItem(u.status, 2, 0, false)
+	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.search, 1, 0, false).AddItem(top, 0, 1, true).AddItem(u.resultPages, 0, 1, false).AddItem(u.status, 2, 0, false)
 	u.pages.AddPage("main", root, true, true)
 	u.list.SetChangedFunc(func(index int, main, secondary string, shortcut rune) {
 		if index >= 0 && index < len(u.indexes) {
@@ -96,6 +105,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	})
 	u.list.SetSelectedFunc(func(_ int, _, _ string, _ rune) { u.execute() })
 	u.populate("")
+	if len(c.Requests) > 0 {
+		u.inspector.reset(c.Requests[0])
+	}
 	u.setStatus("Ready • Enter run · F4 edit · F6 profile · F8 cancel · ? help")
 	u.App.SetRoot(u.pages, true).EnableMouse(true)
 	u.App.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
@@ -113,6 +125,16 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			return nil
 		case tcell.KeyF1:
 			u.modal(help)
+			return nil
+		case tcell.KeyF2:
+			u.visual = !u.visual
+			if u.visual {
+				u.resultPages.SwitchToPage("visual")
+				u.App.SetFocus(u.inspector.pages)
+			} else {
+				u.resultPages.SwitchToPage("raw")
+				u.App.SetFocus(u.result)
+			}
 			return nil
 		case tcell.KeyF4:
 			u.edit()
@@ -132,7 +154,7 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			u.result.Clear()
 			return nil
 		case tcell.KeyTab, tcell.KeyBacktab:
-			items := []tview.Primitive{u.list, u.detail, u.result, u.search}
+			items := []tview.Primitive{u.list, u.detail, u.resultPages, u.search}
 			delta := 1
 			if e.Key() == tcell.KeyBacktab {
 				delta = 3
@@ -172,7 +194,7 @@ func (u *UI) populate(filter string) {
 			if name == "" {
 				name = r.ID
 			}
-			u.list.AddItem(clean(name), clean(strings.ToUpper(r.Protocol)+" · "+r.Action), 0, nil)
+			u.list.AddItem(display(name), display(strings.ToUpper(r.Protocol)+" · "+r.Action), 0, nil)
 		}
 	}
 	if len(u.indexes) > 0 {
@@ -217,6 +239,7 @@ func (u *UI) execute() {
 	if len(u.indexes) == 0 {
 		return
 	}
+	u.navigation = nil
 	r, e := u.collection.Resolve(u.collection.Requests[u.selected], u.profile)
 	if e != nil {
 		u.modal(e.Error())
@@ -250,6 +273,8 @@ func (u *UI) execute() {
 	u.start(r)
 }
 func (u *UI) start(r config.Request) {
+	u.lastRequest = r
+	u.inspector.reset(r)
 	ctx, cancel := context.WithCancel(context.Background())
 	u.mu.Lock()
 	u.cancel = cancel
@@ -269,6 +294,7 @@ func (u *UI) start(r config.Request) {
 				s = s[:32768] + "\n… event truncated in TUI (use CLI for full data)"
 			}
 			u.App.QueueUpdateDraw(func() {
+				u.inspector.add(event)
 				u.events = append(u.events, s)
 				if len(u.events) > 128 {
 					u.events = u.events[len(u.events)-128:]

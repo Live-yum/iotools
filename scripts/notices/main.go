@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -30,7 +31,15 @@ func main() {
 		panic(e)
 	}
 	d := json.NewDecoder(strings.NewReader(string(b)))
+	goLicense, e := os.ReadFile(filepath.Join(runtime.GOROOT(), "LICENSE"))
+	if e != nil {
+		panic(e)
+	}
+	if e = os.WriteFile(filepath.Join(out, "Go-LICENSE.txt"), goLicense, 0644); e != nil {
+		panic(e)
+	}
 	var index strings.Builder
+	fmt.Fprintf(&index, "Go standard library %s: Go-LICENSE.txt\n", runtime.Version())
 	seen := map[string]bool{}
 	for {
 		var pkg struct{ Module *module }

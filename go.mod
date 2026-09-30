@@ -7,6 +7,7 @@ require (
 	github.com/gdamore/tcell/v2 v2.13.10
 	github.com/goburrow/modbus v0.1.0
 	github.com/gopcua/opcua v0.9.1
+	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/rivo/tview v0.42.0
 	github.com/twmb/franz-go v1.22.1
@@ -18,6 +19,7 @@ require (
 require (
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/goburrow/serial v0.1.0 // indirect
+	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
