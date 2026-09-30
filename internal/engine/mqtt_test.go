@@ -66,9 +66,30 @@ func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 	}
 	r.Action = "read-one"
 	r.Timeout = "100ms"
-	if e := Run(context.Background(), r, false, nil); e == nil {
-		t.Fatal("cleaned retained value unexpectedly present")
+	// PUBACK confirms the retained store update; this fixture may broadcast
+	// the empty live cleanup publication after the new subscriber joins.
+	// A live empty notification is legal and is not a retained old value.
+	if _, exists := s.Topics.Retained.Get("test/value"); exists {
+		t.Fatal("broker retained store still contains cleaned topic")
 	}
+	var observed map[string]any
+	err := Run(context.Background(), r, false, func(event Event) {
+		if event.Kind == "message" {
+			observed = event.Data.(map[string]any)
+		}
+	})
+	if observed != nil {
+		if observed["retained"] != false || observed["payload"] != "" {
+			t.Fatalf("unexpected value after retained cleanup: %#v", observed)
+		}
+		t.Log("received valid non-retained empty cleanup notification")
+	} else if err == nil {
+		t.Fatal("read-one succeeded without a message")
+	}
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unexpected cleanup observation error: %v", err)
+	}
+
 }
 
 func TestMQTTBinaryRepresentations(t *testing.T) {

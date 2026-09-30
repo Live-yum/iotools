@@ -3,6 +3,9 @@
 本分支在已验证桌面633a021f上增加Android包装。Go协议引擎和tview/tcell界面直接编译成
 APK里的共享库，JNI加载，不启动外部shell，不要求Termux，不在应用可写目录执行二进制。
 终端采用MIT许可xterm.js 5.5.0和addon-fit 0.10.0，npm完整性锁定；所有JS/CSS随APK离线打包。
+构建用锁定esbuild 0.25.9转译到Chrome61，带globalThis/queueMicrotask兼容层；
+xterm唯一的Unicode Control正则等价改写为U+0000–001F/U+007F–009F，保留MIT许可。
+不要求用户升级系统WebView来绕过可选链/空值合并解析错误。
 WebView禁止外部导航、网络加载、文件和content访问；协议网络由内置Go引擎处理。
 
 ## 安装与平台

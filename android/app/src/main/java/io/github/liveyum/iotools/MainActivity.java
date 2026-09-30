@@ -59,6 +59,7 @@ public class MainActivity extends Activity {
     return response!=null?response:new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
    }
    @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest req){return true;}
+   @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame())runOnUiThread(()->status.setText("离线终端资源错误："+error.getErrorCode()));}
   });
   web.addJavascriptInterface(new Object(){
    @JavascriptInterface public void ready(int c,int r){runOnUiThread(()->{ready=true;resize(c,r);if(NativeRuntime.state()==1)NativeRuntime.resume();else startTerminal();});}
