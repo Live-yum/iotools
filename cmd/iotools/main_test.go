@@ -41,3 +41,21 @@ func TestAPIRejectsMissingOrPublicScope(t *testing.T) {
 		t.Fatal("public bind accepted")
 	}
 }
+
+func TestDryRunAndURLOverrideNeverConnect(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "http.yaml")
+	text := "version: 1\nrequests:\n- id: post\n  protocol: http\n  action: POST\n  endpoint: http://127.0.0.1:1\n  params: {body: old}\n"
+	if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--file", p, "--run", "post", "--dry-run", "--url", "http://127.0.0.1:2", "--body", "new"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != text {
+		t.Fatal("source changed")
+	}
+	if err := run([]string{"--file", p, "--run", "post", "--dry-run", "--execute-triggers"}); err == nil {
+		t.Fatal("dry run triggers accepted")
+	}
+}

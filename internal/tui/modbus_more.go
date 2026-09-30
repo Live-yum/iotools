@@ -98,6 +98,9 @@ func (v *inspector) modbusMoreMenu() {
 	list.AddItem("CSV快照比较", "读取MTUI/原生CSV，与本次已收到数据对比；不自动读取设备", 'c', func() { close(); v.modbusCSVDiffForm() })
 	list.AddItem("采样时间显示", "绝对UTC/相对时间；接收响应时刻，非设备时钟", 't', func() { close(); v.modbusTimeForm() })
 	list.AddItem("写日志查看", "本机JSONL尝试/结果记录；只读打开，不执行设备动作", 'w', func() { close(); v.modbusWriteLogForm() })
+	list.AddItem("通信统计", "读写成功/失败、延迟、最后错误与本机清空", 's', func() { close(); v.owner.modbusStatsPanel() })
+	list.AddItem("活动日志", "独立有界日志、跟随/换行/明确复制导出", 'a', func() { close(); v.owner.modbusActivityPanel() })
+	list.AddItem("轮换本机集合", "next_config或返回初始集合；预览后切换，不自动连接", 'n', func() { close(); v.owner.modbusRotationForm() })
 	list.AddItem("关闭", "Esc返回", 0, close)
 	list.SetBorder(true).SetTitle(" Modbus更多 · I标注 C列 D CSV · Esc返回 ")
 	list.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {

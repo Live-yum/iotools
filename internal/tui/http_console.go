@@ -16,7 +16,7 @@ func (u *UI) httpConsole() {
 		return
 	}
 	form := tview.NewForm()
-	form.SetBorder(true).SetTitle(" HTTP 查询控制台 · 不发送网络请求 · Esc 关闭 ")
+	form.SetBorder(true).SetTitle(" HTTP 控制台 · 查询不联网 · 单次覆盖另行确认 · Esc关闭 ")
 	mode := 0
 	form.AddDropDown("查询模式", []string{"当前响应 jq", "SQLite 历史只读 SQL", "生成所选请求 curl（不联网）"}, 0, func(_ string, index int) { mode = index })
 	form.AddInputField("历史数据库", u.HTTPHistoryPath, 64, nil, nil)
@@ -103,7 +103,7 @@ func (u *UI) httpConsole() {
 				u.App.SetFocus(view)
 			})
 		}()
-	}).AddButton("关闭", close).SetCancelFunc(close)
+	}).AddButton("单次覆盖", func() { close(); u.httpOverrideForm() }).AddButton("关闭", close).SetCancelFunc(close)
 	u.pages.AddPage("http-console", form, true, true)
 	u.App.SetFocus(form)
 }

@@ -146,7 +146,7 @@ curl -H 'Content-Type: application/json' -d '{"type":"holding","address":10,"cou
 | 设备识别 | 部分 | FC43/14 read-device-id已实现；专用访问级别面板待补 |
 | unit 扫描、TCP 发现 | 部分 | 明确端点的有界scan-units已实现；交互式网络发现/串口枚举待补 |
 | raw PDU | 已有引擎 | read-raw/write-raw会校验功能码并使用写门禁；专用弹窗待补 |
-| 配置切换、可配置快捷键/主题 | 部分 | 本应用YAML/F3/F4及K面板表格快捷键；M可离线转换完整配置的适用字段；全部动作键映射、next_config轮换与主题仍有差异 |
+| 配置切换、可配置快捷键/主题 | 部分 | 本应用YAML/F3/F4及K面板表格快捷键；M可离线转换完整配置的适用字段；F12/M支持next_config原生集合轮换；全部动作键映射与主题仍有差异 |
 | 内置 mock 设备 | 已实现 | 显式 mock://local、进程内存状态、模拟标记、写入确认 |
 | 浏览器 mock demo | 待补 | 桌面 TUI 不等于原版 WASM 页面 |
 
@@ -168,3 +168,6 @@ config_io/dump/diff 模块。不同版本的上游可能继续增加功能；不
 `M`菜单提供完整MTUI JSON转换预览/明确追加、CSV快照离线比较和每行UTC/相对时间。
 四种读取空间均可导出CSV。请阅读[具体操作及32动作源码核对表](modbus-more.md)，
 区分已实现设备能力与仍缺专用工作流，不能据此声称全部功能等价。
+
+`M`新增通信统计、独立有界活动日志；`F12`或M可预览后轮换本机集合并返回初始集合。
+具体安全语义与上游差异见[Modbus会话与轮换](modbus-session.md)。

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/Live-yum/iotools/internal/config"
 )
@@ -14,7 +15,7 @@ var protocolParams = map[string]string{
 	"http":   "response_file max_response_bytes body_file body_stream max_upload_bytes query form_urlencoded form_multipart query_filter persist headers body json bearer username password ca_file cert_file key_file crypto request_crypto request_transforms response_transform",
 	"mqtt":   "auto_reconnect reconnect_interval_ms scan_duration_ms max_topics confirm_topics confirm_token topic topics qos payload payload_encoding retain client_id username password ca_file cert_file key_file limit ignore_retained",
 	"kafka":  "consume_partitions partition start_time key_filter key_prefix value_prefix confirm_subject tls ca_file cert_file key_file sasl username password topic group groups partitions replication_factor configs key value offset limit filter subject version connector json headers body bearer key_format value_format key_subject value_subject key_version value_version schema_registry_url schema_registry_username schema_registry_password schema_registry_bearer schema_registry_ca_file schema_registry_cert_file schema_registry_key_file",
-	"modbus": "write_log_file write_log_previous columns keymap matrix_columns address count unit value values samples interval_ms word_order baud data_bits parity stop_bits pins labels rules units end_address match_value pdu_hex read_code object_id value_type",
+	"modbus": "next_config write_log_file write_log_previous columns keymap matrix_columns address count unit value values samples interval_ms word_order baud data_bits parity stop_bits pins labels rules units end_address match_value pdu_hex read_code object_id value_type",
 	"opcua":  "allow_legacy_security browse_path auto_reconnect reconnect_interval_ms allow_insecure interval_ms max_events max_references auth auth_cert_file auth_key_file ca_file cert_file key_file method_id node_id node_ids attribute attributes direction reference_type include_subtypes object_id password security_mode security_policy server_cert_sha256 username value_type arguments value",
 }
 
@@ -61,6 +62,15 @@ func validateParams(r config.Request) error {
 		}
 	}
 	if r.Protocol == "modbus" {
+		if raw, exists := r.Params["next_config"]; exists {
+			path, ok := raw.(string)
+			if !ok || strings.TrimSpace(path) == "" || len(path) > 4096 || strings.Contains(path, "://") || strings.Contains(path, "${") || strings.HasPrefix(path, "//") || strings.HasPrefix(path, `\\`) || strings.Contains(path, "{{") || strings.Contains(path, "}}") || strings.IndexFunc(path, unicode.IsControl) >= 0 {
+				return fmt.Errorf("next_config必须是1..4096字节的本机配置路径，不能是URL/模板/控制字符")
+			}
+			if i := strings.IndexByte(path, ':'); i >= 0 && !(i == 1 && len(path) > 2 && ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) && (path[2] == '/' || path[2] == '\\')) {
+				return fmt.Errorf("next_config不能为URI")
+			}
+		}
 		if r.Mutates() {
 			for _, k := range []string{"address", "unit"} {
 				if _, ok := r.Params[k]; !ok {

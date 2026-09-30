@@ -134,11 +134,11 @@ Enter查看完整操作ID、目标和错误详情。查看器不改变文件，�
 | settings | F3/F4、C/K/M | 同类设置分散原生入口；部分上游显示/主题策略未移植 |
 | copy_column | Ctrl-Y安全确认复制所选行 | 缺上游列选择后批量复制工作流 |
 | write_logs | write_log_file + M写日志查看 | 持久JSONL尝试/结果与详情；非上游CSV，未知旧值不额外读取 |
-| app_logs | F2当前事件结果 | 缺独立全应用日志/换行/导出工作流 |
-| stats | 尚无专用面板 | 缺读取统计/会话数据概览 |
+| app_logs | M独立Modbus活动日志 | 有界脱敏、跟随/换行/横向滚动、明确复制/导出；非所有协议完整logger |
+| stats | M通信统计 | 读写成功/失败、延迟、最后错误、明确清空；取消单列 |
 | sweep | sweep-holding/search-holding请求 | 有界引擎已实现；缺上游弹窗/全类型交互流程 |
 | clear_session | Ctrl-L清空本次结果 | 同类本机操作；不提供只清图历史子动作 |
-| cycle_config | F6环境profile、请求列表，M完整配置转换 | 不等于next_config自动加载/重连轮换 |
+| cycle_config | F12/M原生集合轮换，next_config路径及初始集合返回 | 预览+临时设置保存/放弃；统一YAML，不自动加载MTUI JSON/连接 |
 | panel | m矩阵、f固定项 | 缺独立标签/规则面板及cycle_panels设置 |
 | page_up | PgUp表格滚动 | 只滚动已读结果，不移动设备读取地址窗口 |
 | page_down | PgDn表格滚动 | 同上 |
@@ -155,7 +155,7 @@ Enter查看完整操作ID、目标和错误详情。查看器不改变文件，�
 
 上游next_config是文件路径；为空时可返回初始配置，dirty时先处理未保存提示，
 加载完成后重置连接/启动位置。原生profile切换只做模板环境选择，不能算相同行为。
-本轮完成离线导入和预览，仍不声称具备自动配置轮换。
+现已补齐F12/M明确轮换原生集合、初始集合返回和临时布局保存/放弃；不自动连接、定时轮换或隐式加载MTUI JSON。详见[会话统计与集合轮换](modbus-session.md)。
 
 ## 验证
 

@@ -87,10 +87,16 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	defer close()
 	if r.Action == "read-device-id" {
-		return runModbusDeviceID(ctx, r, handler, emit)
+		start := time.Now()
+		err := runModbusDeviceID(ctx, r, handler, emit)
+		observeModbusOperation(ctx, r, start, err)
+		return err
 	}
 	if r.Action == "read-raw" || r.Action == "write-raw" {
-		return runModbusRaw(r, handler, emit)
+		start := time.Now()
+		err := runModbusRaw(r, handler, emit)
+		observeModbusOperation(ctx, r, start, err)
+		return err
 	}
 	client := modbus.NewClient(handler)
 	iterations := r.Int("samples", 1)
@@ -105,6 +111,7 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		operationStart := time.Now()
 		var data []byte
 		var e error
 		switch r.Action {
@@ -161,22 +168,23 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		default:
 			return unsupported(r, "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "write-coil", "write-coils")
 		}
+		if e == nil && (r.Action == "read-holding" || r.Action == "read-input") && len(data) != count*2 {
+			e = fmt.Errorf("truncated or oversized Modbus register response")
+		}
+		if e == nil && (r.Action == "read-coils" || r.Action == "read-discrete") && len(data) < (count+7)/8 {
+			e = fmt.Errorf("truncated Modbus bit response")
+		}
+		observeModbusOperation(ctx, r, operationStart, e)
 		if e != nil {
 			return e
 		}
 		if r.Action == "read-holding" || r.Action == "read-input" {
-			if len(data) != count*2 {
-				return fmt.Errorf("truncated or oversized Modbus register response")
-			}
 			rows := decodeRegisters(data, addr, r.String("word_order", "ABCD"))
 			if err := annotateRegisters(rows, annotations, order); err != nil {
 				return err
 			}
 			send(emit, "registers", rows)
 		} else if r.Action == "read-coils" || r.Action == "read-discrete" {
-			if len(data) < (count+7)/8 {
-				return fmt.Errorf("truncated Modbus bit response")
-			}
 			bits := make([]bool, count)
 			for i := range bits {
 				bits[i] = data[i/8]&(1<<uint(i%8)) != 0

@@ -7,7 +7,7 @@
 - 待补：确有实现差异，列出下一步；不是把外部设备未测试冒充代码缺失
 - 上游无该功能：不虚构额外“缺项”
 
-最近已验证的发布基线是838dabcd（Windows x64/Linux ARM64/Linux x64原生全部通过）。
+最近已验证的发布基线是c7fc31ce（Windows x64/Linux ARM64/Linux x64原生全部通过）。
 本表随后续提交更新，不应将正在开发的项误认为已包含在旧产物中。
 
 ## Slumber 用户分支
@@ -22,7 +22,7 @@
 | 同上 ReferenceSource | 只有Local/File，未实现HTTP远程引用 | 不将远程引用列为本仓库真实缺项 |
 | core/src/http/curl.rs、cli/src/commands/generate.rs | curl生成，默认禁止依赖请求，明确execute-triggers仍受修改授权；已实现 | 输出为POSIX命令，不执行；二进制NUL参数明确拒绝 |
 | cli/src/commands/db/request.rs | 历史list/get/delete；本轮实现F11和CLI，按集合隔离、逐ID确认、删除原子性验证 | 原CLI跨集合管理/批量别名、完整db shell命令族仍需逐项对应 |
-| cli/src/commands/request.rs | 配方请求、环境、鉴权、表单、响应/派生结果；现有统一配置+F3/F4可操作 | 临时字段/header/query/form/body/basic/bearer覆盖已补；其余dry-run/输出开关继续逐项核对 |
+| cli/src/commands/request.rs | 配方请求、环境、鉴权、表单、响应/派生结果；现有统一配置+F3/F4可操作 | 已补临时字段/header/query/form/body/basic/bearer/URL、F7单次覆盖、dry-run和原始/派生/文件输出；完整别名/默认退出策略差异公开保留 |
 | core HTTP RenderedBody/BodyStream | 有界内存正文与文件模板已实现 | 已补body_file/response_file常量缓冲上传下载；6MiB回环验证，明确大小限制与变换/依赖边界 |
 
 Python包接口、调用外部编辑器等与“独立可移植TUI”的产品形态不同；不能把这些
@@ -89,8 +89,19 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 
 第四批已补整份配置显式导入、逐行时间、线圈CSV/离线差异、明确启用的写日志及查看器。
 
-1. 其余32动作完整键映射、next_config配置轮换
-2. 专用类型/字段曲线、设备/规则/raw对话框，以及统计/应用日志面板
+第五批补齐会话统计、独立脱敏活动日志、F12原生集合轮换（预览/保存/放弃/初始集合返回）。
+
+1. 其余32动作完整键映射
+2. 专用类型/字段曲线、设备/规则/raw对话框
 3. 写日志采用统一JSONL审计，尚非原CSV格式；详见[32动作逐项表](modbus-more.md)
 
 下一步依次补这些入口与回环/临时文件测试。物理串口、工业设备不在未经许可的测试范围内。
+
+### 便携模板命令边界核验
+
+用户fork `core/src/render/functions.rs::command` 在检测到 `portable_directory()` 后
+直接返回 `ExternalCommandDisabled`。iotools同样禁止模板执行外部命令，符合用户
+无外部运行时要求，也对应上游便携模式本来的限制，不把它误列为普通模板函数缺失。
+公开函数base64/boolean/concat/debug/env/file/float/index/integer/join/jq/json_parse/
+jsonpath/lower/prompt/replace/response/response_header/select/sensitive/slice/split/string/
+trim/upper以及fork加密函数都有对应原生实现；具体解析边缘仍以测试和文档限制为准。

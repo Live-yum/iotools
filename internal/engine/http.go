@@ -128,13 +128,13 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	if len(transforms) > 0 {
 		transformed, err := codec.Transform(data, codecs, transforms)
 		if err != nil {
-			return fmt.Errorf("响应转换失败: %w", err)
+			return &HTTPResponseTransformError{Err: fmt.Errorf("响应转换失败: %w", err)}
 		}
 		var view any
 		d := json.NewDecoder(bytes.NewReader(transformed))
 		d.UseNumber()
 		if err = d.Decode(&view); err != nil {
-			return fmt.Errorf("响应转换 JSON 无效")
+			return &HTTPResponseTransformError{Err: fmt.Errorf("响应转换 JSON 无效")}
 		}
 		send(emit, "transformed", map[string]any{"status": resp.StatusCode, "body": view})
 		queryBody = transformed

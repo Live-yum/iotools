@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"go.yaml.in/yaml/v3"
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -23,13 +25,18 @@ var version = "dev"
 func main() {
 	if e := run(os.Args[1:]); e != nil {
 		fmt.Fprintln(os.Stderr, "iotools:", e)
+		var status cliExitError
+		if errors.As(e, &status) {
+			os.Exit(status.code)
+		}
 		os.Exit(1)
 	}
 }
 func run(args []string) error {
 	flags := flag.NewFlagSet("iotools", flag.ContinueOnError)
 	var fields, headers, queries, forms listFlag
-	var bodyOverride, bearerOverride, basicOverride optionalFlag
+	var bodyOverride, bearerOverride, basicOverride, urlOverride optionalFlag
+	flags.Var(&urlOverride, "url", "临时HTTP目标URL模板，不替换原query")
 	flags.Var(&fields, "set", "临时环境覆盖 name=value，可重复，不保存")
 	flags.Var(&headers, "header", "临时HTTP头 name=value，无等号删除，可重复")
 	flags.Var(&queries, "query", "临时query name=value，可重复同名")
@@ -41,6 +48,12 @@ func run(args []string) error {
 	input := flags.String("input", "", "导入源文件路径")
 	path := flags.String("file", "iotools.yaml", "请求集合 YAML 文件路径")
 	profile := flags.String("profile", "", "环境配置名称")
+	bodyOnly := flags.Bool("response-body", false, "仅输出HTTP原始正文，不输出事件JSON")
+	transformed := flags.Bool("transformed", false, "仅输出HTTP派生正文；转换失败返回3")
+	output := flags.String("output", "", "HTTP正文保存到新文件，禁止覆盖；原始响应使用流式下载")
+	verbose := flags.Bool("verbose", false, "正文输出时将HTTP状态/响应头写到stderr")
+	exitStatus := flags.Bool("exit-status", false, "HTTP>=400时退出码2")
+	dryRun := flags.Bool("dry-run", false, "仅生成所选请求curl预览，禁止依赖联网，需要--run")
 	curlRequest := flags.String("curl", "", "生成指定HTTP请求的POSIX curl命令，不执行命令，默认不触发依赖请求")
 	executeTriggers := flags.Bool("execute-triggers", false, "生成curl时明确允许依赖请求；依赖修改仍需独立授权")
 	request := flags.String("run", "", "执行指定请求 ID，输出 JSON 行")
@@ -63,6 +76,19 @@ func run(args []string) error {
 			return nil
 		}
 		return e
+	}
+	if *dryRun {
+		if *request == "" || *curlRequest != "" || *executeTriggers {
+			return fmt.Errorf("--dry-run需要--run，不能同时指定--curl/--execute-triggers")
+		}
+		*curlRequest = *request
+		*request = ""
+	}
+	if (*bodyOnly || *transformed || *output != "" || *verbose || *exitStatus) && *request == "" {
+		return fmt.Errorf("HTTP输出选项需要--run，不能用于dry-run/curl")
+	}
+	if (*bodyOnly || *transformed || *output != "" || *verbose || *exitStatus) && *curlRequest != "" {
+		return fmt.Errorf("HTTP输出选项不能用于curl/dry-run")
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("无法识别的参数：%v", flags.Args())
@@ -179,7 +205,7 @@ func run(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(rows)
 	}
-	if len(fields)+len(headers)+len(queries)+len(forms) > 0 || bodyOverride.set || bearerOverride.set || basicOverride.set {
+	if len(fields)+len(headers)+len(queries)+len(forms) > 0 || bodyOverride.set || bearerOverride.set || basicOverride.set || urlOverride.set {
 		id := *request
 		if *curlRequest != "" {
 			id = *curlRequest
@@ -190,7 +216,9 @@ func run(args []string) error {
 		found := false
 		for i, r := range c.Requests {
 			if r.ID == id {
-				updated, recipe, selected, e := engine.ApplyHTTPOverrides(c, r, *profile, makeOverrides(fields, headers, queries, forms, bodyOverride, bearerOverride, basicOverride))
+				overrides := makeOverrides(fields, headers, queries, forms, bodyOverride, bearerOverride, basicOverride)
+				overrides.URL = urlOverride.pointer()
+				updated, recipe, selected, e := engine.ApplyHTTPOverrides(c, r, *profile, overrides)
 				if e != nil {
 					return e
 				}
@@ -274,6 +302,40 @@ func run(args []string) error {
 			defer stop()
 			enc := json.NewEncoder(os.Stdout)
 			ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains})
+			if *bodyOnly || *transformed || *output != "" || *verbose || *exitStatus {
+				if r.Protocol != "http" {
+					return fmt.Errorf("HTTP输出选项仅用于HTTP请求")
+				}
+				if _, exists := r.Params["response_file"]; exists && (*bodyOnly || *transformed) {
+					return fmt.Errorf("正文输出模式不能与配置response_file同时使用")
+				}
+				if *bodyOnly && *transformed {
+					return fmt.Errorf("--response-body与--transformed不能同时使用")
+				}
+				if *output != "" {
+					absolute, err := filepath.Abs(*output)
+					if err != nil {
+						return err
+					}
+					*output = absolute
+					if _, err := os.Lstat(*output); err == nil {
+						return fmt.Errorf("输出文件已存在，拒绝覆盖")
+					} else if !os.IsNotExist(err) {
+						return err
+					}
+					if !*transformed {
+						params := map[string]any{}
+						for k, v := range r.Params {
+							params[k] = v
+						}
+						params["response_file"] = *output
+						r.Params = params
+					}
+				}
+				display := httpDisplay{transformed: *transformed, verbose: *verbose, output: *output, stderr: os.Stderr}
+				err := engine.RunCollection(ctx, c, r, *profile, *allow && !*readonly, display.event)
+				return display.finish(os.Stdout, err, *exitStatus)
+			}
 			return engine.RunCollection(ctx, c, r, *profile, *allow && !*readonly, func(e engine.Event) { _ = enc.Encode(e) })
 		}
 	}

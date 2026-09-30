@@ -114,4 +114,17 @@ func TestVisualCaptures(t *testing.T) {
 	u.inspector.reset(config.Request{Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local"})
 	u.inspector.modbusConfigImportForm()
 	capture("12-modbus-config-import")
+	u.pages.RemovePage("modbus-config-import")
+	u.collection.Requests = []config.Request{{ID: "示例请求", Protocol: "http", Action: "GET", Endpoint: "http://127.0.0.1:8080"}}
+	u.selected = 0
+	s.SetSize(80, 24)
+	u.httpOverrideForm()
+	capture("13-http-override-small")
+	u.pages.RemovePage("http-overrides")
+	u.modbusOperation(engine.ModbusOperation{Time: time.Now(), Action: "read-holding", Unit: 1, Count: 8, Duration: 12 * time.Millisecond, Success: true})
+	u.modbusStatsPanel()
+	capture("14-modbus-stats-small")
+	u.pages.RemovePage("modbus-stats")
+	u.modbusRotationForm()
+	capture("15-config-rotation-small")
 }

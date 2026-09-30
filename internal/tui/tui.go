@@ -31,11 +31,12 @@ F2               在协议专用视图和原始结果之间切换
 F3               在表单内直接编辑所选请求和参数
 F4               在终端内直接编辑 YAML 请求配置
 F6               切换环境配置（profile）
-F7               当前 HTTP 响应 jq / SQLite 历史只读查询
+F7               HTTP jq / SQLite / curl / 单次覆盖
 F8               取消正在执行的请求或订阅
 F9               OPC UA 连接历史（密码不保存）
 F10              OPC UA 独立后台订阅面板
 F11              HTTP历史列表/查看/明确删除
+F12              本机配置轮换/返回起始配置（先预览）
 Ctrl-Y           在结果表复制所选行（明确确认后）
 Ctrl-L           清空结果
 ? / F1           打开本帮助
@@ -55,6 +56,7 @@ Modbus 高级：C 列，K 快捷键，I 导入标注，E 导出标注，D 导出
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
+	modbusSession           *modbusSessionState
 	localCancels            map[uint64]context.CancelFunc
 	nextLocalWork           uint64
 	uaCopyPending           bool
@@ -189,6 +191,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		case tcell.KeyF7:
 			u.httpConsole()
 			return nil
+		case tcell.KeyF12:
+			u.modbusRotationForm()
+			return nil
 		case tcell.KeyF11:
 			u.httpHistory()
 			return nil
@@ -322,12 +327,16 @@ func (u *UI) execute() {
 	u.start(r)
 }
 func (u *UI) start(r config.Request) {
+	u.startCollection(r, u.collection, u.profile)
+}
+func (u *UI) startCollection(r config.Request, collection *config.Collection, profile string) {
 	u.mqttPreviewPending = nil
 	u.uaCopyPending = false
 	u.uaCopyValue = ""
 	u.methodArgumentsPending = nil
 	u.lastRequest = r
 	u.inspector.reset(r)
+	u.modbusSessionStart(r)
 	ctx, cancel := context.WithCancel(context.Background())
 	u.mu.Lock()
 	u.cancel = cancel
@@ -341,8 +350,11 @@ func (u *UI) start(r config.Request) {
 		u.setStatus("模拟设备（不连接真实设备）· " + r.ID + " · F8 取消")
 	}
 	go func() {
+		if r.Protocol == "modbus" {
+			ctx = engine.WithModbusObserver(ctx, func(operation engine.ModbusOperation) { u.App.QueueUpdateDraw(func() { u.modbusOperation(operation) }) })
+		}
 		ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, AuthorizeRequestWrite: u.authorizeChainWrite, AuthorizeChainWrite: u.authorizeChainWrite, Prompt: u.workflowPrompt, Select: u.workflowSelect})
-		e := engine.RunCollection(ctx, u.collection, r, u.profile, r.Mutates(), func(event engine.Event) {
+		e := engine.RunCollection(ctx, collection, r, profile, r.Mutates(), func(event engine.Event) {
 			b, err := json.MarshalIndent(event, "", "  ")
 			if err != nil {
 				b = []byte(fmt.Sprintf("无法显示事件：%v", err))
@@ -370,6 +382,7 @@ func (u *UI) start(r config.Request) {
 		cancel()
 		u.App.QueueUpdateDraw(func() {
 			u.running = false
+			u.modbusSessionEnd(r, e)
 			if u.quitting {
 				u.mqttPreviewPending = nil
 				if u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {

@@ -40,3 +40,25 @@ func TestTemporaryBodyReplacesStream(t *testing.T) {
 		}
 	}
 }
+
+func TestTemporaryURLAndConflictingAuth(t *testing.T) {
+	r := config.Request{Protocol: "http", Endpoint: "http://old", Params: map[string]any{"query": map[string]any{"q": "kept"}}}
+	c := &config.Collection{}
+	url := "http://new"
+	_, got, _, err := ApplyHTTPOverrides(c, r, "", HTTPOverrides{URL: &url})
+	if err != nil || got.Endpoint != url || got.Params["query"].(map[string]any)["q"] != "kept" || r.Endpoint != "http://old" {
+		t.Fatal(got, err)
+	}
+	if _, _, _, err := ApplyHTTPOverrides(c, r, "", HTTPOverrides{Basic: &url, Bearer: &url}); err == nil {
+		t.Fatal("conflicting auth accepted")
+	}
+}
+
+func TestNextConfigStrictLocalPath(t *testing.T) {
+	for _, v := range []any{"", "https://outside/config", "{{ ENV.PATH }}", "bad\npath", 123} {
+		r := config.Request{Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local", Params: map[string]any{"next_config": v}}
+		if validateParams(r) == nil {
+			t.Fatalf("invalid path accepted: %v", v)
+		}
+	}
+}

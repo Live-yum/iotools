@@ -8,7 +8,7 @@ import (
 
 type HTTPOverrides struct {
 	Fields, Headers, Query, Form []string
-	Body, Bearer, Basic          *string
+	Body, Bearer, Basic, URL     *string
 }
 
 func cloneHTTPValue(v any) any {
@@ -31,6 +31,12 @@ func cloneHTTPValue(v any) any {
 func ApplyHTTPOverrides(c *config.Collection, r config.Request, profile string, o HTTPOverrides) (*config.Collection, config.Request, string, error) {
 	if r.Protocol != "http" {
 		return nil, r, profile, fmt.Errorf("临时HTTP覆盖仅适用于HTTP请求")
+	}
+	if o.Basic != nil && o.Bearer != nil {
+		return nil, r, profile, fmt.Errorf("basic与bearer不能同时覆盖")
+	}
+	if o.URL != nil {
+		r.Endpoint = *o.URL
 	}
 	copyCollection := *c
 	copyCollection.Profiles = map[string]map[string]string{}

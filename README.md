@@ -45,7 +45,7 @@ chmod +x iotools
 - Enter / F5：执行所选请求；修改数据时弹出确认
 - F2：切换协议专用视图与原始 JSON 结果
 - F3：直接编辑单个请求表单；F4：完整 YAML；Ctrl-S 校验保存，Esc 放弃
-- F6：环境；F7：HTTP jq/SQL/curl；F8：取消；F9：OPC UA历史；F10：独立订阅；F11：HTTP历史管理
+- F6：环境；F7：HTTP jq/SQL/curl/单次覆盖；F8：取消；F9：OPC UA历史；F10：独立订阅；F11：HTTP历史管理；F12：配置轮换预览
 - ? / F1：中文帮助；Ctrl-C / q：取消并退出
 
 协议结果视图：
@@ -83,6 +83,10 @@ iotools --profile production --read-only
 ```
 
 Slumber v4/v5文件可直接载入并用F4原格式编辑；`--import slumber --input slumber.yml --file imported.yaml` 可导入新的原生文件（不覆盖）。还支持v3/REST/OpenAPI/Insomnia。模板、文件函数、链授权、jq和历史见[HTTP工作流中文指南](docs/http-slumber.md)。
+
+`--run ID --dry-run` 只预览、不联网；`--response-body`/`--transformed` 输出原始/派生正文，
+`--output 新文件` 流式保存原始响应且不覆盖。CLI临时覆盖与F7单次覆盖均不改集合，
+见[HTTP说明](docs/http-slumber.md)。
 
 `--history-db history.sqlite` 明确启用历史保存；F7可查询该文件。历史可能包含敏感响应，不默认写盘。CLI请求链写入还需 `--allow-chain-writes`，TUI按渲染后的真实目标逐步骤确认。
 

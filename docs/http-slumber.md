@@ -176,6 +176,18 @@ CLI 请求或 curl 生成可重复指定 `--set name=value`、`--header name=val
 `response_file` 将响应流式保存到新的文件（0600，不覆盖已有路径），
 `max_response_bytes` 默认1GiB，上限8GiB。取消/超限/写失败会删除不完整文件。
 结果包含字节数、SHA256、HTTP状态和目标路径。HTTP错误的完整响应文件保留供检查。
-文件响应不能同时做response_transforms/query_filter，也不能作为response()依赖正文；
+文件响应不能同时做response_transform/query_filter，也不能作为response()依赖正文；
 这些组合会明确报错。常规响应/派生视图继续使用有界内存模式。
 生成curl输出相应的 `--data-binary @file` / `--output file`，不会执行curl。
+
+F7 的“单次覆盖”打开内置JSON编辑器，支持同样的 Fields/Headers/Query/Form、
+Body/URL/Basic/Bearer 字段；检查后显示遮盖凭据的预览，Tab到“执行一次”，
+修改请求依然逐步骤确认解析后的方法和目标。取消/执行均不会保存到集合。
+CLI `--url` 覆盖目标但保留query；`--run ID --dry-run` 生成curl预览，
+禁止依赖联网且不发送主请求；输出与上游原始请求文本格式不同。
+
+CLI默认保留统一事件JSON输出；`--response-body` 只输出原始字节，
+`--transformed` 只输出配置的派生JSON（没有变换时返回原始正文），转换错误退出码3。
+`--output 新路径` 将原始正文流式存盘；配合 `--transformed` 保存有界派生正文。
+不覆盖既有文件。`--verbose` 将状态和响应头写到stderr，`--exit-status` 对HTTP≥400返回2。
+网络/校验错误仍失败，未声称原Slumber默认退出策略/全部别名完全相同。
