@@ -69,9 +69,32 @@ func TestUABackgroundSubscriptionDoesNotBlockReadsAndQuits(t *testing.T) {
 		t.Fatal("simultaneous browse/read and notification not observed")
 	}
 	u.App.QueueUpdateDraw(func() {
+		browseRequest := copyRequest(r)
+		browseRequest.Params["node_id"] = "i=85"
+		u.showUAWorkspaceFor(browseRequest)
+		u.uaWorkspace.refresh()
 		u.showUASubscriptions()
 		if u.uaSubTable.GetRowCount() != 2 {
 			t.Error("live panel omitted node")
+		}
+	})
+	workspaceDone := false
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		u.App.QueueUpdateDraw(func() { workspaceDone = !u.uaWorkspace.loading })
+		if workspaceDone {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	u.App.QueueUpdateDraw(func() {
+		w := u.uaWorkspace
+		if !workspaceDone || w.attributes.GetRowCount() < 2 || w.references.GetRowCount() < 2 || w.subscriptions.GetRowCount() != 2 {
+			t.Errorf("four-panel wire read failed: %s attrs=%d refs=%d subs=%d", w.status, w.attributes.GetRowCount(), w.references.GetRowCount(), w.subscriptions.GetRowCount())
+		}
+		w.close()
+		if u.activeUASubscriptions() != 1 {
+			t.Error("workspace close canceled independent subscription")
 		}
 		u.quit()
 	})

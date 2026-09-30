@@ -144,7 +144,7 @@ curl -H 'Content-Type: application/json' -d '{"type":"holding","address":10,"cou
 | 文件 dump 与快照/diff | 部分 | 原始JSON快照、各空间已读数据CSV导出和CSV离线比较已实现；不隐式读取未采集范围 |
 | 地址/标签跳转与搜索 | 部分 | /地址/相对地址/唯一标签跳转；B四空间有限扫描；search-holding原始值搜索 |
 | 设备识别 | 部分 | i访问级别/对象选择、明确读取与专用对象表 |
-| unit 扫描、TCP 发现 | 已实现有界版本 | U明确最多32单元；V设备选择/只读串口枚举/明确TCP目标；ICMP Ping待补，见[设备说明](modbus-device.md) |
+| unit 扫描、TCP 发现 | 已实现有界版本 | U明确最多32单元；V设备选择/只读串口枚举/明确TCP目标；原生IPv4 ICMP（受OS权限限制），见[设备说明](modbus-device.md) |
 | raw PDU | 已有引擎 | j十进制功能码/HEX检查、预览和结果表，写门禁；未知功能码保持拒绝 |
 | 配置切换、可配置快捷键/主题 | 部分 | 本应用YAML/F3/F4及K面板表格快捷键；M可离线转换完整配置的适用字段；F12/M支持next_config原生集合轮换；全部动作键映射与主题仍有差异 |
 | 内置 mock 设备 | 已实现 | 显式 mock://local、进程内存状态、模拟标记、写入确认 |

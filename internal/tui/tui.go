@@ -34,7 +34,8 @@ F6               切换环境配置（profile）
 F7               HTTP jq / SQLite / curl / 单次覆盖
 F8               取消正在执行的请求或订阅
 F9               OPC UA 连接历史（密码不保存）
-F10              OPC UA 独立后台订阅面板
+F10              OPC UA 独立后台订阅面板；D 四窗工作区
+Ctrl+U           OPC UA 四窗工作区（r刷新，1–4切换）
 F11              HTTP历史列表/查看/明确删除
 F12              本机配置轮换/返回起始配置（先预览）
 Ctrl-Y           在结果表复制所选行（明确确认后）
@@ -61,6 +62,7 @@ V 设备/串口选择与明确发现，c 规则，P 标注面板，i 设备标�
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
+	uaWorkspace             *uaWorkspace
 	BuildVersion            string
 	modbusSession           *modbusSessionState
 	modbusPause             *engine.ModbusPauseController
@@ -206,6 +208,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			return nil
 		case tcell.KeyF10:
 			u.showUASubscriptions()
+			return nil
+		case tcell.KeyCtrlU:
+			u.showUAWorkspace()
 			return nil
 		case tcell.KeyF9:
 			u.uaHistory()

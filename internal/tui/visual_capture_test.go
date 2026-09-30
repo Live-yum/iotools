@@ -186,4 +186,28 @@ func TestVisualCaptures(t *testing.T) {
 	u.pages.RemovePage("modbus-network-form")
 	u.inspector.modbusActionMenu()
 	capture("26-modbus-actions-small")
+	u.pages.RemovePage("modbus-actions")
+	u.pages.RemovePage("modbus-device")
+	u.showUAWorkspaceFor(workspaceRequest())
+	ws := u.uaWorkspace
+	ws.apply("browse", engine.Event{Kind: "reference", Data: workspaceRef(2258)})
+	ws.apply("attributes", engine.Event{Kind: "attribute", Data: map[string]any{"node_id": "i=85", "attribute": "DisplayName", "value": "对象", "status": "Good"}})
+	ws.apply("references", engine.Event{Kind: "reference", Data: workspaceRef(2258)})
+	ws.status = "只读缓存 · 独立订阅在后台继续"
+	subRequest := workspaceRequest()
+	subRequest.Params["node_id"] = "i=2258"
+	u.uaSubscriptions = map[string]*liveUASubscription{uaSubscriptionKey(subRequest, "i=2258"): {Request: subRequest, Status: "订阅中（示例）", Value: 23.5, Count: 12}}
+	ws.renderSubscriptions()
+	ws.renderHeader()
+	s.SetSize(120, 40)
+	capture("27-opcua-four-panels")
+	s.SetSize(80, 24)
+	ws.focusPane(1)
+	capture("28-opcua-attributes-small")
+	ws.nodeForm()
+	capture("29-opcua-node-editor-small")
+	u.pages.RemovePage("ua-workspace-node")
+	ws.focusPane(3)
+	capture("30-opcua-subscriptions-small")
+
 }

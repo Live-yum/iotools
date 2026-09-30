@@ -68,6 +68,10 @@ func newInspector(u *UI) *inspector {
 			return nil
 		}
 		if v.protocol == "opcua" {
+			if e.Rune() == 'D' {
+				u.showUAWorkspace()
+				return nil
+			}
 			n := v.tree.GetCurrentNode()
 			if n != nil {
 				if id, ok := n.GetReference().(string); ok {
@@ -133,6 +137,10 @@ func newInspector(u *UI) *inspector {
 		}
 	})
 	v.table.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if v.protocol == "opcua" && e.Rune() == 'D' {
+			u.showUAWorkspace()
+			return nil
+		}
 		if e.Key() == tcell.KeyCtrlY {
 			row, _ := v.table.GetSelection()
 			if row > 0 {

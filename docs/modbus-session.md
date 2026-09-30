@@ -81,15 +81,15 @@ params:
 MTUI JSON需要先用M完整配置转换并明确保存，不能通过next_config隐式激活API/权限。
 本实现不自动跟随MTUI JSON中的路径，也没有定时轮换。
 
-## 按键范围与未完成项
+## 按键范围与兼容边界
 
 本轮补上真正可操作的统计、活动日志和集合轮换。上游32个键绑定来自
 [config.rs](https://github.com/inowattio/MTUI/blob/6fc7ce35f4283cbd41d77a83ebb8956c66a5be6f/src/config.rs)，
 派发行为见 [handler.rs](https://github.com/inowattio/MTUI/blob/6fc7ce35f4283cbd41d77a83ebb8956c66a5be6f/src/handler.rs)，
 保留键见 [input.rs](https://github.com/inowattio/MTUI/blob/6fc7ce35f4283cbd41d77a83ebb8956c66a5be6f/src/input.rs)。
-目前K仍仅映射13个已实现原生表格动作，新增工作流在M/F12；没有填入32个名字却把
-所有动作指向F3。任意32动作重映射、独立规则/发现/逐位写入/地址跳转弹窗、任意解释
-曲线、完整面板轮换等仍按[32动作矩阵](modbus-more.md)公开列出。
+K可映射39个实际原生动作。独立规则、发现、逐位写入、地址跳转、解释字段曲线、
+设备/raw PDU、暂停与配置轮换均有真实入口。上游32项功能与原生39动作的分组差异、
+精确配置/日志/API格式边界见[32动作矩阵](modbus-more.md)。
 
 测试涵盖普通CLI输出不变、采样间隔不计入延迟、写门禁、取消类别、精确统计、日志
 容量/脱敏/跟随/导出/复制预览、轮换取消/返回/临时设置/外部修改/文件替换/忙状态、

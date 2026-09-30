@@ -90,6 +90,7 @@ func (v *inspector) modbusSerialPicker(previous *tview.Form, list func(context.C
 }
 func (v *inspector) modbusNetworkForm(previous *tview.Form) {
 	f := tview.NewForm().SetItemPadding(0).AddInputField("明确IP列表或IPv4网段", previous.GetFormItem(1).(*tview.InputField).GetText(), 48, nil, nil).AddInputField("TCP端口", previous.GetFormItem(2).(*tview.InputField).GetText(), 8, nil, nil).AddInputField("每目标超时ms(100..2000)", "500", 8, nil, nil).AddInputField("并发(1..32)", "8", 8, nil, nil)
+	f.AddDropDown("发现方式", []string{"TCP端口", "ICMP Ping (仅IPv4)"}, 0, nil)
 	close := func() { v.owner.pages.RemovePage("modbus-network-form"); v.owner.App.SetFocus(previous) }
 	f.AddButton("展开目标并预览", func() {
 		nums := []int{}
@@ -101,14 +102,19 @@ func (v *inspector) modbusNetworkForm(previous *tview.Form) {
 			}
 			nums = append(nums, n)
 		}
-		plan, err := engine.PrepareModbusDiscovery(f.GetFormItem(0).(*tview.InputField).GetText(), nums[0], nums[1], nums[2])
+		methodIndex, _ := f.GetFormItem(4).(*tview.DropDown).GetCurrentOption()
+		method := "tcp"
+		if methodIndex == 1 {
+			method = "ping"
+		}
+		plan, err := engine.PrepareModbusDiscoveryMethod(f.GetFormItem(0).(*tview.InputField).GetText(), nums[0], nums[1], nums[2], method)
 		if err != nil {
 			f.SetTitle(display(err.Error()))
 			return
 		}
-		v.modbusNetworkReview(plan, f, previous, engine.DiscoverModbusTCP)
+		v.modbusNetworkReview(plan, f, previous, engine.DiscoverModbusNetwork)
 	}).AddButton("返回", close).SetCancelFunc(close)
-	f.SetBorder(true).SetTitle(" TCP端口发现 · 不发送Modbus载荷 · 不自动扫描 ")
+	f.SetBorder(true).SetTitle(" 网络发现方式 · 不发送Modbus载荷 · 不自动探测 ")
 	f.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		if e.Key() == tcell.KeyEscape {
 			close()
@@ -130,11 +136,16 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 	open, busy, started := true, false, false
 	view := tview.NewTextView().SetDynamicColors(false).SetWrap(true)
 	view.SetText(fmt.Sprintf("明确目标数量：%d\n端口：%d / TCP connect only\n每目标超时：%dms；并发：%d；总时限：120s\n不发送协议载荷、不重试、不解析DNS。开放端口不能证明是Modbus设备。\n\n全部目标：\n%s", len(plan.Targets), plan.Port, plan.TimeoutMS, plan.Concurrency, strings.Join(plan.Targets, "\n")))
+	methodName := "TCP"
+	if plan.Method == "ping" {
+		methodName = "ICMP Ping"
+		view.SetText(fmt.Sprintf("明确目标数量：%d\n方式：ICMP Echo (IPv4)；不探测TCP端口\n每目标超时：%dms；并发：%d；总时限：120s\n仅非特权套接字/Windows系统API；不可用时停止，不提权。每目标一个32字节随机Echo载荷，无重试。来源/ID或系统API关联/nonce校验。可达不证明Modbus或TCP端口开放。Windows已发探测最多等当前超时后停止。\n\n全部目标：\n%s", len(plan.Targets), plan.TimeoutMS, plan.Concurrency, strings.Join(plan.Targets, "\n")))
+	}
 	results := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
 	found := map[string]engine.ModbusDiscoveryResult{}
 	render := func() {
 		results.Clear()
-		for c, s := range []string{"IP", "端口状态"} {
+		for c, s := range []string{"IP", "探测状态"} {
 			results.SetCell(0, c, tview.NewTableCell(s).SetSelectable(false))
 		}
 		ips := []string{}
@@ -144,9 +155,12 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 		sort.Strings(ips)
 		for i, ip := range ips {
 			r := found[ip]
-			status := "未连接: " + r.Error
+			status := "未确认可达: " + r.Error
 			if r.Open {
 				status = "端口开放；未验证Modbus"
+				if plan.Method == "ping" {
+					status = "ICMP可达；未验证端口/Modbus"
+				}
 			}
 			results.SetCell(i+1, 0, tview.NewTableCell(ip).SetReference(r))
 			results.SetCell(i+1, 1, tview.NewTableCell(display(status)).SetReference(r))
@@ -172,7 +186,7 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 		}
 		started, busy = true, true
 		id := u.modbusLocalWork(cancel)
-		panel.SetTitle("TCP发现中 · F8停止 Esc取消并返回")
+		panel.SetTitle(methodName + "发现中 · F8停止 Esc取消并返回")
 		go func() {
 			err := scan(ctx, plan, func(r engine.ModbusDiscoveryResult) {
 				u.App.QueueUpdateDraw(func() {
@@ -183,7 +197,7 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 						found[r.Address] = r
 					}
 					render()
-					panel.SetTitle(fmt.Sprintf("TCP发现 %d/%d · F8停止 · Enter填入开放目标", r.Completed, r.Total))
+					panel.SetTitle(fmt.Sprintf("%s发现 %d/%d · F8停止 · Enter填入已确认目标", methodName, r.Completed, r.Total))
 				})
 			})
 			u.App.QueueUpdateDraw(func() {
@@ -192,16 +206,16 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 					return
 				}
 				if err != nil {
-					panel.SetTitle("发现停止：" + display(err.Error()) + " · 可选择已完成开放目标")
+					panel.SetTitle("发现停止：" + display(err.Error()) + " · 可选择已完成已确认目标")
 				} else {
-					panel.SetTitle("发现完成 · Enter填入开放目标 · 不自动连接")
+					panel.SetTitle("发现完成 · Enter填入已确认目标 · 不自动连接")
 				}
 			})
 			cancel()
 		}()
 	}).AddButton("停止", func() { cancel() }).AddButton("返回", close)
 	panel = tview.NewFlex().SetDirection(tview.FlexRow).AddItem(view, 0, 1, false).AddItem(results, 0, 1, false).AddItem(buttons, 3, 0, true)
-	panel.SetBorder(true).SetTitle(" 明确审查网络目标 · 确认前零连接 ")
+	panel.SetBorder(true).SetTitle(" 明确审查网络目标 · 确认前零探测 ")
 	results.SetSelectedFunc(func(row, col int) {
 		r, ok := results.GetCell(row, col).GetReference().(engine.ModbusDiscoveryResult)
 		if !ok || !r.Open {
@@ -212,7 +226,9 @@ func (v *inspector) modbusNetworkReview(plan engine.ModbusDiscoveryPlan, previou
 			return
 		}
 		device.GetFormItem(1).(*tview.InputField).SetText(r.Address)
-		device.GetFormItem(2).(*tview.InputField).SetText(strconv.Itoa(plan.Port))
+		if plan.Method != "ping" {
+			device.GetFormItem(2).(*tview.InputField).SetText(strconv.Itoa(plan.Port))
+		}
 		open = false
 		cancel()
 		u.pages.RemovePage("modbus-network-review")

@@ -30,14 +30,15 @@ func (u *UI) activeUASubscriptions() int {
 	}
 	return n
 }
-func (u *UI) subscribeUA(node string) {
-	if u.quitting || u.lastRequest.Protocol != "opcua" {
+func (u *UI) subscribeUA(node string) { u.subscribeUAFrom(u.lastRequest, node) }
+func (u *UI) subscribeUAFrom(request config.Request, node string) {
+	if u.quitting || request.Protocol != "opcua" {
 		return
 	}
 	if u.uaSubscriptions == nil {
 		u.uaSubscriptions = map[string]*liveUASubscription{}
 	}
-	source := copyRequest(u.lastRequest)
+	source := copyRequest(request)
 	key := uaSubscriptionKey(source, node)
 	if old := u.uaSubscriptions[key]; old != nil && old.Active {
 		u.setStatus("此节点已经订阅 · Shift+S取消 · F10实时面板")
@@ -113,7 +114,7 @@ func (u *UI) stopUASubscriptions() {
 }
 func (u *UI) showUASubscriptions() {
 	table := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
-	table.SetBorder(true).SetTitle(" OPC UA 后台订阅 · Enter读取 · S取消选中 · Esc关闭（订阅继续） ")
+	table.SetBorder(true).SetTitle(" OPC UA 后台订阅 · D四窗 · Enter读取 · S取消选中 · Esc关闭（订阅继续） ")
 	u.uaSubTable = table
 	close := func() { u.pages.RemovePage("ua-live"); u.uaSubTable = nil; u.App.SetFocus(u.inspector.tree) }
 	table.SetSelectedFunc(func(row, col int) {
@@ -136,6 +137,20 @@ func (u *UI) showUASubscriptions() {
 		u.start(r)
 	})
 	table.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Rune() == 'D' {
+			row, _ := table.GetSelection()
+			if row > 0 {
+				key, _ := table.GetCell(row, 0).GetReference().(string)
+				if s := u.uaSubscriptions[key]; s != nil {
+					close()
+					u.showUAWorkspaceFor(s.Request)
+					return nil
+				}
+			}
+			close()
+			u.showUAWorkspace()
+			return nil
+		}
 		if e.Key() == tcell.KeyEscape {
 			close()
 			return nil
@@ -157,6 +172,9 @@ func (u *UI) showUASubscriptions() {
 	u.App.SetFocus(table)
 }
 func (u *UI) renderUASubscriptions() {
+	if u.uaWorkspace != nil {
+		u.uaWorkspace.renderSubscriptions()
+	}
 	if u.uaSubTable == nil {
 		return
 	}

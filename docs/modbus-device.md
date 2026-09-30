@@ -65,7 +65,7 @@ MTUI 完整配置导入现已映射这三个时间字段，超过上述原生边
 ## 与源码的差异及验收
 
 上游网络发现提供 ICMP Ping 和 TCP Port，固定254个 /24 主机、最多256并发。
-当前实现 TCP Port，增加显式目标预览与较低有界并发。ICMP Ping 尚未实现，不能称为完整网络发现同构。
+当前实现 TCP Port 与原生IPv4 ICMP Ping，增加显式目标预览与较低有界并发。ICMP依赖OS允许非特权API，具体平台验证限制见下节。
 原生串口元数据列举不等同于上游库在所有 OS 上的硬件描述/USB 属性识别；允许手动路径补充。
 原生明确读取执行单次/有限采样，上游连接成功后替换持久设备状态的生命周期不同。
 
@@ -73,3 +73,31 @@ MTUI 完整配置导入现已映射这三个时间字段，超过上述原生边
 独立请求超时、请求间隔/暂停交界、无设备打开的串口元数据fixture、80×24初始按钮可见、
 真实tview循环中的重复点击、取消、晚到结果、失败、选择结果只填表单、外部文件冲突和保存模板。
 没有访问真实工业设备或打开物理串口；Windows/Linux ARM64 交叉构建只验证编译，不代替硬件验收。
+
+## 原生 ICMP Ping（IPv4）
+
+“发现方式”现在可选 `ICMP Ping`。目标展开/数量/超时/并发/开始/停止/结果选择与 TCP 共用
+同一有界工作流，仍必须点击明确开始。IPv6 Ping 在任何探测前拒绝；TCP 仍支持 IPv6。
+Ping 每个目标只发送一次32字节随机载荷的 Echo Request，没有 Modbus 载荷和重试。
+
+- Linux/Darwin：仅使用 `udp4` ICMP datagram socket。绝不回退到 `ip4:icmp` 原始套接字
+- Windows：只从系统目录加载 `Iphlpapi.dll`，调用原生 `IcmpCreateFile/IcmpSendEcho/IcmpCloseHandle`
+- 权限不足、系统API缺失或OS不支持时立即停止并显示“非特权ICMP Ping不可用”；不提权，不改内核、系统或防火墙设置，不调用外部ping程序
+- Unix 回复必须同时匹配 IPv4 来源、Echo Reply类型/code、校验和、ID、sequence及随机nonce。Linux内核改写Echo ID，因此绑定实际socket本地端口；Darwin使用发送时ID
+- Windows API内部关联Echo ID，本地再检查返回数量、系统状态、来源地址、精确载荷长度与nonce。返回Data指针只允许指向本次有界回复buffer内部，绝不直接解引用系统回复给出的任意指针
+- 每目标超时100–2000ms、并发1–32、目标最多254个、总时限120秒。Unix取消关闭socket；Windows同步系统调用已发出后至多等待当前每目标时限，取消不再派发新目标
+- 结果只标记“ICMP可达”，不声称TCP端口开放或是Modbus设备。选用仅填回IP，保留原设备表单TCP端口；未回复/失败目标为未确认，不能据此断言设备离线
+
+实现依据：
+[Go非特权ICMP API](https://pkg.go.dev/golang.org/x/net/icmp#ListenPacket)、
+[Linux ping socket ID](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/ping.c)、
+[Darwin datagram ICMP](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/ip_icmp.c)、
+[Windows IcmpSendEcho](https://learn.microsoft.com/en-us/windows/win32/api/icmpapi/nf-icmpapi-icmpsendecho)、
+[微软.NET原生ICMP ABI声明](https://github.com/dotnet/runtime/blob/main/src/libraries/Common/src/Interop/Windows/IpHlpApi/Interop.ICMP.cs)。
+没有复制这些项目的实现代码。
+
+本地验证：Linux执行环境创建非特权socket时返回明确 `permission denied`，真实127.0.0.1
+回环测试仅因此skip；未请求额外权限。模拟报文、来源/ID/sequence/nonce/校验和、Windows
+32/64位回复buffer边界、资源释放、取消、不可用停止以及真实tview交互测试已执行。
+Windows/Darwin原生网络实测须以相应CI日志为准，交叉构建本身不能证明网络成功。
+测试只在明确权限/平台不可用时skip；普通回环超时或回复校验失败会直接失败。

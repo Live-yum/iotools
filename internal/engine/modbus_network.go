@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -12,9 +13,10 @@ import (
 	"time"
 )
 
-// ModbusDiscoveryPlan describes only TCP connection attempts. An open port is
-// not proof of a Modbus device. No protocol payload, DNS lookup or retry is sent.
+// ModbusDiscoveryPlan describes explicit TCP-connect or IPv4 ICMP probes.
+// A reachable host or open port is not proof of a Modbus device.
 type ModbusDiscoveryPlan struct {
+	Method                       string
 	Targets                      []string
 	Port, TimeoutMS, Concurrency int
 }
@@ -82,14 +84,27 @@ func DiscoverModbusTCP(ctx context.Context, plan ModbusDiscoveryPlan, emit func(
 	return discoverModbusTCP(ctx, plan, (&net.Dialer{}).DialContext, emit)
 }
 func discoverModbusTCP(ctx context.Context, plan ModbusDiscoveryPlan, dial func(context.Context, string, string) (net.Conn, error), emit func(ModbusDiscoveryResult)) error {
-	// Revalidate the complete reviewed plan before starting even one connection.
-	checked, err := PrepareModbusDiscovery(strings.Join(plan.Targets, ","), plan.Port, plan.TimeoutMS, plan.Concurrency)
+	if plan.Method != "" && plan.Method != "tcp" {
+		return fmt.Errorf("TCP discovery cannot execute a different method")
+	}
+	checked, err := PrepareModbusDiscoveryMethod(strings.Join(plan.Targets, ","), plan.Port, plan.TimeoutMS, plan.Concurrency, "tcp")
 	if err != nil {
 		return err
 	}
-	plan = checked
+	return discoverModbusTargets(ctx, checked, func(ctx context.Context, target string) error {
+		c, e := dial(ctx, "tcp", net.JoinHostPort(target, strconv.Itoa(checked.Port)))
+		if c != nil {
+			_ = c.Close()
+		}
+		return e
+	}, emit)
+}
+func stringsJoinTargets(targets []string) string { return strings.Join(targets, ",") }
+func discoverModbusTargets(ctx context.Context, plan ModbusDiscoveryPlan, probeTarget func(context.Context, string) error, emit func(ModbusDiscoveryResult)) error {
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
+	ctx, stopAll := context.WithCancelCause(ctx)
+	defer stopAll(nil)
 	jobs := make(chan string)
 	results := make(chan ModbusDiscoveryResult, plan.Concurrency)
 	var wg sync.WaitGroup
@@ -102,14 +117,18 @@ func discoverModbusTCP(ctx context.Context, plan ModbusDiscoveryPlan, dial func(
 					return
 				}
 				probe, stop := context.WithTimeout(ctx, time.Duration(plan.TimeoutMS)*time.Millisecond)
-				c, e := dial(probe, "tcp", net.JoinHostPort(a, strconv.Itoa(plan.Port)))
-				if c != nil {
-					_ = c.Close()
-				}
+				e := probeTarget(probe, a)
 				stop()
+				if errors.Is(e, ErrModbusICMPUnavailable) {
+					stopAll(e)
+					return
+				}
 				r := ModbusDiscoveryResult{Address: a, Open: e == nil, Total: len(plan.Targets)}
 				if e != nil {
 					r.Error = ModbusErrorClass(e)
+					if plan.Method == "ping" {
+						r.Error = fmt.Sprintf("%.256s", e.Error())
+					}
 				}
 				select {
 				case results <- r:
@@ -138,5 +157,5 @@ func discoverModbusTCP(ctx context.Context, plan ModbusDiscoveryPlan, dial func(
 			emit(r)
 		}
 	}
-	return ctx.Err()
+	return context.Cause(ctx)
 }
