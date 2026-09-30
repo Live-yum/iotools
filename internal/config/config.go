@@ -69,7 +69,12 @@ func Parse(data []byte) (*Collection, error) {
 	return &c, nil
 }
 func Load(path string) (*Collection, []byte, error) {
-	b, e := os.ReadFile(path)
+	f, e := os.Open(path)
+	if e != nil {
+		return nil, nil, e
+	}
+	defer f.Close()
+	b, e := io.ReadAll(io.LimitReader(f, (4<<20)+1))
 	if e != nil {
 		return nil, nil, e
 	}
@@ -199,7 +204,51 @@ func (c *Collection) Resolve(r Request, profile string) (Request, error) {
 		}
 	}
 	if r.Params != nil {
-		r.Params = walk(r.Params).(map[string]any)
+		// The fork resolves only codecs used by this request. Unused definitions
+		// may contain unavailable production secrets while a local profile runs.
+		if definitions, ok := r.Params["crypto"].(map[string]any); ok && r.Protocol == "http" {
+			params := map[string]any{}
+			for key, value := range r.Params {
+				if key != "crypto" {
+					params[key] = value
+				}
+			}
+			r.Params = walk(params).(map[string]any)
+			used := map[string]bool{}
+			if id, ok := r.Params["request_crypto"].(string); ok {
+				used[id] = true
+			}
+			var find func(any)
+			find = func(value any) {
+				switch x := value.(type) {
+				case map[string]any:
+					for key, v := range x {
+						if key == "crypto" {
+							if id, ok := v.(string); ok {
+								used[id] = true
+							}
+						} else {
+							find(v)
+						}
+					}
+				case []any:
+					for _, v := range x {
+						find(v)
+					}
+				}
+			}
+			find(r.Params["request_transforms"])
+			find(r.Params["response_transform"])
+			selected := map[string]any{}
+			for id := range used {
+				if value, ok := definitions[id]; ok {
+					selected[id] = walk(value)
+				}
+			}
+			r.Params["crypto"] = selected
+		} else {
+			r.Params = walk(r.Params).(map[string]any)
+		}
 	}
 	return r, first
 }

@@ -29,13 +29,14 @@ type inspector struct {
 	pins            map[int]bool
 	labels          map[int]string
 	rows            []int
+	annotationsSeen map[int]bool
 	protocol, scope string
 	filtered        bool
 	owner           *UI
 }
 
 func newInspector(u *UI) *inspector {
-	v := &inspector{owner: u, pages: tview.NewPages(), tree: tview.NewTreeView(), table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0), pins: map[int]bool{}, labels: map[int]string{}}
+	v := &inspector{owner: u, pages: tview.NewPages(), tree: tview.NewTreeView(), table: tview.NewTable().SetSelectable(true, true).SetFixed(1, 0), pins: map[int]bool{}, labels: map[int]string{}}
 	v.tree.SetBorder(true)
 	v.table.SetBorder(true)
 	v.pages.AddPage("tree", v.tree, true, true).AddPage("table", v.table, true, false)
@@ -87,8 +88,17 @@ func newInspector(u *UI) *inspector {
 		}
 		address := v.rows[row-1]
 		switch e.Rune() {
+		case 'S':
+			v.snapshot(false)
+			return nil
+		case 'O':
+			v.snapshot(true)
+			return nil
 		case 'p':
 			v.pins[address] = !v.pins[address]
+			if e := v.persistAnnotations(); e != nil {
+				v.owner.setStatus("固定项保存失败：" + e.Error())
+			}
 			v.renderRegisters()
 			return nil
 		case 'l':
@@ -114,6 +124,9 @@ func newInspector(u *UI) *inspector {
 }
 func (v *inspector) reset(r config.Request) {
 	v.protocol = r.Protocol
+	v.annotationsSeen = map[int]bool{}
+	v.pins = map[int]bool{}
+	v.labels = map[int]string{}
 	scope := r.Endpoint + "/" + strconv.Itoa(r.Int("unit", 1))
 	if scope != v.scope {
 		v.pins = map[int]bool{}
@@ -121,9 +134,25 @@ func (v *inspector) reset(r config.Request) {
 		v.filtered = false
 	}
 	v.scope = scope
+	if pins, ok := r.Params["pins"].([]any); ok {
+		v.pins = map[int]bool{}
+		for _, pin := range pins {
+			if address, ok := pin.(int); ok {
+				v.pins[address] = true
+			}
+		}
+	}
+	if labels, ok := r.Params["labels"].(map[string]any); ok {
+		v.labels = map[int]string{}
+		for key, value := range labels {
+			if address, e := strconv.Atoi(key); e == nil {
+				v.labels[address] = fmt.Sprint(value)
+			}
+		}
+	}
 	v.root = tview.NewTreeNode(display(strings.ToUpper(r.Protocol) + " · " + r.Action)).SetColor(tcell.ColorAqua)
 	v.tree.SetRoot(v.root).SetCurrentNode(v.root)
-	v.tree.SetTitle(" Structured results • F2 raw ")
+	v.tree.SetTitle(" 结构化结果 Structured results · F2 原始 ")
 	v.topics = map[string]*tview.TreeNode{}
 	v.values = map[int]map[string]any{}
 	v.history = map[int][]float64{}
@@ -133,14 +162,14 @@ func (v *inspector) reset(r config.Request) {
 	v.pages.SwitchToPage("tree")
 	if r.Protocol == "opcua" {
 		v.root.SetReference(r.String("node_id", "i=85"))
-		v.tree.SetTitle(" OPC UA nodes • Enter browse · r read · s watch · Backspace back ")
+		v.tree.SetTitle(" OPC UA 节点 · Enter 浏览 · r 读 · s 订阅 · 退格返回 ")
 	}
 	if r.Protocol == "mqtt" {
-		v.tree.SetTitle(" MQTT topic tree • Enter expand/collapse · F2 raw ")
+		v.tree.SetTitle(" MQTT 主题树 MQTT topic tree · Enter 展开/折叠 · F2 原始 ")
 	}
 	if r.Protocol == "modbus" {
 		v.pages.SwitchToPage("table")
-		v.table.SetTitle(" Registers • p pin · l label · f pins only · d snapshot · F2 raw ")
+		v.table.SetTitle(" 寄存器 · p 固定 · l 标签 · f 筛选 · d 快照 · S 保存 · O 对比 · F2 原始 ")
 	}
 }
 func (v *inspector) add(e engine.Event) {
@@ -160,7 +189,7 @@ func (v *inspector) add(e engine.Event) {
 				n, ok := v.topics[path]
 				if !ok {
 					if len(v.topics) >= 1024 {
-						v.owner.setStatus("Topic tree limit reached (1024 paths); raw events continue")
+						v.owner.setStatus("主题树已达到 1024 个节点上限，原始消息继续接收")
 						return
 					}
 					n = tview.NewTreeNode(display(part)).SetSelectable(true)
@@ -196,6 +225,15 @@ func (v *inspector) add(e engine.Event) {
 					continue
 				}
 				v.values[address] = row
+				if !v.annotationsSeen[address] {
+					if label, ok := row["label"].(string); ok {
+						v.labels[address] = label
+					}
+					if pinned, ok := row["pinned"].(bool); ok {
+						v.pins[address] = pinned
+					}
+					v.annotationsSeen[address] = true
+				}
 				if n, ok := row["u16"].(uint16); ok {
 					if _, exists := v.baseline[address]; !exists {
 						v.baseline[address] = n
@@ -213,8 +251,8 @@ func (v *inspector) add(e engine.Event) {
 	case "topics":
 		if topics, ok := e.Data.(kadm.TopicDetails); ok {
 			v.pages.SwitchToPage("table")
-			v.table.SetTitle(" Kafka topics • Enter consumes read-only · F2 raw ")
-			headers := []string{"Topic", "Partitions", "Internal", "Error"}
+			v.table.SetTitle(" Kafka 主题 · Enter 只读消费 · F2 原始 ")
+			headers := []string{"主题", "分区数", "内部主题", "错误"}
 			for i, s := range headers {
 				v.table.SetCell(0, i, tview.NewTableCell(s).SetSelectable(false).SetTextColor(tcell.ColorAqua))
 			}
@@ -254,7 +292,7 @@ func (v *inspector) add(e engine.Event) {
 }
 func (v *inspector) renderRegisters() {
 	v.table.Clear()
-	headers := []string{"Pin", "Address", "Label", "u16", "i16", "Hex", "f32", "Δ snapshot", "Trend (u16)"}
+	headers := []string{"固定", "地址", "标签", "u16", "i16", "十六进制", "f32", "快照差值", "趋势(u16)", "f64", "u32 M10K", "i32 M10K", "规则结果"}
 	for i, s := range headers {
 		v.table.SetCell(0, i, tview.NewTableCell(s).SetTextColor(tcell.ColorAqua).SetSelectable(false))
 	}
@@ -273,13 +311,17 @@ func (v *inspector) renderRegisters() {
 		}
 		delta := ""
 		if value, ok := r["u16"].(uint16); ok {
-			delta = fmt.Sprintf("%+d", int(value)-int(v.baseline[address]))
+			if old, ok := v.baseline[address]; ok {
+				delta = fmt.Sprintf("%+d", int(value)-int(old))
+			} else {
+				delta = "新增"
+			}
 		}
 		f32 := ""
 		if value, ok := r["f32"]; ok {
 			f32 = fmt.Sprint(value)
 		}
-		cells := []string{pin, strconv.Itoa(address), v.labels[address], fmt.Sprint(r["u16"]), fmt.Sprint(r["i16"]), fmt.Sprint(r["hex"]), f32, delta, spark(v.history[address])}
+		cells := []string{pin, strconv.Itoa(address), v.labels[address], fmt.Sprint(r["u16"]), fmt.Sprint(r["i16"]), fmt.Sprint(r["hex"]), f32, delta, spark(v.history[address]), optional(r, "f64"), optional(r, "u32_m10k"), optional(r, "i32_m10k"), optional(r, "custom")}
 		for col, s := range cells {
 			v.table.SetCell(i+1, col, tview.NewTableCell(display(s)))
 		}
@@ -310,21 +352,25 @@ func spark(values []float64) string {
 	return b.String()
 }
 func (v *inspector) label(address int) {
-	f := tview.NewForm().AddInputField("Label", v.labels[address], 40, nil, nil)
-	f.AddButton("Save", func() {
+	f := tview.NewForm().AddInputField("标签", v.labels[address], 40, nil, nil)
+	f.AddButton("保存", func() {
 		v.labels[address] = f.GetFormItem(0).(*tview.InputField).GetText()
+		if e := v.persistAnnotations(); e != nil {
+			f.SetTitle("标签保存失败：" + clean(e.Error()))
+			return
+		}
 		v.owner.pages.RemovePage("label")
 		v.renderRegisters()
 		v.owner.App.SetFocus(v.table)
-	}).AddButton("Cancel", func() { v.owner.pages.RemovePage("label"); v.owner.App.SetFocus(v.table) })
-	f.SetBorder(true).SetTitle(fmt.Sprintf(" Label register %d (session only) ", address))
+	}).AddButton("取消", func() { v.owner.pages.RemovePage("label"); v.owner.App.SetFocus(v.table) })
+	f.SetBorder(true).SetTitle(fmt.Sprintf(" 寄存器 %d 标签（保存到当前请求配置） ", address))
 	f.SetCancelFunc(func() { v.owner.pages.RemovePage("label"); v.owner.App.SetFocus(v.table) })
 	v.owner.pages.AddPage("label", f, true, true)
 	v.owner.App.SetFocus(f)
 }
 func (u *UI) derived(action, target string) {
 	if u.running {
-		u.setStatus("Cancel the active operation with F8 before navigating")
+		u.setStatus("请先按 F8 取消当前操作，再进行浏览")
 		return
 	}
 	r := u.lastRequest
@@ -350,7 +396,7 @@ func (u *UI) derived(action, target string) {
 	u.visual = true
 	u.resultPages.SwitchToPage("visual")
 	u.start(r)
-	u.detail.SetText(clean("Transient navigation (collection unchanged)\nProtocol: " + r.Protocol + "\nAction: " + r.Action + "\nEndpoint: " + r.Endpoint + "\nTarget: " + target))
+	u.detail.SetText(clean("临时浏览（不会改写配置文件）\n协议：" + r.Protocol + "\n操作：" + r.Action + "\n服务地址：" + r.Endpoint + "\n目标：" + target))
 }
 func (u *UI) back() {
 	if u.running || len(u.navigation) == 0 {
@@ -367,7 +413,7 @@ func valueTree(label string, value any, depth int, budget *int) *tview.TreeNode 
 	*budget--
 	n := tview.NewTreeNode(display(label)).SetSelectable(true)
 	if depth >= 8 || *budget <= 0 {
-		n.SetText(display(label + ": … (use raw results)"))
+		n.SetText(display(label + "：…（请查看原始结果）"))
 		return n
 	}
 	switch x := value.(type) {
@@ -399,4 +445,11 @@ func valueTree(label string, value any, depth int, budget *int) *tview.TreeNode 
 	}
 	n.SetExpanded(depth < 2)
 	return n
+}
+
+func optional(r map[string]any, key string) string {
+	if value, ok := r[key]; ok {
+		return fmt.Sprint(value)
+	}
+	return ""
 }

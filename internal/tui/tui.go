@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,27 +16,34 @@ import (
 	"github.com/Live-yum/iotools/internal/engine"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"go.yaml.in/yaml/v3"
 )
 
-const help = `IOTOOLS • keyboard reference
+const help = `IOTOOLS · 中文操作帮助
 
-Tab / Shift-Tab   Cycle requests, details, results, search
-↑ ↓ / j k        Select saved request
-Enter / F5       Run selected request (writes require confirmation)
-F2               Switch raw / protocol-native results
-F4               Edit collection YAML inside this terminal
-F6               Select environment profile
-F8               Cancel running request / subscription
-Ctrl-L           Clear current results
-? / F1           This help
-Ctrl-C / q       Cancel and quit
+Tab / Shift-Tab   在请求列表、详情、结果、搜索框之间切换
+↑ ↓ / j k        选择已保存的请求
+Enter / F5       执行请求；修改数据前必须确认
+F2               在协议专用视图和原始结果之间切换
+F3               在表单内直接编辑所选请求和参数
+F4               在终端内直接编辑 YAML 请求配置
+F6               切换环境配置（profile）
+F8               取消正在执行的请求或订阅
+Ctrl-L           清空结果
+? / F1           打开本帮助
+Ctrl-C / q       取消当前任务并退出
 
-Editor: Ctrl-S validates and saves, Esc cancels.
-No network request runs on startup or selection.
-Profiles: ${name}; environment secret: ${env:VARIABLE}.
-Edit timeouts, limits and protocol params in the collection.
-Data stays in memory unless you explicitly export CLI output.
-Streaming results are bounded; use the CLI for long captures.`
+配置编辑器：Ctrl-S 校验并保存，Esc 放弃修改
+HTTP：展开响应树；F2 查看完整原始结果
+MQTT：按主题分层显示最新消息；Enter 展开/折叠
+OPC UA：Enter 浏览子节点，r 读取，s 订阅，退格返回
+Kafka：选择主题后按 Enter 开始只读消费
+Modbus：p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
+
+打开程序或选择请求不会自动连接服务器
+环境变量：${名称}；敏感信息：${env:变量名}
+配置文件只保存变量引用，不自动保存明文凭据
+界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
 	App                    *tview.Application
@@ -83,16 +91,16 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	u := &UI{App: tview.NewApplication(), collection: c, raw: b, path: path, profile: profile, readonly: readonly}
 	u.pages = tview.NewPages()
 	u.list = tview.NewList().ShowSecondaryText(true)
-	u.list.SetBorder(true).SetTitle(" Collections ")
+	u.list.SetBorder(true).SetTitle(" 请求集 Collections ")
 	u.detail = tview.NewTextView().SetWrap(true)
-	u.detail.SetBorder(true).SetTitle(" Request ")
+	u.detail.SetBorder(true).SetTitle(" 请求详情 Request ")
 	u.result = tview.NewTextView().SetWrap(false)
-	u.result.SetBorder(true).SetTitle(" Results / live events ")
+	u.result.SetBorder(true).SetTitle(" 原始结果 Results / live events ")
 	u.inspector = newInspector(u)
 	u.resultPages = tview.NewPages().AddPage("raw", u.result, true, false).AddPage("visual", u.inspector.pages, true, true)
 	u.visual = true
 	u.status = tview.NewTextView().SetTextColor(tcell.ColorAqua)
-	u.search = tview.NewInputField().SetLabel(" Filter: ")
+	u.search = tview.NewInputField().SetLabel(" 搜索: ")
 	u.search.SetChangedFunc(func(s string) { u.populate(s) })
 	top := tview.NewFlex().AddItem(u.list, 30, 1, true).AddItem(u.detail, 0, 2, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.search, 1, 0, false).AddItem(top, 0, 1, true).AddItem(u.resultPages, 0, 1, false).AddItem(u.status, 2, 0, false)
@@ -108,7 +116,7 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	if len(c.Requests) > 0 {
 		u.inspector.reset(c.Requests[0])
 	}
-	u.setStatus("Ready • Enter run · F4 edit · F6 profile · F8 cancel · ? help")
+	u.setStatus("就绪 · Enter 执行 · F4 编辑 · F6 环境 · F8 取消 · ? 帮助")
 	u.App.SetRoot(u.pages, true).EnableMouse(true)
 	u.App.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		if e.Key() == tcell.KeyCtrlC {
@@ -124,7 +132,7 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			u.quit()
 			return nil
 		case tcell.KeyF1:
-			u.modal(help)
+			u.showHelp()
 			return nil
 		case tcell.KeyF2:
 			u.visual = !u.visual
@@ -135,6 +143,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 				u.resultPages.SwitchToPage("raw")
 				u.App.SetFocus(u.result)
 			}
+			return nil
+		case tcell.KeyF3:
+			u.editRequest()
 			return nil
 		case tcell.KeyF4:
 			u.edit()
@@ -147,11 +158,14 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			return nil
 		case tcell.KeyF8:
 			u.stop()
-			u.setStatus("Cancelling…")
+			u.setStatus("正在取消…")
 			return nil
 		case tcell.KeyCtrlL:
 			u.events = nil
 			u.result.Clear()
+			if u.lastRequest.Protocol != "" {
+				u.inspector.reset(u.lastRequest)
+			}
 			return nil
 		case tcell.KeyTab, tcell.KeyBacktab:
 			items := []tview.Primitive{u.list, u.detail, u.resultPages, u.search}
@@ -166,7 +180,7 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		if !u.search.HasFocus() {
 			switch e.Rune() {
 			case '?':
-				u.modal(help)
+				u.showHelp()
 				return nil
 			case 'q':
 				u.quit()
@@ -180,9 +194,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 func (u *UI) setStatus(s string) {
 	mode := ""
 	if u.readonly {
-		mode = " • READ ONLY"
+		mode = " · 只读 READ ONLY"
 	}
-	u.status.SetText(clean(s) + "\nProfile: " + u.profile + mode + " • " + u.path)
+	u.status.SetText(clean(s) + "\n环境 Profile: " + u.profile + mode + " • " + u.path)
 }
 func (u *UI) populate(filter string) {
 	u.list.Clear()
@@ -202,7 +216,7 @@ func (u *UI) populate(filter string) {
 		u.list.SetCurrentItem(0)
 		u.preview()
 	} else {
-		u.detail.SetText("No matching requests. F4 opens the collection editor.")
+		u.detail.SetText("未找到匹配请求。按 F4 打开配置编辑器。")
 	}
 }
 func (u *UI) preview() {
@@ -210,15 +224,19 @@ func (u *UI) preview() {
 		return
 	}
 	r := u.collection.Requests[u.selected]
-	b, _ := json.MarshalIndent(r, "", "  ")
+	masked := redactPreview(r)
+	b, e := json.MarshalIndent(masked, "", "  ")
+	if e != nil {
+		b, _ = yaml.Marshal(masked)
+	}
 	note := ""
 	if r.Mutates() {
-		note = "WRITE OPERATION • confirmation required\n\n"
+		note = "此操作会修改数据 · 执行前需要确认\n\n"
 	}
 	u.detail.SetText(clean(note + string(b)))
 }
 func (u *UI) modal(text string) {
-	m := tview.NewModal().SetText(clean(text)).AddButtons([]string{"Close"})
+	m := tview.NewModal().SetText(clean(text)).AddButtons([]string{"关闭"})
 	m.SetDoneFunc(func(_ int, _ string) { u.pages.RemovePage("modal"); u.App.SetFocus(u.list) })
 	m.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		if e.Key() == tcell.KeyEscape {
@@ -233,7 +251,7 @@ func (u *UI) modal(text string) {
 }
 func (u *UI) execute() {
 	if u.running {
-		u.setStatus("A request is running. F8 cancels it first.")
+		u.setStatus("已有请求正在执行，请先按 F8 取消。")
 		return
 	}
 	if len(u.indexes) == 0 {
@@ -247,10 +265,10 @@ func (u *UI) execute() {
 	}
 	if r.Mutates() {
 		if u.readonly {
-			u.modal("Read-only mode blocks this operation.")
+			u.modal("当前为只读模式，禁止执行修改操作。")
 			return
 		}
-		m := tview.NewModal().SetText(clean("Execute write operation?\n" + r.Protocol + " / " + r.Action + "\n" + r.Endpoint + "\n\nThis may change data on the selected server.")).AddButtons([]string{"Cancel", "Execute"})
+		m := tview.NewModal().SetText(clean("确认执行修改操作？\n" + r.Protocol + " / " + r.Action + "\n" + r.Endpoint + "\n\n此操作可能修改目标服务器的数据，请核对目标。")).AddButtons([]string{"取消", "确认执行"})
 		m.SetDoneFunc(func(i int, _ string) {
 			u.pages.RemovePage("confirm")
 			u.App.SetFocus(u.list)
@@ -282,16 +300,16 @@ func (u *UI) start(r config.Request) {
 	u.running = true
 	u.events = nil
 	u.result.Clear()
-	u.setStatus("Running " + r.ID + " • F8 cancels")
+	u.setStatus("正在执行 " + r.ID + " · F8 取消")
 	go func() {
 		e := engine.Run(ctx, r, true, func(event engine.Event) {
 			b, err := json.MarshalIndent(event, "", "  ")
 			if err != nil {
-				b = []byte(fmt.Sprintf("Unable to render event: %v", err))
+				b = []byte(fmt.Sprintf("无法显示事件：%v", err))
 			}
 			s := clean(string(b))
 			if len(s) > 32768 {
-				s = s[:32768] + "\n… event truncated in TUI (use CLI for full data)"
+				s = s[:32768] + "\n… 界面已截断显示，请用命令行获取完整数据"
 			}
 			u.App.QueueUpdateDraw(func() {
 				u.inspector.add(event)
@@ -314,9 +332,9 @@ func (u *UI) start(r config.Request) {
 			u.cancel = nil
 			u.mu.Unlock()
 			if e != nil {
-				u.setStatus("Stopped: " + e.Error())
+				u.setStatus("已停止：" + e.Error())
 			} else {
-				u.setStatus("Completed " + r.ID)
+				u.setStatus("执行完成：" + r.ID)
 			}
 		})
 	}()
@@ -330,11 +348,11 @@ func (u *UI) stop() {
 }
 func (u *UI) edit() {
 	if u.running {
-		u.modal("Cancel the active request before editing.")
+		u.modal("请先取消当前请求，再编辑配置。")
 		return
 	}
 	editor := tview.NewTextArea().SetText(string(u.raw), false)
-	editor.SetBorder(true).SetTitle(" Collection YAML • Ctrl-S save · Esc cancel ")
+	editor.SetBorder(true).SetTitle(" 请求配置 YAML · Ctrl-S 保存 · Esc 放弃 ")
 	editor.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		switch e.Key() {
 		case tcell.KeyEscape:
@@ -343,8 +361,13 @@ func (u *UI) edit() {
 			return nil
 		case tcell.KeyCtrlS:
 			b := []byte(editor.GetText())
+			current, err := os.ReadFile(u.path)
+			if err != nil || !bytes.Equal(current, u.raw) {
+				editor.SetTitle(" 文件已被外部修改，已停止覆盖 · Esc 关闭 ")
+				return nil
+			}
 			if e := config.Save(u.path, b); e != nil {
-				editor.SetTitle(" Save failed: " + clean(e.Error()) + " • Esc cancel ")
+				editor.SetTitle(" 保存失败：" + clean(e.Error()) + " · Esc 放弃 ")
 				return nil
 			}
 			c, e := config.Parse(b)
@@ -356,7 +379,7 @@ func (u *UI) edit() {
 			u.pages.RemovePage("editor")
 			u.populate(u.search.GetText())
 			u.App.SetFocus(u.list)
-			u.setStatus("Collection saved")
+			u.setStatus("配置已保存")
 			return nil
 		}
 		return e
@@ -366,7 +389,7 @@ func (u *UI) edit() {
 }
 func (u *UI) profiles() {
 	if u.running {
-		u.modal("Cancel the active request before switching profiles.")
+		u.modal("请先取消当前请求，再切换环境。")
 		return
 	}
 	names := []string{""}
@@ -375,18 +398,18 @@ func (u *UI) profiles() {
 	}
 	sort.Strings(names[1:])
 	list := tview.NewList()
-	list.SetBorder(true).SetTitle(" Select profile • Esc closes ")
+	list.SetBorder(true).SetTitle(" 选择环境 · Esc 关闭 ")
 	for _, name := range names {
 		n := name
 		label := n
 		if n == "" {
-			label = "(none)"
+			label = "（不使用环境）"
 		}
 		list.AddItem(label, "", 0, func() {
 			u.profile = n
 			u.pages.RemovePage("profiles")
 			u.App.SetFocus(u.list)
-			u.setStatus("Profile selected")
+			u.setStatus("已切换环境")
 		})
 	}
 	list.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {

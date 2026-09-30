@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -13,6 +12,10 @@ import (
 )
 
 func runModbus(ctx context.Context, r config.Request, emit Emit) error {
+	annotations, err := parseRegisterAnnotations(r)
+	if err != nil {
+		return err
+	}
 	addr, count, unit := r.Int("address", 0), r.Int("count", 1), r.Int("unit", 1)
 	if addr < 0 || addr > 65535 || count < 1 || count > 125 || addr+count > 65536 || unit < 1 || unit > 247 {
 		return fmt.Errorf("invalid address/count/unit (count 1..125, unit 1..247; broadcast disabled)")
@@ -24,6 +27,12 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		return fmt.Errorf("word_order must be ABCD, CDAB, BADC or DCBA")
 	}
 	timeout, _ := r.Duration()
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < timeout {
+		timeout = time.Until(deadline)
+	}
+	if timeout <= 0 {
+		return context.DeadlineExceeded
+	}
 	if timeout > 5*time.Second {
 		timeout = 5 * time.Second
 	}
@@ -34,8 +43,8 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		h := modbus.NewTCPClientHandler(strings.TrimPrefix(r.Endpoint, "tcp://"))
 		h.Timeout = timeout
 		h.SlaveId = byte(unit)
-		handler = h
-		close = h.Close
+		handler = &tcpContextHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "tcp://"), ctx: ctx, timeout: timeout}
+		close = func() error { return nil }
 	case strings.HasPrefix(r.Endpoint, "rtu+tcp://"):
 		h := modbus.NewRTUClientHandler("")
 		h.SlaveId = byte(unit)
@@ -91,6 +100,22 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 				v = 0xff00
 			}
 			data, e = client.WriteSingleCoil(uint16(addr), v)
+		case "write-coils":
+			values, ok := r.Params["values"].([]any)
+			if !ok || len(values) < 1 || len(values) > 1968 || addr+len(values) > 65536 {
+				return fmt.Errorf("values must contain 1..1968 booleans")
+			}
+			b := make([]byte, (len(values)+7)/8)
+			for i, v := range values {
+				bit, ok := v.(bool)
+				if !ok {
+					return fmt.Errorf("coil values must be explicit booleans")
+				}
+				if bit {
+					b[i/8] |= 1 << uint(i%8)
+				}
+			}
+			data, e = client.WriteMultipleCoils(uint16(addr), uint16(len(values)), b)
 		case "write-registers":
 			values, ok := r.Params["values"].([]any)
 			if !ok || len(values) < 1 || len(values) > 123 || addr+len(values) > 65536 {
@@ -98,21 +123,27 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 			}
 			b := make([]byte, len(values)*2)
 			for i, v := range values {
-				x, ok := v.(int)
-				if !ok || x < 0 || x > 65535 {
+				x, err := exactInt(v)
+				if err != nil || x < 0 || x > 65535 {
 					return fmt.Errorf("register values must be integers 0..65535")
 				}
 				binary.BigEndian.PutUint16(b[i*2:], uint16(x))
 			}
 			data, e = client.WriteMultipleRegisters(uint16(addr), uint16(len(values)), b)
 		default:
-			return unsupported(r, "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "write-coil")
+			return unsupported(r, "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "write-coil", "write-coils")
 		}
 		if e != nil {
 			return e
 		}
 		if r.Action == "read-holding" || r.Action == "read-input" {
+			if len(data) != count*2 {
+				return fmt.Errorf("truncated or oversized Modbus register response")
+			}
 			rows := decodeRegisters(data, addr, r.String("word_order", "ABCD"))
+			if err := annotateRegisters(rows, annotations, order); err != nil {
+				return err
+			}
 			send(emit, "registers", rows)
 		} else if r.Action == "read-coils" || r.Action == "read-discrete" {
 			if len(data) < (count+7)/8 {
@@ -135,28 +166,4 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		}
 	}
 	return nil
-}
-func decodeRegisters(data []byte, address int, order string) []map[string]any {
-	rows := make([]map[string]any, 0, len(data)/2)
-	for i := 0; i+1 < len(data); i += 2 {
-		v := binary.BigEndian.Uint16(data[i : i+2])
-		row := map[string]any{"address": address + i/2, "u16": v, "i16": int16(v), "hex": fmt.Sprintf("0x%04X", v), "binary": fmt.Sprintf("%016b", v), "ascii": string([]byte{byte(v >> 8), byte(v)})}
-		if i+3 < len(data) {
-			b := [4]byte{data[i], data[i+1], data[i+2], data[i+3]}
-			switch order {
-			case "CDAB":
-				b = [4]byte{b[2], b[3], b[0], b[1]}
-			case "BADC":
-				b = [4]byte{b[1], b[0], b[3], b[2]}
-			case "DCBA":
-				b = [4]byte{b[3], b[2], b[1], b[0]}
-			}
-			x := binary.BigEndian.Uint32(b[:])
-			row["u32"] = x
-			row["i32"] = int32(x)
-			row["f32"] = fmt.Sprint(math.Float32frombits(x))
-		}
-		rows = append(rows, row)
-	}
-	return rows
 }

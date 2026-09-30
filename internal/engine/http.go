@@ -1,10 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/Live-yum/iotools/internal/config"
+	codec "github.com/Live-yum/iotools/internal/crypto"
 	"io"
 	"net/http"
 	"net/url"
@@ -30,15 +33,25 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 		}
 		body = string(b)
 	}
-	req, e := http.NewRequestWithContext(ctx, method, r.Endpoint, strings.NewReader(body))
+	codecs, e := httpCodecs(r)
 	if e != nil {
 		return e
 	}
-	if h, ok := r.Params["headers"].(map[string]any); ok {
-		for k, v := range h {
-			req.Header.Set(k, fmt.Sprint(v))
+	endpoint, body, headers, e := transformHTTPRequest(r, body, codecs)
+	if e != nil {
+		return e
+	}
+	var transforms []codec.Rule
+	if v, ok := r.Params["response_transform"]; ok {
+		if e = codec.Parse(v, &transforms); e != nil {
+			return e
 		}
 	}
+	req, e := http.NewRequestWithContext(ctx, method, endpoint, strings.NewReader(body))
+	if e != nil {
+		return e
+	}
+	req.Header = headers
 	if _, ok := r.Params["json"]; ok && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -68,10 +81,25 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 		return fmt.Errorf("response exceeds 4 MiB limit")
 	}
 	var parsed any
-	if json.Unmarshal(data, &parsed) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if decoder.Decode(&parsed) != nil {
 		parsed = string(data)
 	}
-	send(emit, "response", map[string]any{"status": resp.StatusCode, "headers": resp.Header, "body": parsed})
+	send(emit, "response", map[string]any{"status": resp.StatusCode, "headers": resp.Header, "body": parsed, "raw_body_base64": base64.StdEncoding.EncodeToString(data)})
+	if len(transforms) > 0 {
+		transformed, err := codec.Transform(data, codecs, transforms)
+		if err != nil {
+			return fmt.Errorf("响应转换失败: %w", err)
+		}
+		var view any
+		d := json.NewDecoder(bytes.NewReader(transformed))
+		d.UseNumber()
+		if err = d.Decode(&view); err != nil {
+			return fmt.Errorf("响应转换 JSON 无效")
+		}
+		send(emit, "transformed", map[string]any{"status": resp.StatusCode, "body": view})
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("HTTP %s", resp.Status)
 	}

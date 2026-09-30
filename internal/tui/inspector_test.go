@@ -5,9 +5,12 @@ import (
 	"github.com/Live-yum/iotools/internal/engine"
 	"github.com/gdamore/tcell/v2"
 	"github.com/gopcua/opcua/ua"
+	"github.com/rivo/tview"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,5 +123,87 @@ func TestTUIRepeatedRunAndQuitCancelsActiveRequest(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("repeated run started %d requests", hits.Load())
+	}
+}
+func TestModbusAnnotationsPersistWithoutResolvedSecrets(t *testing.T) {
+	u, _ := newTestUI(t)
+	var selected config.Request
+	for _, r := range u.collection.Requests {
+		if r.Protocol == "modbus" {
+			selected = r
+			break
+		}
+	}
+	u.lastRequest = selected
+	v := u.inspector
+	v.reset(selected)
+	v.pins[0] = true
+	v.labels[0] = "电压"
+	if e := v.persistAnnotations(); e != nil {
+		t.Fatal(e)
+	}
+	c, _, e := config.Load(u.path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	found := false
+	for _, r := range c.Requests {
+		if r.ID == selected.ID {
+			found = true
+			if r.Endpoint != selected.Endpoint {
+				t.Fatal("saved resolved endpoint instead of source template")
+			}
+			labels := r.Params["labels"].(map[string]any)
+			if labels["0"] != "电压" {
+				t.Fatal("label not persisted")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("lost request")
+	}
+}
+
+func TestPollingDoesNotOverwriteInteractiveAnnotations(t *testing.T) {
+	u, _ := newTestUI(t)
+	v := u.inspector
+	v.reset(config.Request{Protocol: "modbus", Endpoint: "tcp://localhost:502"})
+	event := engine.Event{Kind: "registers", Data: []map[string]any{{"address": 0, "u16": uint16(1), "label": "旧标签", "pinned": true}}}
+	v.add(event)
+	v.labels[0] = "新标签"
+	v.pins[0] = false
+	v.add(event)
+	if v.labels[0] != "新标签" || v.pins[0] {
+		t.Fatal("polling overwrote interactive annotation changes")
+	}
+}
+
+func TestSnapshotUIRejectsOverwriteAndLoadsDiff(t *testing.T) {
+	u, _ := newTestUI(t)
+	v := u.inspector
+	r := config.Request{ID: "snap", Protocol: "modbus", Action: "read-holding", Endpoint: "tcp://127.0.0.1:1502", Params: map[string]any{"unit": 1}}
+	u.lastRequest = r
+	v.reset(r)
+	v.add(engine.Event{Kind: "registers", Data: []map[string]any{{"address": 0, "u16": uint16(1)}}})
+	path := filepath.Join(t.TempDir(), "snapshot.json")
+	v.snapshot(false)
+	_, p := u.pages.GetFrontPage()
+	form := p.(*tview.Form)
+	form.GetFormItem(0).(*tview.InputField).SetText(path)
+	form.GetButton(0).InputHandler()(tcell.NewEventKey(tcell.KeyEnter, 0, 0), func(tview.Primitive) {})
+	if _, e := os.Stat(path); e != nil {
+		t.Fatal(e)
+	}
+	v.add(engine.Event{Kind: "registers", Data: []map[string]any{{"address": 0, "u16": uint16(3)}}})
+	v.snapshot(true)
+	_, p = u.pages.GetFrontPage()
+	form = p.(*tview.Form)
+	form.GetFormItem(0).(*tview.InputField).SetText(path)
+	form.GetButton(0).InputHandler()(tcell.NewEventKey(tcell.KeyEnter, 0, 0), func(tview.Primitive) {})
+	if page, _ := u.pages.GetFrontPage(); page != "snapshot-diff" {
+		t.Fatal("snapshot diff not shown")
+	}
+	if v.baseline[0] != 1 {
+		t.Fatal("baseline not loaded")
 	}
 }

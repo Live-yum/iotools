@@ -1,59 +1,66 @@
-# Protocol-native TUI workflows
+# 终端界面中文操作说明
 
-All five protocols keep the same collection/detail/results layout. F2 switches
-between structured protocol views and raw timestamped JSON events. Tab focuses
-the results pane; mouse selection is also supported.
+五种协议共用“请求列表 / 请求详情 / 结果”布局。F2 切换专用结果视图与原始
+JSON。Tab 切换焦点，也可鼠标选中。F1/? 打开可滚动中文帮助，Esc 关闭。
 
-## MQTT topic tree
+## 不离开终端编辑请求
 
-Run a subscription to see topic segments grouped hierarchically. Each leaf updates
-in place with the latest payload, QoS and retained flag. Enter expands/collapses
-branches. Paths are bounded to 1024 tree nodes; raw event output continues even
-if new tree paths reach the limit. F8 cancels the subscription. A new run starts a
-fresh tree and cannot silently leave an old subscription connected.
+- F3 打开所选请求表单：ID、名称、协议、操作、目标地址、超时、参数 YAML
+- F4 编辑完整集合文件：环境、请求、加解密、自定义寄存器规则等
+- 保存前校验，ID 不能重复；取消不会改写源文件；不需要外部编辑器
+- 配置在编辑期间被外部修改时拒绝覆盖；关闭后重新启动/载入新文件再编辑
+- 浏览详情遮盖密码/密钥，F3/F4 是主动打开原始配置，所以源文件中的明文可见
+- 保存配置不会连接服务器，也不会触发写入
 
-## OPC UA node browser
+## MQTT 主题树
 
-Run a browse request, focus the results, then select a node:
+运行订阅后，主题按层级显示。叶子显示最新载荷、QoS、保留标记；再次收到同主题
+消息时原地更新。Enter 展开/折叠，F8 取消订阅。主题树最多 1024 个路径节点，
+达到上限后仍继续显示原始事件。新请求不会偷偷保留旧连接。
 
-- Enter browses that node's children
-- r reads its current value
-- s starts a bounded data-change subscription
-- Backspace returns to the preceding navigation request
-- F8 cancels a running subscription before navigating again
+## OPC UA 节点浏览
 
-These operations inherit the selected recipe's connection security/auth settings.
-They do not modify the saved collection or create credentials. Encrypted endpoints
-still require independent certificate trust configuration. Typed writes/method
-calls remain explicit saved requests edited using F4, with write confirmation.
+运行 browse 请求，选中结果节点后：
 
-## Kafka topic table
+- Enter 浏览子节点
+- r 读取当前值
+- s 开始有时间/数量上限的订阅
+- 退格返回上一层浏览请求
+- 订阅进行中先按 F8 取消，再继续浏览
 
-Topic listing shows topic names, partition counts, internal-topic status and
-per-topic errors. Enter starts a bounded read-only consumer for the selected topic,
-using the existing connection/security configuration. No consumer group offset is
-committed. Produce/admin requests remain explicit recipes with confirmation.
+临时浏览沿用该请求的安全策略、证书和鉴权，不改写请求文件。证书不会自动信任。
+类型化写入和方法调用通过 F3/F4 配置为显式请求，并经过写入确认。
 
-## Modbus live registers
+## Kafka 主题表
 
-Periodic register results update rows in place. Columns include integer/hex/float
-views, session labels, pin markers, u16 sparklines and delta against a snapshot.
+主题表展示名称、分区数、内部主题标记和逐主题错误。Enter 使用现有安全配置
+读取选中主题；默认有超时和条数上限，不提交消费组偏移。Avro 根据注册表 schema
+解码；不存在/格式错误的 schema 不会伪装成正常文本。生产/管理操作仍需要确认。
 
-- p toggles the selected register pin
-- l opens a label editor; Save/Cancel/Escape are supported
-- f toggles pinned-only filtering
-- d captures the current values as a fresh snapshot baseline
+## Modbus 寄存器与快照
 
-Pins and labels are session-only and isolated by endpoint/unit. The initial sample
-is the default delta baseline; sparklines retain the latest 32 samples. The graph
-plots u16 values, not f32 reinterpretations. No network write happens when pinning,
-labeling, filtering or taking a snapshot. Actual writes require explicit unit,
-address and typed value, plus confirmation.
+周期采样原地更新寄存器行。可查看整数/十六进制/浮点/M10K/自定义规则结果。
+横向内容较多时可滚动，F2 始终可查看完整原始事件。
 
-## Response trees and limits
+- p：切换固定寄存器，并保存回当前请求
+- l：编辑标签；保存/取消/Esc 均支持，保存的是原模板，不写入解析后凭据
+- f：切换“只看固定项”
+- d：以当前数值建立临时差值基线
+- S：保存不可覆盖的快照文件；包含目标地址，请保存到私有目录
+- O：载入同设备/unit/寄存器类型的快照，展示完整差异并更新差值列
 
-HTTP JSON and generic results are expandable trees (depth 8 and 300 fields per
-event); long scalar previews are truncated. F2 shows raw events for detail. Raw
-TUI events retain the latest 128 entries, at most 32 KiB per rendered entry. Use
-CLI JSON lines when a full bounded response capture is needed. Terminal escapes
-and markup in server-supplied strings are escaped before rendering.
+初始样本是默认快照；趋势保留最新 32 个 u16 样本，不把 f32 重新解释值当作图形
+数据。固定、标签、筛选、快照都不会写入设备。真正写入必须明确 unit/address/
+类型化 value，并确认。轮询不会用旧标签覆盖刚刚在界面里修改的标签。
+
+## 原始与派生加解密视图
+
+HTTP response 事件保留原始状态、头、正文以及逐字节 Base64；transformed 事件
+是加解密后的派生结果，不覆盖原始内容。转换失败不显示部分解密结果。终端内容
+可能含业务明文，请保护屏幕、滚动记录及手动导出文件。详见 CRYPTO.zh-CN.md。
+
+## 界面容量与退出
+
+结构树每个事件最多 8 层/300 字段；原始界面保留最新 128 个事件，每个最多显示
+32 KiB。CLI JSON 行用于完整的有界采集。服务器发送的终端控制字符和样式标记
+会先转义。重复按执行不会重复启动；F8 取消，Ctrl-C/q 等待取消完成后退出。

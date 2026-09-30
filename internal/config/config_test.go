@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +57,78 @@ func TestWriteClassification(t *testing.T) {
 	}
 	if (Request{Protocol: "http", Action: "GET"}).Mutates() {
 		t.Fatal("GET marked write")
+	}
+}
+func TestUnusedCryptoSecretsAreLazy(t *testing.T) {
+	c := &Collection{Profiles: map[string]map[string]string{"local": {}}}
+	r := Request{Protocol: "http", Endpoint: "http://127.0.0.1", Params: map[string]any{"request_crypto": "plain64", "crypto": map[string]any{"plain64": map[string]any{"type": "base64"}, "unused-prod": map[string]any{"type": "aes-256-cbc", "key": "${env:IOTOOLS_MISSING_CRYPTO_KEY}"}}}}
+	resolved, e := c.Resolve(r, "local")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defs := resolved.Params["crypto"].(map[string]any)
+	if len(defs) != 1 || defs["plain64"] == nil {
+		t.Fatal("unused codec not isolated")
+	}
+	if len(r.Params["crypto"].(map[string]any)) != 2 {
+		t.Fatal("source codec definitions changed")
+	}
+	r.Params["request_crypto"] = "unused-prod"
+	if _, e = c.Resolve(r, "local"); e == nil {
+		t.Fatal("used missing secret was ignored")
+	}
+}
+func TestRequestEditPreservesUnrelatedComments(t *testing.T) {
+	source := []byte("# collection comment\n" + valid)
+	r := Request{ID: "health", Name: "中文名称", Protocol: "http", Action: "GET", Endpoint: "${host}/new"}
+	b, e := ReplaceRequest(source, "health", r)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(string(b), "# collection comment") || !strings.Contains(string(b), "中文名称") {
+		t.Fatalf("comments/edit missing: %s", b)
+	}
+	if _, e = ReplaceRequest(source, "health", Request{ID: "", Protocol: "http", Action: "GET", Endpoint: "x"}); e == nil {
+		t.Fatal("invalid edited request accepted")
+	}
+}
+
+func TestResponseCryptoReferencesResolveLazily(t *testing.T) {
+	c := &Collection{Version: 1, Profiles: map[string]map[string]string{"local": {}}, Requests: []Request{{ID: "x", Protocol: "http", Action: "GET", Endpoint: "http://localhost", Params: map[string]any{"crypto": map[string]any{"unused": map[string]any{"key": "${env:IOTOOLS_MISSING_TEST_SECRET}"}, "used": map[string]any{"key": "${env:IOTOOLS_USED_TEST_SECRET}"}}, "response_transform": []any{map[string]any{"type": "decode", "crypto": "used"}}}}}}
+	t.Setenv("IOTOOLS_USED_TEST_SECRET", "a-secret")
+	r, e := c.Resolve(c.Requests[0], "local")
+	if e != nil {
+		t.Fatal(e)
+	}
+	defs := r.Params["crypto"].(map[string]any)
+	if len(defs) != 1 || defs["used"].(map[string]any)["key"] != "a-secret" {
+		t.Fatal("used codec not resolved lazily")
+	}
+	if len(c.Requests[0].Params["crypto"].(map[string]any)) != 2 {
+		t.Fatal("source definitions changed")
+	}
+}
+func TestReplaceRequestPreservesUnrelatedSource(t *testing.T) {
+	source := []byte("# customer comment\n" + valid + " - id: second\n   protocol: http\n   action: GET\n   endpoint: http://localhost/other # keep this\n")
+	c, e := Parse(source)
+	if e != nil {
+		t.Fatal(e)
+	}
+	r := c.Requests[0]
+	r.Name = "已修改"
+	b, e := ReplaceRequest(source, r.ID, r)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(string(b), "# customer comment") || !strings.Contains(string(b), "# keep this") {
+		t.Fatal("unrelated comments lost")
+	}
+	result, e := Parse(b)
+	if e != nil || result.Requests[0].Name != "已修改" || result.Requests[1].ID != "second" {
+		t.Fatal("request replacement failed")
+	}
+	r.ID = "second"
+	if _, e = ReplaceRequest(source, "health", r); e == nil {
+		t.Fatal("duplicate ID accepted")
 	}
 }

@@ -1,109 +1,138 @@
-# iotools
+# iotools · 统一协议终端工具
 
-A single portable, keyboard-first TUI for HTTP, Kafka, MQTT, Modbus and OPC UA.
-Collections are editable YAML files, and the same requests can run in the TUI or
-as a JSON-lines CLI. **No Java, Python, Node, Docker, external editor or separately
-installed protocol client is required to run the executable.** Remote protocol
-servers and a functioning terminal are naturally still required.
+把 HTTP 网络请求、Kafka、MQTT、Modbus、OPC UA 放进一个可移植的 TUI。
+请求以 YAML 文件保存，也可以直接在终端内编辑。界面、快捷键、环境配置、
+结果查看、取消操作和写入确认使用同一套交互。
 
-## Quick start
+运行程序不需要另外安装 Java、Python、Node、Docker、外部编辑器或上述五个
+协议工具。协议服务器本身仍然需要存在；串口设备需要操作系统授予访问权限。
+构建时使用 Go，发布产物是独立可执行文件。
 
-Download the matching `iotools-windows-amd64` or `iotools-linux-arm64` artifact
-from a successful [Actions run](https://github.com/Live-yum/iotools/actions).
-Artifacts also contain license notices, examples and documentation.
+## 下载与运行
 
-```sh
-iotools --init
-iotools --profile local
-# On PowerShell use .\iotools.exe instead of iotools.
+从本仓库成功的 [GitHub Actions](https://github.com/Live-yum/iotools/actions)
+运行中下载对应平台的 artifact：
+
+- Windows x64（AMD/Intel）：iotools-windows-amd64
+- Linux ARM64：iotools-linux-arm64
+- Linux x64：iotools-linux-amd64
+
+解压后的目录包含程序、示例、中文/协议说明、依赖许可证和 SHA256SUMS。
+产物名称带有源码提交 SHA，请以该提交的实际测试结果为准。
+
+Windows PowerShell：
+
+```powershell
+.\iotools.exe --init
+.\iotools.exe --profile local
 ```
 
-The example targets localhost only. Nothing connects until you select a request
-and press Enter. Press F4 to change endpoints, add requests or edit their params
-without leaving the terminal. A server that is not running produces an actionable
-connection error; an unavailable server is never silently replaced with mock data.
+Linux：
+
+```sh
+chmod +x iotools
+./iotools --init
+./iotools --profile local
+```
+
+示例只连接本机地址。按 F4 修改目标地址、请求内容或新增请求。
+打开程序、切换环境、选择请求都不会自动连接服务器；按 Enter 才会执行。
+服务器未启动时会显示真实错误，不会偷偷用模拟数据代替。
+
+## 常用操作
+
+- Tab / Shift-Tab：切换请求列表、详情、结果、搜索框
+- Enter / F5：执行所选请求；修改数据时弹出确认
+- F2：切换协议专用视图与原始 JSON 结果
+- F3：直接编辑单个请求表单；F4：完整 YAML；Ctrl-S 校验保存，Esc 放弃
+- F6：切换环境；F8：取消当前请求或订阅
+- ? / F1：中文帮助；Ctrl-C / q：取消并退出
+
+协议结果视图：
+
+- HTTP：展开响应状态、头部和 JSON；F2 查看原始结果
+- Kafka：主题/分区表；选择主题后 Enter 只读消费；支持注册表 Avro 编解码
+- MQTT：主题树、最新载荷、QoS、保留标记；Enter 展开/折叠
+- Modbus：寄存器表、固定项、标签、u16 趋势、快照差值
+- OPC UA：节点浏览；Enter 下钻，r 读取，s 订阅，退格返回
+
+详细操作见 [终端交互说明](docs/tui.md)。固定项和标签可以保存回当前请求；S 保存快照，O 载入对比。
+这些操作不会擅自修改服务器数据。
+
+## 文件配置与命令行
+
+```yaml
+version: 1
+profiles:
+  local:
+    base: http://127.0.0.1:8080
+requests:
+  - id: health
+    name: 检查服务健康状态
+    protocol: http
+    action: GET
+    endpoint: ${base}/health
+    timeout: 10s
+```
 
 ```sh
 iotools --file examples/local.yaml --validate
-iotools --file examples/local.yaml --profile local --run http-get
+iotools --profile local --run http-get
 iotools --profile local --run mqtt-publish --allow-writes
 iotools --profile production --read-only
 ```
 
-CLI writes require `--allow-writes`; TUI writes require a per-operation confirmation.
-`--read-only` takes precedence. Authentication secrets can be referenced as
-`${env:NAME}`; they are resolved only in memory, and never written back to YAML.
-All network operations have a timeout; use F8 to cancel streaming operations.
-There is no shell-command interpolation, auto-execution, telemetry, credential
-creation or background scanning. Results are held in memory, not auto-persisted.
-Redirect CLI output to a private file if you want an explicit capture.
+命令行输出 JSON 行。修改操作必须明确传 --allow-writes；--read-only 优先级
+更高。Modbus 写入还必须明确填写 unit、address 和对应类型的值。错误类型、
+小数地址、越界值、未知参数会在连接前拒绝，不会静默改写成默认地址或 false。
 
-## Unified interface
+环境引用为 ${名称}，敏感信息引用为 ${env:环境变量名}。解析后的凭据只用于
+内存中的当前操作，不会替换回 YAML。不要把真实密钥、令牌、私有端点或导出的
+业务数据提交进仓库。没有后台扫描、遥测、自动更新或自动创建凭据。
 
-- Left: saved requests, with protocol and action labels
-- Right: selected request source; profile variables remain unexpanded
-- Bottom: protocol-native views; F2 switches to timestamped raw events (128 recent)
-  - MQTT: hierarchical topic tree with latest values and retain/QoS
-  - OPC UA: node browser; Enter browses, r reads, s watches, Backspace returns
-  - Kafka: sorted topic/partition table; Enter consumes selected topic read-only
-  - Modbus: register table with pins, labels, u16 trend sparklines and snapshot deltas
-  - HTTP and other results: expandable structured response trees
-- Top: request filter; F6 selects an environment profile
-- Tab / Shift-Tab changes focus; Enter / F5 runs; F4 edits; F8 cancels; ? opens help
-- YAML editor: Ctrl-S validates and atomically saves, Esc discards changes
-- Plain terminal fonts are sufficient; no icon font or clipboard helper is needed
+## 协议与兼容性
 
-## Protocol capabilities
+- HTTP：常见方法、请求头、JSON/原始请求体、Basic/Bearer、校验 TLS/mTLS；
+  用户 Slumber 分支的 AES/Base64 加解密和响应字段转换，见 [加解密中文说明](docs/CRYPTO.zh-CN.md)
+- Kafka：主题/节点/分区/偏移/消费组/积压、主题管理、生产消费、筛选、SASL/TLS、
+  Schema Registry 和 Kafka Connect REST；Avro 详见 [Kafka 文档](docs/kafka.md)
+- MQTT：发布、多个通配主题订阅、单条读取、QoS 0/1/2、保留消息清理、TLS/mTLS
+- Modbus：TCP、RTU、RTU-over-TCP、线圈/离散输入/寄存器读取与显式写入、周期采样
+- OPC UA：端点发现、分页浏览、读取、类型化写入/方法调用、数据变化订阅、
+  匿名/用户名/X509 身份和严格的加密端点证书验证
 
-See [the capability matrix](docs/capabilities.md) for the exact implemented scope
-and remaining differences from the inspirational tools. This is an original
-implementation of their workflows, not a bundled launcher for five programs or a
-claim that every upstream feature is already reproduced.
+[配置参考](docs/configuration.md) · [OPC UA 安全配置](docs/opcua.md) ·
+[安全说明](docs/security.md) · [逐项功能矩阵及未完成项](docs/capabilities.md)
 
-- HTTP: methods, headers, JSON/raw bodies, bearer/basic auth, verified TLS/mTLS,
-  response status/headers/body, explicit redirects (not automatically followed)
-- Kafka: brokers/topics/partitions/offsets, groups and lag, create/delete/configure
-  topics, produce and bounded consume, search, TLS/mTLS and SASL PLAIN/SCRAM,
-  Schema Registry-backed Avro keys/values and Kafka Connect REST operations
-- MQTT: MQTT 3.1.1 publish/subscribe/read-one, multiple wildcard subscriptions,
-  retained values, exact-topic retained cleanup, QoS 0/1/2, TLS/mTLS/auth
-- Modbus: TCP and serial RTU, unit selection, coils/discrete/input/holding reads,
-  register/coil writes, periodic samples, integer/hex/binary/float interpretations, register table/trends
-- OPC UA: endpoint discovery, bounded address-space browse with continuation,
-  reads, typed writes/method calls, data-change subscriptions, anonymous/password/
-  X509 identity, fail-closed encrypted endpoint trust verification
+项目正在按原仓库功能逐项集成。功能矩阵明确记录已经实现、已经验证以及仍需
+补齐的能力；不能把“协议已接通”或“核心 CI 已通过”理解为所有上游功能已齐全。
 
-## Build and test
-
-Go is a build-time dependency only. Versions and checksums are pinned in go.mod
-and go.sum. The project currently uses Go 1.27.1.
+## 测试与构建
 
 ```sh
 go test -count=1 -timeout 5m ./...
+go test -race -count=1 ./internal/...
 go vet ./...
 CGO_ENABLED=0 go build -trimpath -o iotools ./cmd/iotools
-# Cross compile; CI also executes the suite natively on both targets.
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o iotools.exe ./cmd/iotools
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o iotools-arm64 ./cmd/iotools
 ```
 
-CI runs on native Windows x64, Linux ARM64 and Linux x64. Tests create isolated
-loopback protocol servers, exercise actual wire exchanges, verify TUI drawing and
-editor behavior, protocol-native result views, repeated-run/cancel/quit flows, and reject insecure writes and TLS failures. The Kafka fixture is
-`kfake`, a protocol-compatible simulator, not a production Kafka distribution.
-Physical serial devices and external industrial hardware are never touched.
-Test/build artifacts are tied to the exact source SHA. Check the run result rather
-than assuming a workflow file alone proves platform support.
+Go 版本和依赖校验值固定在 go.mod / go.sum。CI 在 Windows x64、Linux ARM64、
+Linux x64 原生运行测试，生成 CGO_ENABLED=0 产物，并检查 ELF/PE 的运行时依赖。
+Linux 产物是静态 ELF；Windows 只允许操作系统自带 DLL。
 
-## Configuration and security
+测试使用临时回环地址服务器，覆盖真实协议报文、配置校验、写入阻止、证书拒绝、
+分页/订阅/取消、TUI 绘制/缩放/编辑/重复执行/退出等。Kafka 回环服务是 kfake
+协议模拟器，不等于真实生产 Kafka 集群验收；物理串口与外部工业设备也没有被
+本测试擅自连接。完整运行结果和平台产物以对应 SHA 的 Actions 记录为证据。
 
-[Configuration reference](docs/configuration.md) · [TUI workflows](docs/tui.md) · [Kafka/Avro](docs/kafka.md) · [Security model](docs/security.md)
+## 来源与许可证
 
-The repository is Apache-2.0. Upstream functional inspiration includes
-[MTUI](https://github.com/inowattio/MTUI), [ktea](https://github.com/jonas-grgt/ktea),
-[ua-client](https://github.com/FreeOpcUa/ua-client),
-[mqttui](https://github.com/EdJoPaTo/mqttui) and
-[Slumber](https://github.com/Live-yum/slumber). Their source is not incorporated.
-MTUI and mqttui have GPL licenses; copying them into an Apache-only combined
-binary would not preserve this project's licensing model. Protocol implementations
-use separately licensed Go libraries; exact texts are packaged in every artifact.
+功能参考：[MTUI](https://github.com/inowattio/MTUI)、
+[ktea](https://github.com/jonas-grgt/ktea)、
+[ua-client](https://github.com/FreeOpcUa/ua-client)、
+[mqttui](https://github.com/EdJoPaTo/mqttui)、
+[用户 Slumber 分支](https://github.com/Live-yum/slumber)。
+
+本项目保留 Apache-2.0。MTUI/mqttui 使用 GPL 许可证，不能直接复制其应用源码
+并声称仍是 Apache-only。这里采用独立实现与许可兼容的原生协议库；不是启动
+外部程序的包装器。每个二进制产物都附带实际依赖及 Go 标准库的许可证文本。

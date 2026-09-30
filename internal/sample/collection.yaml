@@ -8,19 +8,19 @@ profiles:
     opcua: opc.tcp://127.0.0.1:4840
 requests:
   - id: http-get
-    name: HTTP · inspect JSON
+    name: HTTP · 查看 JSON
     protocol: http
     action: GET
     endpoint: ${http}/health
   - id: http-post
-    name: HTTP · send JSON
+    name: HTTP · 发送 JSON
     protocol: http
     action: POST
     endpoint: ${http}/echo
     params:
       json: {message: hello from iotools}
   - id: kafka-topics
-    name: Kafka · topic browser
+    name: Kafka · 浏览主题
     protocol: kafka
     action: topics
     endpoint: ${kafka}
@@ -44,7 +44,7 @@ requests:
     action: lag
     endpoint: ${kafka}
   - id: mqtt-subscribe
-    name: MQTT · live topic values
+    name: MQTT · 实时主题消息
     protocol: mqtt
     action: subscribe
     endpoint: ${mqtt}
@@ -56,7 +56,7 @@ requests:
     endpoint: ${mqtt}
     params: {topic: demo/temperature, payload: '21.5', retain: true, qos: 1}
   - id: modbus-registers
-    name: Modbus · holding registers
+    name: Modbus · 保持寄存器
     protocol: modbus
     action: read-holding
     endpoint: ${modbus}
@@ -68,12 +68,12 @@ requests:
     endpoint: ${modbus}
     params: {unit: 1, address: 0, value: 42}
   - id: opcua-discover
-    name: OPC UA · endpoint discovery
+    name: OPC UA · 发现端点
     protocol: opcua
     action: discover
     endpoint: ${opcua}
   - id: opcua-browse
-    name: OPC UA · address space
+    name: OPC UA · 浏览地址空间
     protocol: opcua
     action: browse
     endpoint: ${opcua}
