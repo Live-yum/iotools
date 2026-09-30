@@ -60,27 +60,35 @@ jobs:
             echo "Existing KVM access is available; no permissions changed"
             echo "ANDROID_EMULATOR_ACCEL=-accel on" >> "$GITHUB_ENV"
             echo "ANDROID_HW_DISABLE=false" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_API=35" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_TARGET=google_apis" >> "$GITHUB_ENV"
           else
             echo "No existing KVM access; keeping software emulation"
             echo "ANDROID_EMULATOR_ACCEL=-accel off" >> "$GITHUB_ENV"
             echo "ANDROID_HW_DISABLE=true" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_API=29" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_TARGET=default" >> "$GITHUB_ENV"
           fi
       - name: Real emulator UI, protocol, editing and lifecycle tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ env.ANDROID_TEST_API }}
           arch: x86_64
-          target: google_apis
-          profile: pixel_2
+          target: ${{ env.ANDROID_TEST_TARGET }}
+          profile: Nexus 5
           disable-animations: true
           disable-linux-hw-accel: ${{ env.ANDROID_HW_DISABLE }}
-          emulator-options: -no-window -no-audio -no-snapshot -gpu swiftshader_indirect ${{ env.ANDROID_EMULATOR_ACCEL }}
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -memory 1536 -gpu swiftshader_indirect ${{ env.ANDROID_EMULATOR_ACCEL }}
           emulator-boot-timeout: 1200
           script: |
+            set +e
             gradle -p android --no-daemon connectedDebugAndroidTest
+            test_status=$?
             mkdir -p android-evidence
             adb pull /sdcard/Android/data/io.github.liveyum.iotools/files/screenshots android-evidence/ || true
             adb logcat -d > android-evidence/logcat.txt
+            echo "API=${{ env.ANDROID_TEST_API }} target=${{ env.ANDROID_TEST_TARGET }}" > android-evidence/platform.txt
+            exit "$test_status"
       - name: Package verified APK
         run: |
           mkdir -p android-dist

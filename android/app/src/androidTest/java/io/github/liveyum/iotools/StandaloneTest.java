@@ -28,7 +28,7 @@ public class StandaloneTest {
  private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
   long end=System.currentTimeMillis()+20000;String actual="";
   while(System.currentTimeMillis()<end){actual=terminal(scenario);if(actual.contains(text))return;Thread.sleep(100);}
-  fail("Missing "+text+" in "+actual);
+  screenshot("failed-screen");fail("Missing "+text+" in "+actual+" native="+NativeRuntime.error());
  }
  private void screenshot(String name)throws Exception{
   Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
@@ -56,13 +56,22 @@ public class StandaloneTest {
    onView(withText("文件")).perform(click());awaitText(scenario,"请求配置 YAML");screenshot("03-config-editor");
    // Bracketed paste goes through the same terminal input path as IME/multiline input.
    scenario.onActivity(a->a.terminalView().evaluateJavascript("terminalPaste('# 中文备注 😀\\n')",null));
+   // Switching apps before saving must preserve the exact editor draft.
+   Thread.sleep(300);
+   scenario.moveToState(Lifecycle.State.CREATED);
+   Thread.sleep(300);
+   assertEquals("background retains TUI memory",1,NativeRuntime.state());
+   scenario.moveToState(Lifecycle.State.RESUMED);
+   awaitText(scenario,"中文备注");
+   assertEquals("background must not replay HTTP",1,requests.get());
+   screenshot("03b-editor-resumed");
    onView(withText("保存")).perform(click());awaitText(scenario,"配置已保存");
    String saved=new String(java.nio.file.Files.readAllBytes(config.toPath()),StandardCharsets.UTF_8);
    assertTrue("Chinese/emoji bytes saved",saved.contains("中文备注 😀"));
    onView(withText("Esc")).perform(click());
    scenario.moveToState(Lifecycle.State.CREATED);
-   long deadline=System.currentTimeMillis()+10000;while(NativeRuntime.state()!=0&&System.currentTimeMillis()<deadline)Thread.sleep(50);
-   assertEquals("background stops native runtime",0,NativeRuntime.state());
+   Thread.sleep(400);
+   assertEquals("background retains idle native UI",1,NativeRuntime.state());
    scenario.moveToState(Lifecycle.State.RESUMED);Thread.sleep(500);assertEquals("no automatic replay",1,requests.get());
    onView(withText("启动")).perform(click());awaitText(scenario,"客服验收");assertEquals(1,requests.get());screenshot("04-reopened");
    scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));

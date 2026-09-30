@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include "_cgo_export.h"
 
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_start(JNIEnv *env,jclass cls,jstring path,jint cols,jint rows){
+JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_start(JNIEnv *env,jclass cls,jstring path,jint cols,jint rows,jint flags){
  const char *p=(*env)->GetStringUTFChars(env,path,0);if(!p)return -1;
- int result=IotoolsStart((char*)p,cols,rows);(*env)->ReleaseStringUTFChars(env,path,p);return result;
+ int result=IotoolsStart((char*)p,cols,rows,flags);(*env)->ReleaseStringUTFChars(env,path,p);return result;
 }
 JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_read(JNIEnv *env,jclass cls){
  char data[65536];int n=IotoolsRead(data,sizeof(data));if(n<0||n>65536)n=0;
@@ -28,3 +28,8 @@ JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_importConfig
 }
 
 JNIEXPORT jstring JNICALL Java_io_github_liveyum_iotools_NativeRuntime_clipboard(JNIEnv *env,jclass cls){char *p=IotoolsClipboard();jstring s=(*env)->NewStringUTF(env,p);free(p);return s;}
+
+JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_pause(JNIEnv *env,jclass cls){IotoolsPause();}
+JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_resume(JNIEnv *env,jclass cls){IotoolsResume();}
+JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_options(JNIEnv *env,jclass cls,jint flags,jstring path){const char*p=(*env)->GetStringUTFChars(env,path,0);if(p){IotoolsOptions(flags,(char*)p);(*env)->ReleaseStringUTFChars(env,path,p);}}
+JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_validate(JNIEnv *env,jclass cls,jstring path){const char*p=(*env)->GetStringUTFChars(env,path,0);if(!p)return -1;int r=IotoolsValidate((char*)p);(*env)->ReleaseStringUTFChars(env,path,p);return r;}

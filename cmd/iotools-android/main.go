@@ -35,7 +35,7 @@ func fail(err error) C.int {
 }
 
 //export IotoolsStart
-func IotoolsStart(path *C.char, cols, rows C.int) C.int {
+func IotoolsStart(path *C.char, cols, rows, flags C.int) C.int {
 	mu.Lock()
 	defer mu.Unlock()
 	if current != nil {
@@ -61,7 +61,7 @@ func IotoolsStart(path *C.char, cols, rows C.int) C.int {
 		clipboardMu.Unlock()
 		return nil
 	})
-	s, err := mobile.Start(name, version, int(cols), int(rows))
+	s, err := mobile.StartWithOptions(name, version, int(cols), int(rows), mobile.Options{ReadOnly: int(flags)&1 != 0, History: int(flags)&2 != 0})
 	if err != nil {
 		return fail(err)
 	}
@@ -104,6 +104,43 @@ func IotoolsResize(cols, rows C.int) C.int {
 		return 0
 	}
 	return fail(current.TTY.Resize(int(cols), int(rows)))
+}
+
+//export IotoolsPause
+func IotoolsPause() {
+	mu.Lock()
+	s := current
+	mu.Unlock()
+	if s != nil {
+		s.Pause()
+	}
+}
+
+//export IotoolsResume
+func IotoolsResume() {
+	mu.Lock()
+	s := current
+	mu.Unlock()
+	if s != nil {
+		s.Resume()
+	}
+}
+
+//export IotoolsOptions
+func IotoolsOptions(flags C.int, path *C.char) {
+	mu.Lock()
+	s := current
+	mu.Unlock()
+	if s != nil {
+		s.ApplyOptions(mobile.Options{ReadOnly: int(flags)&1 != 0, History: int(flags)&2 != 0}, C.GoString(path))
+	}
+}
+
+//export IotoolsValidate
+func IotoolsValidate(path *C.char) C.int {
+	mu.Lock()
+	defer mu.Unlock()
+	return fail(mobile.ValidateConfig(C.GoString(path)))
 }
 
 //export IotoolsStop

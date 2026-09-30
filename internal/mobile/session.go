@@ -13,14 +13,24 @@ import (
 )
 
 type Session struct {
-	TTY  *TTY
-	ui   *tui.UI
-	done chan struct{}
-	mu   sync.Mutex
-	err  error
+	TTY     *TTY
+	ui      *tui.UI
+	done    chan struct{}
+	mu      sync.Mutex
+	err     error
+	pending []func(tcell.Screen)
+	closed  bool
+}
+
+type Options struct {
+	ReadOnly bool
+	History  bool
 }
 
 func Start(path, version string, width, height int) (*Session, error) {
+	return StartWithOptions(path, version, width, height, Options{})
+}
+func StartWithOptions(path, version string, width, height int, options Options) (*Session, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("配置路径必须是应用私有目录绝对路径")
 	}
@@ -43,7 +53,7 @@ func Start(path, version string, width, height int) (*Session, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	ui, err := tui.New(path, "", false)
+	ui, err := tui.New(path, "", options.ReadOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +62,29 @@ func Start(path, version string, width, height int) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	if options.History {
+		ui.HTTPHistoryPath = filepath.Join(filepath.Dir(path), "history.sqlite")
+	}
 	ui.App.SetScreen(screen)
 	ui.BuildVersion = version
 	session := &Session{TTY: tty, ui: ui, done: make(chan struct{})}
+	ui.App.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		session.mu.Lock()
+		pending := session.pending
+		session.pending = nil
+		session.mu.Unlock()
+		for _, operation := range pending {
+			operation(screen)
+		}
+		return false
+	})
+
 	go func() {
 		err := ui.Run()
 		session.mu.Lock()
 		session.err = err
+		session.closed = true
+		session.pending = nil
 		session.mu.Unlock()
 		tty.Close()
 		close(session.done)
@@ -108,4 +134,28 @@ func ImportConfig(staged, target string) error {
 		}
 	}
 	return os.Rename(staged, target)
+}
+
+func (s *Session) control(operation func(tcell.Screen)) {
+	s.mu.Lock()
+	if s.closed || len(s.pending) >= 16 {
+		s.mu.Unlock()
+		return
+	}
+	s.pending = append(s.pending, operation)
+	s.mu.Unlock()
+	// At most16 pending controls ensure this cannot fill tview's event queue
+	// even if Run exits concurrently. BeforeDraw also drains after paste ends.
+	s.ui.App.QueueEvent(tcell.NewEventKey(tcell.KeyF24, 0, 0))
+}
+func (s *Session) Pause()  { s.control(func(tcell.Screen) { s.ui.CancelMobileWork() }) }
+func (s *Session) Resume() { s.control(func(screen tcell.Screen) { screen.Sync() }) }
+func (s *Session) ApplyOptions(options Options, path string) {
+	s.control(func(tcell.Screen) {
+		history := ""
+		if options.History {
+			history = filepath.Join(filepath.Dir(path), "history.sqlite")
+		}
+		s.ui.ApplyMobileOptions(options.ReadOnly, history)
+	})
 }
