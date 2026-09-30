@@ -172,6 +172,8 @@ func (u *UI) kafkaConsumeForm(topic string) {
 	index := 0
 	if offset == "latest" {
 		index = 1
+	} else if offset == "most-recent" {
+		index = 2
 	}
 	partitionText := source.String("partition", "")
 	if ids, ok := source.Params["consume_partitions"].([]any); ok {
@@ -181,7 +183,7 @@ func (u *UI) kafkaConsumeForm(topic string) {
 		}
 		partitionText = strings.Join(parts, ",")
 	}
-	form.AddInputField("主题", topic, 64, nil, nil).AddInputField("消息上限1..100000", strconv.Itoa(source.Int("limit", 100)), 12, nil, nil).AddDropDown("起始偏移", []string{"earliest", "latest"}, index, nil).AddInputField("时间(UTC/RFC3339/相对)", source.String("start_time", ""), 40, nil, nil).AddInputField("分区(逗号分隔/空=全部)", partitionText, 20, nil, nil).AddInputField("键包含", source.String("key_filter", ""), 45, nil, nil).AddInputField("键前缀", source.String("key_prefix", ""), 45, nil, nil).AddInputField("值包含", source.String("filter", ""), 45, nil, nil).AddInputField("值前缀", source.String("value_prefix", ""), 45, nil, nil).AddDropDown("键格式", []string{"auto", "text", "avro"}, 0, nil).AddDropDown("值格式", []string{"auto", "text", "avro"}, 0, nil)
+	form.AddInputField("主题", topic, 64, nil, nil).AddInputField("消息上限1..100000", strconv.Itoa(source.Int("limit", 100)), 12, nil, nil).AddDropDown("起始偏移", []string{"earliest", "latest", "most-recent"}, index, nil).AddInputField("时间(UTC/RFC3339/相对)", source.String("start_time", ""), 40, nil, nil).AddInputField("分区(逗号分隔/空=全部)", partitionText, 20, nil, nil).AddInputField("键包含", source.String("key_filter", ""), 45, nil, nil).AddInputField("键前缀", source.String("key_prefix", ""), 45, nil, nil).AddInputField("值包含", source.String("filter", ""), 45, nil, nil).AddInputField("值前缀", source.String("value_prefix", ""), 45, nil, nil).AddDropDown("键格式", []string{"auto", "text", "avro"}, 0, nil).AddDropDown("值格式", []string{"auto", "text", "avro"}, 0, nil)
 	u.kafkaForm("kafka-consume", "Kafka消费条件 · 不提交组偏移", form, func() error {
 		topic := kafkaInput(form, 0)
 		if err := kafkaValidateTopic(topic); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"os"
 	"path/filepath"
@@ -24,35 +25,7 @@ func TestVisualCaptures(t *testing.T) {
 	}
 	u, s := newTestUI(t)
 	s.SetSize(120, 40)
-	capture := func(name string) {
-		u.App.ForceDraw()
-		cells, w, h := s.GetContents()
-		type cell struct {
-			Text   string
-			W      int
-			FG, BG int32
-		}
-		out := struct {
-			Width, Height int
-			Cells         []cell
-		}{w, h, []cell{}}
-		for index, c := range cells {
-			_, _, _, width := s.GetContent(index%w, index/w)
-			fg, bg, _ := c.Style.Decompose()
-			f, b := fg.Hex(), bg.Hex()
-			if f < 0 {
-				f = 0xeeeeee
-			}
-			if b < 0 {
-				b = 0
-			}
-			out.Cells = append(out.Cells, cell{string(c.Runes), width, f, b})
-		}
-		b, _ := json.Marshal(out)
-		if e := os.WriteFile(filepath.Join(directory, name+".json"), b, 0644); e != nil {
-			t.Fatal(e)
-		}
-	}
+	capture := func(name string) { captureTUIScreen(t, u, s, directory, name) }
 	capture("01-home")
 	u.showHelp()
 	capture("02-help")
@@ -209,5 +182,50 @@ func TestVisualCaptures(t *testing.T) {
 	u.pages.RemovePage("ua-workspace-node")
 	ws.focusPane(3)
 	capture("30-opcua-subscriptions-small")
+	ws.close()
+	u.HTTPHistoryPath = "示例历史.sqlite"
+	u.historyAdmin()
+	_, adminPage := u.pages.GetFrontPage()
+	adminPage.(*tview.Form).GetFormItem(2).(*tview.InputField).SetText("客服请求.yaml")
+	capture("31-history-admin-small")
+
+}
+
+func captureTUIScreen(t *testing.T, u *UI, s tcell.SimulationScreen, directory, name string) {
+	t.Helper()
+	if directory == "" {
+		return
+	}
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	u.App.ForceDraw()
+	cells, w, h := s.GetContents()
+	type cell struct {
+		Text   string
+		W      int
+		FG, BG int32
+	}
+	out := struct {
+		Width, Height int
+		Cells         []cell
+	}{w, h, []cell{}}
+	for index, c := range cells {
+		_, _, _, width := s.GetContent(index%w, index/w)
+		fg, bg, _ := c.Style.Decompose()
+		f, b := fg.Hex(), bg.Hex()
+		if f < 0 {
+			f = 0xeeeeee
+		}
+		if b < 0 {
+			b = 0
+		}
+		out.Cells = append(out.Cells, cell{string(c.Runes), width, f, b})
+	}
+	b, _ := json.Marshal(out)
+	if e := os.WriteFile(filepath.Join(directory, name+".json"), b, 0644); e != nil {
+		t.Fatal(e)
+	}
 
 }

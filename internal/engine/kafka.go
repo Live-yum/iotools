@@ -121,8 +121,8 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		if r.String("offset", "earliest") == "latest" {
 			offset = kgo.NewOffset().AtEnd()
 		}
-		if value := r.String("offset", "earliest"); value != "earliest" && value != "latest" {
-			return fmt.Errorf("offset requires earliest/latest")
+		if value := r.String("offset", "earliest"); value != "earliest" && value != "latest" && value != "most-recent" {
+			return fmt.Errorf("offset requires earliest/latest/most-recent")
 		}
 		if start := r.String("start_time", ""); start != "" {
 			timestamp, e := kafkaStartTime(start, time.Now())
@@ -131,7 +131,9 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 			}
 			offset = kgo.NewOffset().AfterMilli(timestamp.UnixMilli())
 		}
-		if selections, exists := r.Params["consume_partitions"]; exists {
+		if r.String("offset", "earliest") == "most-recent" {
+			// Explicit finite assignments are installed after querying current end offsets.
+		} else if selections, exists := r.Params["consume_partitions"]; exists {
 			ids, e := kafkaPartitions(selections)
 			if e != nil {
 				return e
@@ -310,6 +312,18 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		if limit < 1 || limit > 100000 {
 			return fmt.Errorf("limit must be 1..100000")
 		}
+		var recentEnds map[int32]int64
+		if r.String("offset", "earliest") == "most-recent" {
+			var err error
+			recentEnds, err = assignKafkaRecent(ctx, r, cl, admin, limit)
+			if err != nil {
+				return err
+			}
+			if len(recentEnds) == 0 {
+				send(emit, "consume-complete", map[string]any{"records": 0, "reason": "当前快照为空"})
+				return nil
+			}
+		}
 		filter := r.String("filter", "")
 		for n := 0; n < limit; {
 			fetches := cl.PollFetches(ctx)
@@ -319,6 +333,19 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 			it := fetches.RecordIter()
 			for !it.Done() && n < limit {
 				v := it.Next()
+				if recentEnds != nil {
+					end, exists := recentEnds[v.Partition]
+					if !exists {
+						continue
+					}
+					if v.Offset >= end-1 {
+						delete(recentEnds, v.Partition)
+						cl.PauseFetchPartitions(map[string][]int32{topic: {v.Partition}})
+					}
+					if v.Offset >= end {
+						continue
+					}
+				}
 				value, err := kafkaDecode(ctx, r, registry, "value", v.Value)
 				if err != nil {
 					return err
@@ -336,6 +363,9 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 				}
 				send(emit, "record", map[string]any{"topic": v.Topic, "partition": v.Partition, "offset": v.Offset, "key": key, "value": value, "timestamp": v.Timestamp, "headers": v.Headers})
 				n++
+			}
+			if recentEnds != nil && len(recentEnds) == 0 {
+				return nil
 			}
 		}
 		return nil

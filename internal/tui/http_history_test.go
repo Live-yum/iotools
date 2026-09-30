@@ -14,6 +14,7 @@ import (
 
 func TestHistoryBrowserTypedDeletionAndScope(t *testing.T) {
 	u, _ := newTestUI(t)
+	u.readonly = true
 	u.HTTPHistoryPath = filepath.Join(t.TempDir(), "history.db")
 	h, e := engine.OpenHTTPHistory(u.HTTPHistoryPath)
 	if e != nil {
@@ -50,6 +51,20 @@ func TestHistoryBrowserTypedDeletionAndScope(t *testing.T) {
 		u.App.QueueUpdateDraw(u.quit)
 		t.Fatal("history list unavailable")
 	}
+	u.App.QueueUpdateDraw(func() {
+		table.Select(1, 0)
+		table.GetInputCapture()(tcell.NewEventKey(tcell.KeyRune, 'D', 0))
+		if !u.pages.HasPage("modal") || u.pages.HasPage("history-delete") {
+			t.Error("readonly opened deletion form")
+		}
+		u.pages.RemovePage("modal")
+		u.App.SetFocus(table)
+	})
+	protectedRows, err := engine.ListHTTPHistory(context.Background(), u.HTTPHistoryPath, u.collection.SourcePath, "")
+	if err != nil || len(protectedRows) != 1 {
+		t.Fatal("readonly deletion changed history", protectedRows, err)
+	}
+	u.App.QueueUpdateDraw(func() { u.readonly = false })
 	u.App.QueueUpdateDraw(func() {
 		table.Select(1, 0)
 		table.GetInputCapture()(tcell.NewEventKey(tcell.KeyRune, 'D', 0))

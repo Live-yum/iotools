@@ -66,6 +66,14 @@ func run(args []string) error {
 	historyDelete := flags.String("history-delete", "", "永久删除当前集合的明确ID列表（逗号分隔）")
 	allowHistoryDelete := flags.Bool("allow-history-delete", false, "明确允许本次不可恢复的本机历史删除")
 	historySQL := flags.String("history-query", "", "执行只读 SQLite 查询，需要 --history-db，不连接服务器")
+	historyScript := flags.String("history-script", "", "内置SQL脚本/.tables/.schema；默认只读，不联网")
+	historyPreview := flags.Bool("history-preview", false, "只生成SQL写入快照令牌，不执行")
+	historyApply := flags.String("history-apply", "", "执行与此预览令牌完全匹配的SQL写入")
+	historyBackup := flags.String("history-backup", "", "写SQL前的新备份文件，禁止覆盖")
+	historyCollections := flags.Bool("history-collections", false, "列出所选数据库全部历史集合")
+	historyCollectionAction := flags.String("history-collection-action", "", "delete/migrate，默认预览不执行")
+	historySource := flags.String("history-source", "", "明确来源集合标识")
+	historyTarget := flags.String("history-target", "", "明确迁移目标集合标识")
 	historyDB := flags.String("history-db", "", "明确启用 HTTP SQLite 历史文件（可能保存响应中的敏感数据）")
 	allowInsecureTLS := flags.Bool("allow-insecure-tls", false, "本次明确允许配置列出的精确主机忽略TLS证书；存在中间人风险")
 	allowChains := flags.Bool("allow-chain-writes", false, "明确允许请求链修改操作，必须同时指定 --allow-writes")
@@ -154,6 +162,54 @@ func run(args []string) error {
 		fmt.Println("已创建", *path, "· 启动：iotools --profile local")
 		return nil
 	}
+	if *historyScript != "" || *historyCollections || *historyCollectionAction != "" || *historyPreview || *historyApply != "" {
+		if *historyDB == "" {
+			return fmt.Errorf("历史管理需要明确 --history-db")
+		}
+		if *historyCollections {
+			if *historyScript != "" || *historyCollectionAction != "" || *historyApply != "" || *historyPreview {
+				return fmt.Errorf("集合列表不可混合SQL写操作")
+			}
+			rows, err := engine.ListHTTPHistoryCollections(context.Background(), *historyDB)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(rows)
+		}
+		script := *historyScript
+		if *historyCollectionAction != "" {
+			if script != "" {
+				return fmt.Errorf("集合操作不能同时指定SQL")
+			}
+			var err error
+			script, err = engine.HTTPHistoryCollectionScript(*historyCollectionAction, *historySource, *historyTarget)
+			if err != nil {
+				return err
+			}
+		}
+		if *historyApply != "" {
+			if *readonly || !*allow || *historyPreview {
+				return fmt.Errorf("执行历史SQL需要--allow-writes，不能只读或同时预览")
+			}
+			result, err := engine.ExecuteHTTPHistoryScript(context.Background(), *historyDB, script, *historyApply, *historyBackup, true)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(result)
+		}
+		if *historyPreview || *historyCollectionAction != "" {
+			preview, err := engine.PreviewHTTPHistoryScript(context.Background(), *historyDB, script)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(preview)
+		}
+		result, err := engine.QueryHTTPHistoryScript(context.Background(), *historyDB, script)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
 	if *historySQL != "" {
 		if *historyDB == "" {
 			return fmt.Errorf("--history-query 需要 --history-db")
@@ -179,6 +235,9 @@ func run(args []string) error {
 			return fmt.Errorf("历史操作需要明确 --history-db")
 		}
 		if *historyDelete != "" {
+			if *readonly {
+				return fmt.Errorf("只读模式禁止删除历史")
+			}
 			ids := []int64{}
 			for _, text := range strings.Split(*historyDelete, ",") {
 				id, e := strconv.ParseInt(strings.TrimSpace(text), 10, 64)

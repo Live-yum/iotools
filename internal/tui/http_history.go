@@ -22,7 +22,7 @@ func (u *UI) httpHistory() {
 	historyPath, collectionID := u.HTTPHistoryPath, u.collection.SourcePath
 	busy := false
 	table := tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
-	table.SetBorder(true).SetTitle(" HTTP历史 · 当前集合 · Enter查看 · D明确删除 · Esc关闭 ")
+	table.SetBorder(true).SetTitle(" HTTP历史 · M集合/SQL管理 · Enter查看 · D明确删除 · Esc关闭 ")
 	ctx, cancel := context.WithCancel(context.Background())
 	closed := false
 	close := func() { closed = true; cancel(); u.pages.RemovePage("http-history"); u.App.SetFocus(u.list) }
@@ -115,11 +115,20 @@ func (u *UI) httpHistory() {
 			close()
 			return nil
 		}
+		if e.Rune() == 'M' {
+			close()
+			u.historyAdmin()
+			return nil
+		}
 		if e.Rune() == 'r' {
 			refresh()
 			return nil
 		}
 		if e.Rune() == 'D' {
+			if u.readonly {
+				u.modal("只读模式禁止删除历史")
+				return nil
+			}
 			id := selected()
 			if id == 0 {
 				return nil

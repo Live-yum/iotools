@@ -45,7 +45,7 @@ chmod +x iotools
 - Enter / F5：执行所选请求；修改数据时弹出确认
 - F2：切换协议专用视图与原始 JSON 结果
 - F3：直接编辑单个请求表单；F4：完整 YAML；Ctrl-S 校验保存，Esc 放弃
-- F6：环境；F7：HTTP jq/SQL/curl/单次覆盖；F8：取消；F9：OPC UA历史；F10：独立订阅；F11：HTTP历史管理；F12：配置轮换预览
+- F6：环境；F7：HTTP jq/SQL/curl/单次覆盖/历史管理；F8：取消；F9：OPC UA历史；F10：独立订阅；F11：HTTP历史管理；F12：配置轮换预览
 - ? / F1：中文帮助；Ctrl-C / q：取消并退出
 
 协议结果视图：
@@ -55,6 +55,7 @@ chmod +x iotools
 - MQTT：主题树、JSON/MessagePack、h历史、g图表、/搜索、o/O展开折叠；[详细操作](docs/mqtt-history.md)
 - Modbus：寄存器表/矩阵（m切换，+/-列数）、固定项、标签、趋势、快照差值
 - OPC UA：Enter下钻，a属性，f引用，r读取，s订阅，c方法表单；属性表e编辑，退格返回
+- Ctrl+U / OPC UA结果D：[浏览/属性/引用/订阅四窗](docs/opcua-workspace.md)，窄屏1–4分页
 
 详细操作见 [终端交互说明](docs/tui.md)。固定项和标签可以保存回当前请求；S 保存快照，O 载入对比。
 这些操作不会擅自修改服务器数据。
@@ -110,10 +111,13 @@ Slumber v4/v5文件可直接载入并用F4原格式编辑；`--import slumber --
   匿名/用户名/X509 身份和严格的加密端点证书验证
 
 [配置参考](docs/configuration.md) · [OPC UA 安全配置](docs/opcua.md) ·
-[安全说明](docs/security.md) · [逐项功能矩阵及未完成项](docs/capabilities.md)
+[安全说明](docs/security.md) · [逐项功能矩阵与兼容边界](docs/capabilities.md)
 
-项目正在按原仓库功能逐项集成。功能矩阵明确记录已经实现、已经验证以及仍需
-补齐的能力；不能把“协议已接通”或“核心 CI 已通过”理解为所有上游功能已齐全。
+五种协议的统一编辑、执行、结果、取消与明确写确认工作流已实现，并逐项记录源码
+对照及验证。历史库集合列表/删除/迁移与内置可写SQL支持明确预览、原库备份和事务回滚；
+Kafka区分最近已有消息与实时尾部消费。原命令名称、旧日志/API格式、jaq/gojq边缘语义
+不承诺逐字节兼容；实际厂商设备和物理终端仍需验收。详见上述矩阵与
+[历史管理中文说明](docs/history-admin.md)。
 
 ## 测试与构建
 

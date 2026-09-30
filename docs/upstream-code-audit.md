@@ -1,14 +1,13 @@
-# 五仓库源码功能核对与后续验收
+# 五仓库源码功能核对与验收边界
 
 本表核对实际功能入口，不用README中的TODO代替源码。状态区分：
 
 - 已实现：存在用户可操作入口，不只是协议库接口
 - 本地验证：相应单元、模拟屏幕或回环协议测试通过；新提交原生CI另行核对
-- 待补：确有实现差异，列出下一步；不是把外部设备未测试冒充代码缺失
+- 兼容边界：明确原命令拼写、格式及受限SQL等行为差异；不等同硬件未测
 - 上游无该功能：不虚构额外“缺项”
 
-最近已验证的发布基线是1b8fc1f3（Windows x64/Linux ARM64/Linux x64原生全部通过）。
-本表随后续提交更新，不应将正在开发的项误认为已包含在旧产物中。
+原生平台验收以当前提交SHA的Actions和同SHA产物为准；不能用旧SHA结果代替新提交。
 
 ## Slumber 用户分支
 
@@ -21,7 +20,7 @@
 | util/src/yaml/resolve.rs | 本地跨文件、数组下标、标量引用、$ref位置合并和循环检测；已实现 | 原始文件F4编辑，不静默重写被引用文件 |
 | 同上 ReferenceSource | 只有Local/File，未实现HTTP远程引用 | 不将远程引用列为本仓库真实缺项 |
 | core/src/http/curl.rs、cli/src/commands/generate.rs | curl生成，默认禁止依赖请求，明确execute-triggers仍受修改授权；已实现 | 输出为POSIX命令，不执行；二进制NUL参数明确拒绝 |
-| cli/src/commands/db/request.rs | 历史list/get/delete；本轮实现F11和CLI，按集合隔离、逐ID确认、删除原子性验证 | 原CLI跨集合管理/批量别名、完整db shell命令族仍需逐项对应 |
+| cli/src/commands/db/request.rs | 历史list/get/delete；已实现F11和CLI，按集合隔离、逐ID确认、删除原子性验证 | 全库集合列表/删除/迁移与内置SQL入口已实现；命令名称和schema不逐字节复刻 |
 | cli/src/commands/request.rs | 配方请求、环境、鉴权、表单、响应/派生结果；现有统一配置+F3/F4可操作 | 已补临时字段/header/query/form/body/basic/bearer/URL、F7单次覆盖、dry-run和原始/派生/文件输出；完整别名/默认退出策略差异公开保留 |
 | core HTTP RenderedBody/BodyStream | 有界内存正文与文件模板已实现 | 已补body_file/response_file常量缓冲上传下载；6MiB回环验证，明确大小限制与变换/依赖边界 |
 
@@ -37,10 +36,10 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 |---|---|---|
 | mqtt/connect.rs、interactive/mqtt_thread.rs | 原生连接/TLS/身份、QoS、重连/恢复订阅；已实现并回环验证 | 厂商ACL/持久化部署单列外部验证 |
 | clean_retained.rs、interactive/clean_retained.rs | 递归保留消息清理；已实现有限预览、精确确认和再次校验 | MQTT3.1.1无原子比较删除；应暂停发布者 |
-| interactive/mqtt_history.rs、details/table.rs | 每主题历史、收到时间/QoS/值、旧缓存条目移除；本轮补齐并本地验证 | 保留内存上限，绝不把删除缓存等同删除broker消息 |
-| details/graph、payload/json_selector.rs | 数字/布尔/字符串/嵌套字段与二进制字节图；本轮实现 | 布局采用统一TUI，不声称像素一致 |
+| interactive/mqtt_history.rs、details/table.rs | 每主题历史、收到时间/QoS/值、旧缓存条目移除；已实现并本地验证 | 保留内存上限，绝不把删除缓存等同删除broker消息 |
+| details/graph、payload/json_selector.rs | 数字/布尔/字符串/嵌套字段与二进制字节图；已实现 | 布局采用统一TUI，不声称像素一致 |
 | payload/messagepack | MessagePack检测/解析；本轮独立实现严格有界解码 | 复杂复合map键明确回退二进制，不静默错误解释 |
-| interactive/mod.rs | /搜索，o/O展开折叠；本轮补齐 | 用户选择匹配项，不扩大订阅范围 |
+| interactive/mod.rs | /搜索，o/O展开折叠；已实现 | 用户选择匹配项，不扩大订阅范围 |
 | main.rs / interactive/mod.rs | 上游publish为独立子命令，不存在任意交互发布并同时订阅 | 不额外虚构“并行发布”缺项 |
 
 ## ktea
@@ -55,7 +54,10 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 - serdes/avro.go：schema.Value直接交给goavro，并未递归解析外部schema references；因此后者不列为上游真实已实现缺项
 - 旧README把部分删除写为TODO，但实际源码已有，已按源码而非TODO补齐
 
-目前仍需核对消费页的历史反向翻页/按上下文定位等精细语义；当前latest表示从尾部实时读取。
+再次核对consume_page与record_details_page：前后浏览仅遍历已收records，没有向broker
+反向翻页入口；本工具Ctrl+N/P覆盖同一场景。record_reader.go确有MostRecent与Live区别，
+因此新增most-recent：捕获末尾偏移，读取各分区有限窗口，到边界结束（包括过滤无匹配）；
+空主题立即结束，latest仍只等待未来消息。对应kfake多分区/空主题/过滤结束回归通过。
 实际Kafka厂商集群是外部验证，不等同于这些UI实现差异。Protobuf/ACL无实现入口证据时
 不声称已实现，也不假称上游已经支持。
 
@@ -66,11 +68,11 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 - tui/persist.rs：成功URL历史、每端点身份/证书路径偏好、不存密码、最后节点；已实现F9
 - tui/endpoint_dialog.rs：发现端点、策略/模式/身份选择；已实现；不自动信任未核实指纹
 - client.rs：分页浏览、27属性、正反向引用、方法参数、LocalizedText/QualifiedName、NodeId/Guid与数组；已实现
-- client.rs resolve_browse_path：命名空间与&转义路径；已实现；路径复制本轮增加，多父节点无法唯一确定时明确报错
+- client.rs resolve_browse_path：命名空间与&转义路径；已实现；路径复制已实现，多父节点无法唯一确定时明确报错
 - 独立多节点订阅、重连恢复、单节点取消，已实现F10，真实回环+并发退出race验证
 - 键盘布局尺寸调整和滚动日志保持，已实现；Ctrl+U/D四窗同显浏览、属性、引用和订阅；窄屏分页，独立订阅继续，取消和旧结果隔离有回归验证
-- 现代AES128/256策略本轮增加并真实加密回环验证；废弃SHA1策略仅显式兼容开关
-- 客户端身份生成本轮增加明确本机向导、取消、不覆盖；不自动创建/上传密钥，不自动授予服务端信任
+- 现代AES128/256策略已实现并真实加密回环验证；废弃SHA1策略仅显式兼容开关
+- 客户端身份生成已实现明确本机向导、取消、不覆盖；不自动创建/上传密钥，不自动授予服务端信任
 
 上游未实现事件订阅和自定义类型写入，单列为上游边界，不虚构已完成。厂商X509登录/
 物理设备/证书撤销服务未验证，和已实现的会话/类型功能分开说明。
@@ -110,3 +112,11 @@ ignore_certificate_hosts和large_body_size。第六批加入有界可选重定�
 和每次高风险运行确认；安全默认与上游不同，不是该能力缺失。large_body_size是上游
 显示/存储性能阈值，不等于无限制传输；原生区分4MiB内存模式和最高8GiB文件流式模式。
 跨origin头部清除、拒绝HTTPS降级、curl不导出更宽泛例外属于明确安全边界。
+
+
+### 用户fork本机历史管理
+db/collection.rs明确含全库集合列表、历史删除和迁移；db/shell.rs含内置多语句可写SQL
+及.tables/.schema。这是实际功能，不能归为别名。F7历史管理/F11 M和CLI已提供：
+默认只读，库路径和SQL预览、一致快照令牌、O_EXCL完整原库备份、写锁重验与整批事务。
+只读SQL可跨集合筛选recipe/profile/最新记录。禁止ATTACH/PRAGMA/扩展/虚拟表/触发器；
+预算、备份恢复见[历史管理](history-admin.md)，不声称通用SQLite工具完全兼容。

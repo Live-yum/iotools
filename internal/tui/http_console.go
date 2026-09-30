@@ -103,7 +103,7 @@ func (u *UI) httpConsole() {
 				u.App.SetFocus(view)
 			})
 		}()
-	}).AddButton("单次覆盖", func() { close(); u.httpOverrideForm() }).AddButton("关闭", close).SetCancelFunc(close)
+	}).AddButton("历史管理", func() { close(); u.historyAdmin() }).AddButton("单次覆盖", func() { close(); u.httpOverrideForm() }).AddButton("关闭", close).SetCancelFunc(close)
 	u.pages.AddPage("http-console", form, true, true)
 	u.App.SetFocus(form)
 }
