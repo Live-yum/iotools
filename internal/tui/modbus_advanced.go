@@ -24,16 +24,17 @@ type modbusColumn struct{ key, label string }
 var modbusColumns = []modbusColumn{{"pin", "固定"}, {"address", "地址"}, {"label", "标签"}, {"u16", "u16"}, {"i16", "i16"}, {"hex", "十六进制"}, {"f32", "f32"}, {"delta", "快照差值"}, {"trend", "趋势(u16)"}, {"f64", "f64"}, {"u32_m10k", "u32 M10K"}, {"i32_m10k", "i32 M10K"}, {"custom", "规则结果"}, {"u8", "u8高/低"}, {"i8", "i8高/低"}, {"binary", "二进制"}, {"ascii", "ASCII"}, {"f16", "f16"}, {"bcd", "BCD"}, {"u32", "u32"}, {"i32", "i32"}, {"hex32", "十六进制32"}, {"bcd32", "BCD32"}, {"u64", "u64"}, {"i64", "i64"}, {"time", "采样时间(UTC)"}}
 
 type modbusAdvanced struct {
-	request    config.Request
-	columns    []string
-	widths     map[string]int
-	hexAddress bool
-	timeMode   string
-	keymap     map[string]rune
+	interaction *modbusInteraction
+	request     config.Request
+	columns     []string
+	widths      map[string]int
+	hexAddress  bool
+	timeMode    string
+	keymap      map[string]rune
 }
 
-var modbusDefaultKeys = map[string]rune{"matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D', "more": 'M'}
-var modbusActionLabels = map[string]string{"matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV", "more": "完整配置/CSV对比/时间"}
+var modbusDefaultKeys = map[string]rune{"matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D', "more": 'M', "go-to": '/', "read-controls": 'R', "inspect": 'v', "graph": 'g', "write": 'w', "word-order": 'b', "unit": 'u', "register-type": 't', "page-up": '[', "page-down": ']', "batch-decrease": '{', "batch-increase": '}', "stats": 's', "activity": 'a', "rotation": 'N', "clear-session": 'X', "copy-column": 'y', "refresh": 'r', "pause": 'z'}
+var modbusActionLabels = map[string]string{"matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV", "more": "更多操作", "go-to": "地址/标签跳转", "read-controls": "读取设置", "inspect": "寄存器详情", "graph": "字段/规则图", "write": "编辑写入", "word-order": "本机重解释字序", "unit": "Unit设置", "register-type": "预览下一空间", "page-up": "预览前一窗口", "page-down": "预览后一窗口", "batch-decrease": "预览减少读取数量", "batch-increase": "预览增加读取数量", "stats": "通信统计", "activity": "活动日志", "rotation": "集合轮换", "clear-session": "清本机会话", "copy-column": "复制当前列", "refresh": "明确读取", "pause": "取消采样"}
 
 func modbusColumnExists(key string) bool {
 	for _, c := range modbusColumns {
@@ -155,7 +156,8 @@ func (v *inspector) modbusAdvancedReset(r config.Request) {
 	if columns, ok := r.Params["columns"].(map[string]any); ok && columns["time_mode"] == "ago" {
 		timeMode = "ago"
 	}
-	v.modbus = &modbusAdvanced{request: copyRequest(r), columns: cols, widths: widths, hexAddress: hex, keymap: keys, timeMode: timeMode}
+	interpreter, _ := engine.NewModbusInterpreter(r)
+	v.modbus = &modbusAdvanced{interaction: &modbusInteraction{interpreter: interpreter}, request: copyRequest(r), columns: cols, widths: widths, hexAddress: hex, keymap: keys, timeMode: timeMode}
 }
 func (v *inspector) modbusAdvancedKey(e *tcell.EventKey) *tcell.EventKey {
 	if v.protocol != "modbus" || v.modbus == nil || e.Key() != tcell.KeyRune || e.Modifiers() != tcell.ModNone {
@@ -176,28 +178,10 @@ func (v *inspector) modbusAdvancedKey(e *tcell.EventKey) *tcell.EventKey {
 		}
 		return e
 	}
-	switch action {
-	case "more":
-		v.modbusMoreMenu()
-		return nil
-	case "columns":
-		v.modbusColumnsPanel()
-		return nil
-	case "keymap":
-		v.modbusKeymapForm()
-		return nil
-	case "import":
-		v.modbusImportForm()
-		return nil
-	case "export":
-		v.modbusExportForm(false)
-		return nil
-	case "dump":
-		v.modbusExportForm(true)
-		return nil
-	}
-	return tcell.NewEventKey(tcell.KeyRune, modbusDefaultKeys[action], tcell.ModNone)
+	v.modbusDispatch(action)
+	return nil
 }
+
 func (v *inspector) modbusCell(address int, key string) string {
 	row := v.values[address]
 	switch key {
@@ -269,6 +253,14 @@ func (v *inspector) modbusSavedRequest() (config.Request, error) {
 	return config.Request{}, fmt.Errorf("找不到源请求，未写入文件")
 }
 func (v *inspector) modbusSaveParams(changes map[string]any) error {
+	for _, key := range []string{"pins", "labels", "rules"} {
+		if _, exists := changes[key]; exists {
+			if err := v.modbusAnnotationScope(); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	u := v.owner
 	if u.running {
 		return fmt.Errorf("请先停止采样再保存配置")
@@ -277,8 +269,22 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 	if err != nil {
 		return err
 	}
+	oldSpace, oldUnit := modbusReadAction(r.Action), r.Int("unit", 1)
 	for key, value := range changes {
+		if key == "__read_action" {
+			action, ok := value.(string)
+			if !ok || modbusReadAction(action) != action {
+				return fmt.Errorf("只能保存明确的读取空间")
+			}
+			r.Action = action
+			continue
+		}
 		r.Params[key] = value
+	}
+	if modbusReadAction(r.Action) != oldSpace || r.Int("unit", 1) != oldUnit {
+		for _, key := range []string{"pins", "labels", "rules"} {
+			delete(r.Params, key)
+		}
 	}
 	b, err := config.ReplaceRequest(u.raw, r.ID, r)
 	if err != nil {
@@ -302,6 +308,13 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 	u.collection = c
 	u.raw = b
 	for key, value := range changes {
+		if key == "__read_action" {
+			v.modbus.request.Action = value.(string)
+			if u.lastRequest.ID == r.ID {
+				u.lastRequest.Action = value.(string)
+			}
+			continue
+		}
 		v.modbus.request.Params[key] = value
 		if u.lastRequest.ID == r.ID {
 			u.lastRequest = copyRequest(u.lastRequest)

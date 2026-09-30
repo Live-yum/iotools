@@ -15,7 +15,7 @@
 - `samples` 为 1–100000，`interval_ms` 为 10–86400000 毫秒；整个请求受
   `timeout` 限制。单次通信最长 5 秒；TCP/RTU-over-TCP 支持上下文取消
 - 读取动作：`read-holding`、`read-input`、`read-coils`、`read-discrete`
-- 写入动作：`write-register`、`write-registers`、`write-coil`、`write-coils`
+- 写入动作：`write-register`、`write-registers`、`write-coil`、`write-coils`、`write-typed`、`read-write-registers`
 - 写入必须明确提供地址和 unit；TUI 会确认，CLI 需要 `--allow-writes`。
   `--read-only` 优先禁止写入。采样次数不会让写入重复执行
 - 单寄存器 `value` 和批量 `values` 必须是 0–65535 的整数；线圈使用 YAML
@@ -171,3 +171,5 @@ config_io/dump/diff 模块。不同版本的上游可能继续增加功能；不
 
 `M`新增通信统计、独立有界活动日志；`F12`或M可预览后轮换本机集合并返回初始集合。
 具体安全语义与上游差异见[Modbus会话与轮换](modbus-session.md)。
+
+专用地址/读取设置、同响应详情与字段图、精确类型/线圈写入和FC23：见[Modbus交互操作](modbus-interactions.md)。

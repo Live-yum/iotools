@@ -127,4 +127,29 @@ func TestVisualCaptures(t *testing.T) {
 	u.pages.RemovePage("modbus-stats")
 	u.modbusRotationForm()
 	capture("15-config-rotation-small")
+	u.pages.RemovePage("modbus-rotation-file")
+	risk := u.httpInsecurePanel(config.Request{Endpoint: "https://127.0.0.1:8443/测试"}, func(bool) {})
+	u.pages.AddPage("tls-risk", risk, true, true)
+	u.App.SetFocus(risk)
+	capture("16-tls-risk-small")
+	u.pages.RemovePage("tls-risk")
+	visualModbus := config.Request{ID: "modbus-visual", Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local", Params: map[string]any{"unit": 1, "address": 10, "count": 2, "word_order": "ABCD"}}
+	u.collection.Requests = []config.Request{visualModbus}
+	u.selected = 0
+	u.lastRequest = visualModbus
+	u.inspector.reset(visualModbus)
+	for i := 0; i < 20; i++ {
+		u.inspector.add(engine.Event{Time: time.Unix(1700000000+int64(i), 0), Kind: "registers", Data: []map[string]any{{"address": 10, "u16": uint16(20 + i%7)}, {"address": 11, "u16": uint16(5)}}})
+	}
+	u.inspector.table.Select(1, 0)
+	u.inspector.modbusReadForm(nil)
+	capture("17-modbus-read-controls-small")
+	u.pages.RemovePage("modbus-read-controls")
+	u.readonly = false
+	u.populate("")
+	u.inspector.modbusWriteForm()
+	capture("18-modbus-write-small")
+	u.pages.RemovePage("modbus-write")
+	u.inspector.modbusInspect(true)
+	capture("19-modbus-field-graph-small")
 }

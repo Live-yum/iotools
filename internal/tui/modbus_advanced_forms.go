@@ -232,6 +232,17 @@ func (v *inspector) modbusKeymapForm() {
 			form.GetFormItem(i).(*tview.InputField).SetText(string(modbusDefaultKeys[action]))
 		}
 	}).AddButton("取消", close).SetCancelFunc(close)
+	form.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyF8 {
+			v.owner.stop()
+			return nil
+		}
+		if e.Key() == tcell.KeyEscape {
+			close()
+			return nil
+		}
+		return e
+	})
 	form.SetBorder(true).SetTitle(" Modbus表格快捷键 · 单字符 · 禁止重复/q/?/+/- · Esc取消 ")
 	v.owner.pages.AddPage("modbus-keymap", form, true, true)
 	v.owner.App.SetFocus(form)

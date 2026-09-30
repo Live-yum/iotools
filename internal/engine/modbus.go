@@ -12,6 +12,11 @@ import (
 )
 
 func runModbus(ctx context.Context, r config.Request, emit Emit) error {
+	if r.Action == "read-write-registers" {
+		if _, _, _, err := validateModbusReadWrite(r); err != nil {
+			return err
+		}
+	}
 	if r.Action == "scan-units" || r.Action == "sweep-holding" || r.Action == "search-holding" {
 		return runModbusRange(ctx, r, emit)
 	}
@@ -95,6 +100,12 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 	if r.Action == "read-raw" || r.Action == "write-raw" {
 		start := time.Now()
 		err := runModbusRaw(r, handler, emit)
+		observeModbusOperation(ctx, r, start, err)
+		return err
+	}
+	if r.Action == "read-write-registers" {
+		start := time.Now()
+		err := runModbusReadWrite(r, handler, emit)
 		observeModbusOperation(ctx, r, start, err)
 		return err
 	}

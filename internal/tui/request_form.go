@@ -112,6 +112,9 @@ func redactPreview(r config.Request) config.Request {
 }
 
 func (v *inspector) persistAnnotations() error {
+	if err := v.modbusAnnotationScope(); err != nil {
+		return err
+	}
 	u := v.owner
 	id := u.lastRequest.ID
 	if id == "" {
@@ -199,7 +202,11 @@ func (v *inspector) snapshot(load bool) {
 		for _, row := range v.values {
 			rows = append(rows, row)
 		}
-		now, e := engine.NewRegisterSnapshot(r.Endpoint, r.Int("unit", 1), r.Action, rows)
+		snapshotAction := r.Action
+		if snapshotAction == "read-write-registers" {
+			snapshotAction = "read-holding"
+		}
+		now, e := engine.NewRegisterSnapshot(r.Endpoint, r.Int("unit", 1), snapshotAction, rows)
 		if e != nil {
 			form.SetTitle(" 快照失败：" + clean(e.Error()))
 			return

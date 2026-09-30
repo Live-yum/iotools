@@ -191,3 +191,32 @@ CLI默认保留统一事件JSON输出；`--response-body` 只输出原始字节�
 `--output 新路径` 将原始正文流式存盘；配合 `--transformed` 保存有界派生正文。
 不覆盖既有文件。`--verbose` 将状态和响应头写到stderr，`--exit-status` 对HTTP≥400返回2。
 网络/校验错误仍失败，未声称原Slumber默认退出策略/全部别名完全相同。
+
+## 重定向与高级TLS例外
+
+上游HttpEngineConfig默认跟随重定向。这里安全默认保持不跟随；需要时在请求参数
+明确设置 `follow_redirects: true`，`max_redirects` 默认10、允许1–50。
+默认只接受相同origin（scheme+host+port），额外目标须列入 `redirect_origins`，
+例如 `["https://api.example.com"]`，不能带路径、凭据或查询。
+跨origin会删除认证/Cookie/自定义头，仅保留Accept/Accept-Encoding/Content-Type/User-Agent；
+HTTPS到HTTP降级明确拒绝。修改方法重定向在TUI再次核对真实目标，取消不重发。
+流式文件307/308重发会重新核对文件身份、大小、修改时间，变化则拒绝。
+
+只有确需兼容测试服务时才考虑 `ignore_certificate_hosts: ["精确主机名或IP"]`。
+禁止通配符、URL和端口。该字段本身不授予运行时许可：TUI每次显示中文高风险确认；
+CLI还需本次 `--allow-insecure-tls`。没有明确许可不会发送请求。
+这会忽略该主机证书真实性/有效期/主机名，存在中间人风险，应优先提供可信 `ca_file`。
+其他主机仍走原有强校验；不会修改系统信任库或持久授权。
+TLS例外作用于列出的hostname，跨端口也需每次运行时确认。
+
+curl预览仍只请求原始URL，不导出更宽泛的自动重定向或 `--insecure`；有这些设置时
+输出中文注释提醒差异，避免把受限的原生策略变成全局关闭校验。
+验收只使用合成回环TLS服务，包括取消不发送、精确主机匹配和未列主机继续拒绝证书。
+
+## 无系统CA库的便携运行
+
+可执行文件内嵌Go官方 `golang.org/x/crypto/x509roots/fallback` 公共根证书包，
+只在系统没有验证器/根库时兜底，正常系统仍优先使用系统验证。
+没有关闭证书验证，也不把证书安装到系统。该包固定版本并随许可证产物打包；
+发布更新时需同步检查公共根证书包更新。测试在隔离子进程强制使用内嵌根，
+验证根库可用，不访问外部网站。参考[Go官方说明](https://pkg.go.dev/golang.org/x/crypto/x509roots/fallback)。

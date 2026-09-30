@@ -47,15 +47,15 @@ func snapshot(s tcell.SimulationScreen) string {
 func TestUnifiedPanelsRenderAndResize(t *testing.T) {
 	u, s := newTestUI(t)
 	u.App.ForceDraw()
-	text := snapshot(s)
-	for _, want := range []string{"Collections", "Request", "Structured results", "READ ONLY", "http-get"} {
+	text := strings.ReplaceAll(snapshot(s), " ", "")
+	for _, want := range []string{"请求集合", "请求详情", "结构化结果", "只读", "http-get"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q\n%s", want, text)
 		}
 	}
 	s.SetSize(60, 20)
 	u.App.ForceDraw()
-	if !strings.Contains(snapshot(s), "Collections") {
+	if !strings.Contains(strings.ReplaceAll(snapshot(s), " ", ""), "请求集合") {
 		t.Fatal("resize lost UI")
 	}
 	u.populate("mqtt")

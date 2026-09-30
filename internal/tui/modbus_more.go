@@ -94,6 +94,9 @@ func modbusSampleTime(row map[string]any, mode string, now time.Time) string {
 func (v *inspector) modbusMoreMenu() {
 	list := tview.NewList().ShowSecondaryText(true)
 	close := func() { v.owner.pages.RemovePage("modbus-more"); v.owner.App.SetFocus(v.table) }
+	list.AddItem("地址/标签跳转与读取设置", "/定位；R预览空间、地址、unit、窗口、字序与采样；不自动连接", 'r', func() { close(); v.modbusReadForm(nil) })
+	list.AddItem("寄存器详情/字段图", "v详情 g图表；同响应多词与规则，禁止混合旧值", 'v', func() { close(); v.modbusInspect(false) })
+	list.AddItem("类型/线圈写入编辑", "原始词预览后再次核对目标；只读模式与运行中禁止", 'e', func() { close(); v.modbusWriteForm() })
 	list.AddItem("导入完整MTUI配置", "只生成四种只读请求；预览后明确保存；不会连接或启用API", 'i', func() { close(); v.modbusConfigImportForm() })
 	list.AddItem("CSV快照比较", "读取MTUI/原生CSV，与本次已收到数据对比；不自动读取设备", 'c', func() { close(); v.modbusCSVDiffForm() })
 	list.AddItem("采样时间显示", "绝对UTC/相对时间；接收响应时刻，非设备时钟", 't', func() { close(); v.modbusTimeForm() })

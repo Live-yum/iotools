@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,5 +74,14 @@ func TestHTTPTransformedWithoutTransformKeepsHTTPStatus(t *testing.T) {
 	err = d.finish(&bytes.Buffer{}, &engine.HTTPResponseTransformError{Err: fmt.Errorf("transform failed")}, true)
 	if !errors.As(err, &status) || status.code != 3 {
 		t.Fatal(err)
+	}
+}
+
+func TestHTTPBodyModeStillShowsDependencyTLSWarning(t *testing.T) {
+	var stderr bytes.Buffer
+	d := httpDisplay{stderr: &stderr}
+	d.event(engine.Event{Kind: "chain", Data: map[string]any{"event": engine.Event{Kind: "security-warning", Data: map[string]any{"message": "TLS warning"}}}})
+	if !strings.Contains(stderr.String(), "TLS warning") {
+		t.Fatal("warning suppressed")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/Live-yum/iotools/internal/engine"
 	"github.com/Live-yum/iotools/internal/sample"
 	"github.com/Live-yum/iotools/internal/tui"
+	_ "golang.org/x/crypto/x509roots/fallback" // embedded public roots when the OS has no verifier/root store
 )
 
 var version = "dev"
@@ -66,6 +67,7 @@ func run(args []string) error {
 	allowHistoryDelete := flags.Bool("allow-history-delete", false, "明确允许本次不可恢复的本机历史删除")
 	historySQL := flags.String("history-query", "", "执行只读 SQLite 查询，需要 --history-db，不连接服务器")
 	historyDB := flags.String("history-db", "", "明确启用 HTTP SQLite 历史文件（可能保存响应中的敏感数据）")
+	allowInsecureTLS := flags.Bool("allow-insecure-tls", false, "本次明确允许配置列出的精确主机忽略TLS证书；存在中间人风险")
 	allowChains := flags.Bool("allow-chain-writes", false, "明确允许请求链修改操作，必须同时指定 --allow-writes")
 	readonly := flags.Bool("read-only", false, "只读模式，禁止所有修改操作")
 	init := flags.Bool("init", false, "创建仅访问本机的示例配置（不覆盖已有文件）")
@@ -277,7 +279,7 @@ func run(args []string) error {
 	if *curlRequest != "" {
 		for _, r := range c.Requests {
 			if r.ID == *curlRequest {
-				ctx := engine.WithHTTPWorkflowOptions(context.Background(), engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains})
+				ctx := engine.WithHTTPWorkflowOptions(context.Background(), engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains, AllowInsecureTLS: *allowInsecureTLS})
 				command, err := engine.GenerateCurl(ctx, c, r, *profile, *allow && !*readonly, *executeTriggers)
 				if err != nil {
 					return err
@@ -301,7 +303,7 @@ func run(args []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 			defer stop()
 			enc := json.NewEncoder(os.Stdout)
-			ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains})
+			ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains, AllowInsecureTLS: *allowInsecureTLS})
 			if *bodyOnly || *transformed || *output != "" || *verbose || *exitStatus {
 				if r.Protocol != "http" {
 					return fmt.Errorf("HTTP输出选项仅用于HTTP请求")

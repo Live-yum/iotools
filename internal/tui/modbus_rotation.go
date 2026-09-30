@@ -223,6 +223,30 @@ func (v *inspector) modbusUnsavedLayout() (map[string]any, error) {
 	if saved.Int("matrix_columns", 8) != v.matrixColumns {
 		changes["matrix_columns"] = v.matrixColumns
 	}
+	// Read controls are temporary until explicitly saved. Include them in the
+	// existing atomic source save; the action marker is consumed by the local
+	// save helper and never serialized as an engine parameter.
+	resolved, err := v.owner.collection.Resolve(saved, v.owner.profile)
+	if err != nil {
+		return nil, err
+	}
+	active := v.modbus.request
+	if modbusReadAction(active.Action) == active.Action {
+		if active.Action != resolved.Action {
+			changes["__read_action"] = active.Action
+		}
+		for _, p := range []struct {
+			key      string
+			fallback int
+		}{{"address", 0}, {"unit", 1}, {"count", 1}, {"samples", 1}, {"interval_ms", 1000}} {
+			if active.Int(p.key, p.fallback) != resolved.Int(p.key, p.fallback) {
+				changes[p.key] = active.Int(p.key, p.fallback)
+			}
+		}
+		if active.String("word_order", "ABCD") != resolved.String("word_order", "ABCD") {
+			changes["word_order"] = active.String("word_order", "ABCD")
+		}
+	}
 	return changes, nil
 }
 func (u *UI) modbusRotationPreview(c modbusRotationCandidate) {
@@ -234,7 +258,7 @@ func (u *UI) modbusRotationPreview(c modbusRotationCandidate) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "当前：%s\n目标：%s\n\n只切换本机集合，不连接任何服务器，也不修改只读状态。\n当前结果会清空；新请求仍需明确执行，写入仍需确认。\n", c.sourcePath, c.path)
 	if len(changes) > 0 {
-		b.WriteString("\n存在尚未保存的临时列布局/矩阵设置。请选择保存后切换或明确放弃。\n")
+		b.WriteString("\n存在尚未保存的临时读取/字序/列布局/矩阵设置。请选择保存后切换或明确放弃。\n")
 	}
 	for i, r := range c.collection.Requests {
 		if i >= 1000 {

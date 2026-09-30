@@ -156,7 +156,7 @@ func (r Request) Mutates() bool {
 	case "kafka":
 		return r.Action == "pause-connector" || r.Action == "resume-connector" || r.Action == "delete-connector" || r.Action == "delete-group" || r.Action == "delete-subject" || r.Action == "purge-subject" || r.Action == "delete-schema" || r.Action == "expand-partitions" || r.Action == "produce" || r.Action == "create-topic" || r.Action == "delete-topic" || r.Action == "alter-topic" || r.Action == "register-schema" || r.Action == "update-connector"
 	case "modbus":
-		return strings.HasPrefix(r.Action, "write")
+		return strings.HasPrefix(r.Action, "write") || r.Action == "read-write-registers"
 	case "opcua":
 		return r.Action == "write" || r.Action == "call"
 	}

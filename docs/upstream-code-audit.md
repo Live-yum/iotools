@@ -7,7 +7,7 @@
 - 待补：确有实现差异，列出下一步；不是把外部设备未测试冒充代码缺失
 - 上游无该功能：不虚构额外“缺项”
 
-最近已验证的发布基线是c7fc31ce（Windows x64/Linux ARM64/Linux x64原生全部通过）。
+最近已验证的发布基线是8731b7e6（Windows x64/Linux ARM64/Linux x64原生全部通过）。
 本表随后续提交更新，不应将正在开发的项误认为已包含在旧产物中。
 
 ## Slumber 用户分支
@@ -105,3 +105,11 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 公开函数base64/boolean/concat/debug/env/file/float/index/integer/join/jq/json_parse/
 jsonpath/lower/prompt/replace/response/response_header/select/sensitive/slice/split/string/
 trim/upper以及fork加密函数都有对应原生实现；具体解析边缘仍以测试和文档限制为准。
+
+### HTTP全局引擎设置
+
+`config/src/lib.rs::HttpEngineConfig`与`core/src/http.rs`证明上游支持follow_redirects、
+ignore_certificate_hosts和large_body_size。第六批加入有界可选重定向、精确主机TLS例外
+和每次高风险运行确认；安全默认与上游不同，不是该能力缺失。large_body_size是上游
+显示/存储性能阈值，不等于无限制传输；原生区分4MiB内存模式和最高8GiB文件流式模式。
+跨origin头部清除、拒绝HTTPS降级、curl不导出更宽泛例外属于明确安全边界。

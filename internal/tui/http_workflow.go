@@ -20,7 +20,7 @@ func (u *UI) authorizeChainWrite(ctx context.Context, r config.Request) (bool, e
 		if file := r.String("body_file", ""); file != "" {
 			fileNotice = "\n将发送文件正文：" + file
 		}
-		m := tview.NewModal().SetText(display("请求需要修改操作\n请求：" + r.ID + "\n方法：" + r.Action + "\n目标：" + r.Endpoint + fileNotice + "\n\n只批准本次步骤；取消会停止请求链。")).AddButtons([]string{"取消执行", "批准此步骤"})
+
 		finish := func(allowed bool) {
 			u.pages.RemovePage("chain-confirm")
 			u.App.SetFocus(u.list)
@@ -29,14 +29,7 @@ func (u *UI) authorizeChainWrite(ctx context.Context, r config.Request) (bool, e
 			default:
 			}
 		}
-		m.SetDoneFunc(func(i int, _ string) { finish(i == 1) })
-		m.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
-			if e.Key() == tcell.KeyEscape {
-				finish(false)
-				return nil
-			}
-			return e
-		})
+		m := u.httpConfirmation(" 修改步骤确认 ", "请求："+r.ID+"\n方法："+r.Action+"\n目标："+r.Endpoint+fileNotice+"\n\n只批准本次步骤；取消会停止请求链。", "批准此步骤", finish)
 		u.pages.AddPage("chain-confirm", m, true, true)
 		u.App.SetFocus(m)
 	})

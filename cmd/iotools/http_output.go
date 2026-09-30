@@ -28,8 +28,18 @@ type httpDisplay struct {
 }
 
 func (d *httpDisplay) event(e engine.Event) {
+	if e.Kind == "security-warning" {
+		fmt.Fprintln(d.stderr, "警告：", e.Data)
+		return
+	}
 	data, ok := e.Data.(map[string]any)
 	if !ok {
+		return
+	}
+	if e.Kind == "chain" {
+		if inner, ok := data["event"].(engine.Event); ok && inner.Kind == "security-warning" {
+			d.event(inner)
+		}
 		return
 	}
 	if e.Kind == "response" || e.Kind == "response-file" {

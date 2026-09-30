@@ -19,6 +19,8 @@ import (
 // opt-in because response bodies and headers may contain credentials or private data.
 type HTTPWorkflowOptions struct {
 	NoNetwork             bool
+	AllowInsecureTLS      bool
+	AuthorizeInsecureTLS  func(context.Context, config.Request) (bool, error)
 	HistoryPath           string
 	AllowChainWrites      bool
 	AuthorizeChainWrite   func(context.Context, config.Request) (bool, error)

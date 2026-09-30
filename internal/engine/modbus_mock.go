@@ -93,6 +93,35 @@ func (h *mockModbusHandler) Send(request []byte) ([]byte, error) {
 				}
 			}
 		}
+	case 23:
+		if len(request) < 17 {
+			return nil, fmt.Errorf("short simulator FC23")
+		}
+		writeAddress := int(binary.BigEndian.Uint16(request[12:14]))
+		count := int(binary.BigEndian.Uint16(request[14:16]))
+		if arg < 1 || arg > 125 || address+arg > 65536 || count < 1 || count > 121 || writeAddress+count > 65536 || int(request[16]) != 2*count || len(request) != 17+2*count {
+			return nil, fmt.Errorf("invalid simulator FC23 range/payload")
+		}
+		additions := 0
+		for i := 0; i < count; i++ {
+			if _, ok := localModbusMock.registers[key(writeAddress+i)]; !ok {
+				additions++
+			}
+		}
+		if len(localModbusMock.registers)+len(localModbusMock.coils)+additions > maxMockChanges {
+			return nil, fmt.Errorf("simulator capacity reached")
+		}
+		for i := 0; i < count; i++ {
+			localModbusMock.registers[key(writeAddress+i)] = binary.BigEndian.Uint16(request[17+2*i:])
+		}
+		response = append(response, byte(arg*2))
+		for a := address; a < address+arg; a++ {
+			value := uint16(a)
+			if n, ok := localModbusMock.registers[key(a)]; ok {
+				value = n
+			}
+			response = binary.BigEndian.AppendUint16(response, value)
+		}
 	case 5, 6, 15, 16:
 		count := 1
 		var words []uint16

@@ -49,6 +49,9 @@ OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参�
 Kafka：选择主题后按 Enter 开始只读消费
 Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
 Modbus 高级：C 列，K 快捷键，I 导入标注，E 导出标注，D 导出 CSV；M 完整配置/CSV对比/时间/写日志
+Modbus 操作：/ 地址或唯一标签跳转，R 读取设置，v/Enter 详情，g 字段/规则图
+w 写入编辑（FC5/6/15/16/23），b 本机字序，u 单元，t 预览空间
+[/] 读取窗口，{/} 数量，r 明确读取，z 取消，y 当前列复制；K 重映射
 
 打开程序或选择请求不会自动连接服务器
 环境变量：${名称}；敏感信息：${env:变量名}
@@ -117,11 +120,11 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	u := &UI{App: tview.NewApplication(), collection: c, raw: b, path: path, profile: profile, readonly: readonly}
 	u.pages = tview.NewPages()
 	u.list = tview.NewList().ShowSecondaryText(true)
-	u.list.SetBorder(true).SetTitle(" 请求集 Collections ")
+	u.list.SetBorder(true).SetTitle(" 请求集合 ")
 	u.detail = tview.NewTextView().SetWrap(true)
-	u.detail.SetBorder(true).SetTitle(" 请求详情 Request ")
+	u.detail.SetBorder(true).SetTitle(" 请求详情 ")
 	u.result = tview.NewTextView().SetWrap(false)
-	u.result.SetBorder(true).SetTitle(" 原始结果 Results / live events ")
+	u.result.SetBorder(true).SetTitle(" 原始结果 / 实时事件 ")
 	u.inspector = newInspector(u)
 	u.resultPages = tview.NewPages().AddPage("raw", u.result, true, false).AddPage("visual", u.inspector.pages, true, true)
 	u.visual = true
@@ -242,9 +245,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 func (u *UI) setStatus(s string) {
 	mode := ""
 	if u.readonly {
-		mode = " · 只读 READ ONLY"
+		mode = " · 只读"
 	}
-	u.status.SetText(clean(s) + "\n环境 Profile: " + u.profile + mode + " • " + filepath.Base(u.path))
+	u.status.SetText(clean(s) + "\n环境：" + u.profile + mode + " • " + filepath.Base(u.path))
 }
 func (u *UI) populate(filter string) {
 	u.list.Clear()
@@ -353,7 +356,7 @@ func (u *UI) startCollection(r config.Request, collection *config.Collection, pr
 		if r.Protocol == "modbus" {
 			ctx = engine.WithModbusObserver(ctx, func(operation engine.ModbusOperation) { u.App.QueueUpdateDraw(func() { u.modbusOperation(operation) }) })
 		}
-		ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, AuthorizeRequestWrite: u.authorizeChainWrite, AuthorizeChainWrite: u.authorizeChainWrite, Prompt: u.workflowPrompt, Select: u.workflowSelect})
+		ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, AuthorizeRequestWrite: u.authorizeChainWrite, AuthorizeInsecureTLS: u.authorizeInsecureTLS, AuthorizeChainWrite: u.authorizeChainWrite, Prompt: u.workflowPrompt, Select: u.workflowSelect})
 		e := engine.RunCollection(ctx, collection, r, profile, r.Mutates(), func(event engine.Event) {
 			b, err := json.MarshalIndent(event, "", "  ")
 			if err != nil {

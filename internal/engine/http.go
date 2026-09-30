@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 )
@@ -35,6 +36,10 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	if e := validateHTTPDownload(r); e != nil {
 		return e
 	}
+	redirectPolicy, e := httpRedirectPolicy(ctx, r)
+	if e != nil {
+		return e
+	}
 	u, e := url.Parse(r.Endpoint)
 	if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("HTTP endpoint must be an absolute http(s) URL")
@@ -45,12 +50,17 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	var streamReader io.Reader
 	var streamLength int64
+	var streamIdentity os.FileInfo
 	if _, ok := r.Params["body_file"]; ok {
 		file, reader, length, err := openHTTPBodyFile(ctx, r)
 		if err != nil {
 			return err
 		}
 		defer file.Close()
+		streamIdentity, err = file.Stat()
+		if err != nil {
+			return err
+		}
 		streamReader = reader
 		streamLength = length
 	}
@@ -86,6 +96,18 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	if streamReader != nil {
 		req.ContentLength = streamLength
+		req.GetBody = func() (io.ReadCloser, error) {
+			file, reader, length, err := openHTTPBodyFile(ctx, r)
+			if err != nil {
+				return nil, err
+			}
+			identity, err := file.Stat()
+			if err != nil || !os.SameFile(streamIdentity, identity) || length != streamLength || !identity.ModTime().Equal(streamIdentity.ModTime()) {
+				file.Close()
+				return nil, fmt.Errorf("重定向重发前文件身份/大小/修改时间改变，拒绝重发")
+			}
+			return &httpStreamBody{Reader: reader, Closer: file}, nil
+		}
 	}
 	req.Header = headers
 	if contentType != "" && req.Header.Get("Content-Type") == "" {
@@ -97,13 +119,12 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	if user := r.String("username", ""); user != "" {
 		req.SetBasicAuth(user, r.String("password", ""))
 	}
-	tls, e := tlsConfig(r)
+	transport, e := newScopedHTTPTransport(r, emit)
 	if e != nil {
 		return e
 	}
-	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tls}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Transport: transport, CheckRedirect: redirectPolicy}
 	resp, e := client.Do(req)
 	if e != nil {
 		return e
@@ -261,4 +282,9 @@ func httpRequestBody(r config.Request) (string, string, error) {
 		return "", "", fmt.Errorf("request body exceeds 4 MiB")
 	}
 	return body, "", nil
+}
+
+type httpStreamBody struct {
+	io.Reader
+	io.Closer
 }

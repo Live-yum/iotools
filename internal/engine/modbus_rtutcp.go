@@ -91,7 +91,7 @@ func (h *rtuTCPHandler) Send(request []byte) ([]byte, error) {
 		remaining = 2
 	} else {
 		switch prefix[1] {
-		case 1, 2, 3, 4:
+		case 1, 2, 3, 4, 23:
 			remaining = int(prefix[2]) + 2
 			if remaining > 252 {
 				return nil, fmt.Errorf("invalid RTU response length")

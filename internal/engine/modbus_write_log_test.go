@@ -54,3 +54,24 @@ func TestWriteLogRejectsTrailingJSON(t *testing.T) {
 		t.Fatal("trailing JSON accepted")
 	}
 }
+
+func TestFC23RequiresExplicitValidatedReadWriteScope(t *testing.T) {
+	r := config.Request{Protocol: "modbus", Action: "read-write-registers", Endpoint: "mock://local", Params: map[string]any{"unit": 1, "address": 0, "read_address": 0, "read_count": 2, "values": []any{1, 2}}}
+	if !r.Mutates() {
+		t.Fatal("FC23 misclassified as read")
+	}
+	if err := validateParams(r); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), r, false, func(Event) {}); err == nil {
+		t.Fatal("FC23 bypassed write gate")
+	}
+	for key, value := range map[string]any{"read_address": 65536, "read_count": 1.5, "values": []any{-1}} {
+		copy := r
+		copy.Params = cloneHTTPValue(r.Params).(map[string]any)
+		copy.Params[key] = value
+		if validateParams(copy) == nil {
+			t.Fatal("invalid FC23 accepted", key)
+		}
+	}
+}

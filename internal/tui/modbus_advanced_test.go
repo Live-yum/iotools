@@ -56,8 +56,8 @@ func TestModbusKeymapScopedAndCollisionSafe(t *testing.T) {
 	v.reset(r)
 	e := tcell.NewEventKey(tcell.KeyRune, 'x', 0)
 	mapped := v.modbusAdvancedKey(e)
-	if mapped == nil || mapped.Rune() != 'p' {
-		t.Fatal("custom pin not translated")
+	if mapped != nil {
+		t.Fatal("custom action did not terminate in dispatcher")
 	}
 	if v.modbusAdvancedKey(tcell.NewEventKey(tcell.KeyRune, 'p', 0)) != nil {
 		t.Fatal("old mapping remained active")
@@ -67,7 +67,7 @@ func TestModbusKeymapScopedAndCollisionSafe(t *testing.T) {
 			t.Fatal("keymap captured safety/global key")
 		}
 	}
-	for _, cfg := range []any{map[string]any{"pin": "l"}, map[string]any{"pin": "q"}, map[string]any{"pin": "?"}, map[string]any{"pin": "\n"}, map[string]any{"pin": "xx"}, map[string]any{"write": "w"}} {
+	for _, cfg := range []any{map[string]any{"pin": "l"}, map[string]any{"pin": "q"}, map[string]any{"pin": "?"}, map[string]any{"pin": "\n"}, map[string]any{"pin": "xx"}, map[string]any{"nonexistent-action": "w"}} {
 		if _, err := modbusParseKeymap(cfg); err == nil {
 			t.Fatalf("accepted %#v", cfg)
 		}

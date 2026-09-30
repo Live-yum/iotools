@@ -68,6 +68,9 @@ func shellQuote(value string) (string, error) {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'", nil
 }
 func curlForRequest(r config.Request) (string, error) {
+	if _, err := httpRedirectPolicy(context.Background(), r); err != nil {
+		return "", err
+	}
 	if e := validateParams(r); e != nil {
 		return "", e
 	}
@@ -159,5 +162,14 @@ func curlForRequest(r config.Request) (string, error) {
 			return "", e
 		}
 	}
-	return strings.Join(args, " "), nil
+	notice := ""
+	if follow, _ := r.Params["follow_redirects"].(bool); follow {
+		notice += "# 此预览只请求原始URL；受限重定向策略由iotools原生执行\n"
+	}
+	if hosts, err := httpInsecureHosts(r); err != nil {
+		return "", err
+	} else if hosts[strings.ToLower(endpoint.Hostname())] {
+		notice += "# TLS例外未导出：curl仍校验证书；请在iotools中逐目标确认风险\n"
+	}
+	return notice + strings.Join(args, " "), nil
 }

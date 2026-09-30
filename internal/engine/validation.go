@@ -12,10 +12,10 @@ import (
 )
 
 var protocolParams = map[string]string{
-	"http":   "response_file max_response_bytes body_file body_stream max_upload_bytes query form_urlencoded form_multipart query_filter persist headers body json bearer username password ca_file cert_file key_file crypto request_crypto request_transforms response_transform",
+	"http":   "ignore_certificate_hosts follow_redirects max_redirects redirect_origins response_file max_response_bytes body_file body_stream max_upload_bytes query form_urlencoded form_multipart query_filter persist headers body json bearer username password ca_file cert_file key_file crypto request_crypto request_transforms response_transform",
 	"mqtt":   "auto_reconnect reconnect_interval_ms scan_duration_ms max_topics confirm_topics confirm_token topic topics qos payload payload_encoding retain client_id username password ca_file cert_file key_file limit ignore_retained",
 	"kafka":  "consume_partitions partition start_time key_filter key_prefix value_prefix confirm_subject tls ca_file cert_file key_file sasl username password topic group groups partitions replication_factor configs key value offset limit filter subject version connector json headers body bearer key_format value_format key_subject value_subject key_version value_version schema_registry_url schema_registry_username schema_registry_password schema_registry_bearer schema_registry_ca_file schema_registry_cert_file schema_registry_key_file",
-	"modbus": "next_config write_log_file write_log_previous columns keymap matrix_columns address count unit value values samples interval_ms word_order baud data_bits parity stop_bits pins labels rules units end_address match_value pdu_hex read_code object_id value_type",
+	"modbus": "read_address read_count next_config write_log_file write_log_previous columns keymap matrix_columns address count unit value values samples interval_ms word_order baud data_bits parity stop_bits pins labels rules units end_address match_value pdu_hex read_code object_id value_type",
 	"opcua":  "allow_legacy_security browse_path auto_reconnect reconnect_interval_ms allow_insecure interval_ms max_events max_references auth auth_cert_file auth_key_file ca_file cert_file key_file method_id node_id node_ids attribute attributes direction reference_type include_subtypes object_id password security_mode security_policy server_cert_sha256 username value_type arguments value",
 }
 
@@ -75,6 +75,27 @@ func validateParams(r config.Request) error {
 			for _, k := range []string{"address", "unit"} {
 				if _, ok := r.Params[k]; !ok {
 					return fmt.Errorf("Modbus writes require an explicit %s", k)
+				}
+			}
+		}
+		if r.Action == "read-write-registers" {
+			readAddress, errA := exactInt(r.Params["read_address"])
+			readCount, errC := exactInt(r.Params["read_count"])
+			if errA != nil || errC != nil || readAddress < 0 || readAddress > 65535 || readCount < 1 || readCount > 125 || readAddress+readCount > 65536 {
+				return fmt.Errorf("FC23必须明确read_address/read_count，范围0..65535/1..125且不越界")
+			}
+			values, ok := r.Params["values"].([]any)
+			if !ok || len(values) < 1 || len(values) > 121 {
+				return fmt.Errorf("FC23 values必须为1..121个寄存器整数")
+			}
+			address, err := exactInt(r.Params["address"])
+			if err != nil || address < 0 || address+int64(len(values)) > 65536 {
+				return fmt.Errorf("FC23写范围越界")
+			}
+			for _, value := range values {
+				n, err := exactInt(value)
+				if err != nil || n < 0 || n > 65535 {
+					return fmt.Errorf("FC23写值必须为0..65535整数")
 				}
 			}
 		}

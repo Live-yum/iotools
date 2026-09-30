@@ -163,71 +163,7 @@ func newInspector(u *UI) *inspector {
 		if v.protocol != "modbus" {
 			return e
 		}
-		e = v.modbusAdvancedKey(e)
-		if e == nil {
-			return nil
-		}
-		if e.Rune() == 'm' {
-			v.matrix = !v.matrix
-			v.renderRegisters()
-			return nil
-		}
-		if v.matrix && (e.Rune() == '+' || e.Rune() == '-') {
-			if e.Rune() == '+' && v.matrixColumns < 16 {
-				v.matrixColumns++
-			}
-			if e.Rune() == '-' && v.matrixColumns > 1 {
-				v.matrixColumns--
-			}
-			v.renderRegisters()
-			return nil
-		}
-		row, col := v.table.GetSelection()
-		if row < 1 || (!v.matrix && row > len(v.rows)) {
-			return e
-		}
-		address := 0
-		if v.matrix {
-			var ok bool
-			address, ok = v.table.GetCell(row, col).GetReference().(int)
-			if !ok {
-				return e
-			}
-		} else {
-			address = v.rows[row-1]
-		}
-		switch e.Rune() {
-		case 'S':
-			v.snapshot(false)
-			return nil
-		case 'O':
-			v.snapshot(true)
-			return nil
-		case 'p':
-			v.pins[address] = !v.pins[address]
-			if e := v.persistAnnotations(); e != nil {
-				v.owner.setStatus("固定项保存失败：" + e.Error())
-			}
-			v.renderRegisters()
-			return nil
-		case 'l':
-			v.label(address)
-			return nil
-		case 'f':
-			v.filtered = !v.filtered
-			v.renderRegisters()
-			return nil
-		case 'd':
-			v.baseline = map[int]uint16{}
-			for a, r := range v.values {
-				if n, ok := r["u16"].(uint16); ok {
-					v.baseline[a] = n
-				}
-			}
-			v.renderRegisters()
-			return nil
-		}
-		return e
+		return v.modbusInteractionKey(e)
 	})
 	return v
 }
@@ -272,7 +208,7 @@ func (v *inspector) reset(r config.Request) {
 	}
 	v.root = tview.NewTreeNode(display(strings.ToUpper(r.Protocol) + " · " + r.Action)).SetColor(tcell.ColorAqua)
 	v.tree.SetRoot(v.root).SetCurrentNode(v.root)
-	v.tree.SetTitle(" 结构化结果 Structured results · F2 原始 ")
+	v.tree.SetTitle(" 结构化结果 · F2 原始 ")
 	v.topics = map[string]*tview.TreeNode{}
 	v.values = map[int]map[string]any{}
 	v.history = map[int][]float64{}
@@ -285,7 +221,7 @@ func (v *inspector) reset(r config.Request) {
 		v.tree.SetTitle(" OPC UA 节点 · Enter 浏览 · a 属性 · f 引用 · r 读 · s 订阅 ")
 	}
 	if r.Protocol == "mqtt" {
-		v.tree.SetTitle(" MQTT topic tree · v载荷 · h历史 · g图表 · /搜索 · o/O展开/折叠 ")
+		v.tree.SetTitle(" MQTT 主题树 · v载荷 · h历史 · g图表 · /搜索 · o/O展开/折叠 ")
 	}
 	if r.Protocol == "modbus" {
 		v.pages.SwitchToPage("table")
@@ -295,6 +231,7 @@ func (v *inspector) reset(r config.Request) {
 func (v *inspector) add(e engine.Event) {
 	if v.protocol == "modbus" {
 		e = v.modbusMoreEvent(e)
+		v.modbusCapture(e)
 	}
 	if v.protocol == "kafka" && v.kafkaEvent(e) {
 		return

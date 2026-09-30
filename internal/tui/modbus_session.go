@@ -44,7 +44,7 @@ func (u *UI) ensureModbusSession() *modbusSessionState {
 }
 func modbusActivityAction(action string) string {
 	switch action {
-	case "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "write-coil", "write-coils", "write-typed", "read-raw", "write-raw", "read-device-id", "scan-units", "sweep-holding", "search-holding":
+	case "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "read-write-registers", "write-coil", "write-coils", "write-typed", "read-raw", "write-raw", "read-device-id", "scan-units", "sweep-holding", "search-holding":
 		return action
 	}
 	return "未知动作"
@@ -175,6 +175,11 @@ func (u *UI) modbusClearSession() {
 	if v != nil && v.protocol == "modbus" {
 		v.values = map[int]map[string]any{}
 		v.history = map[int][]float64{}
+		if v.modbus != nil && v.modbus.interaction != nil {
+			v.modbus.interaction.frames = nil
+			v.modbus.interaction.words = 0
+			v.modbus.interaction.dropped = 0
+		}
 		v.baseline = map[int]uint16{}
 		v.rows = nil
 		v.renderRegisters()
