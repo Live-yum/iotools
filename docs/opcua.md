@@ -1,32 +1,26 @@
-# OPC UA engine
+# OPC UA 中文使用说明
 
-Implemented with the MIT-licensed `github.com/gopcua/opcua` v0.9.1 client. The implementation is original application code using public client APIs. It does not embed a server or require an external runtime in distributed binaries. The Go server package is used only by disposable loopback tests.
+采用 MIT 许可的原生 Go 客户端 gopcua v0.9.1。分发包不需要 Python、Rust、额外运行时或服务器插件；测试服务器只用于本机回环验收。
 
-## Safety defaults
+## 连接与安全
 
-- Exact endpoint only: `opc.tcp://host:port/path`. No address scanning, implicit endpoint hopping, or credentials in the URL.
-- Default security is `Basic256Sha256` / `SignAndEncrypt`; no automatic downgrade and no trust-on-first-use.
-- Secure sessions require a known server leaf certificate SHA-256 pin or an explicit PEM CA trust file. If both are supplied, both must pass. Also checks certificate validity, hostname/IP SAN, and the advertised application URI against the certificate URI SAN.
-- Client RSA certificate/key are required for secure channels. Username and user-certificate identities require `SignAndEncrypt`.
-- `None` policy and mode require explicit `allow_insecure: true` and anonymous authentication; suitable for a deliberately selected local simulator only.
-- Discovery returns **untrusted metadata**. Obtain and verify certificate fingerprints through an independent trusted channel; copying a freshly discovered fingerprint without verification is not secure provisioning.
-- Write and method-call actions pass the shared explicit write confirmation gate. A method may modify equipment even if its name sounds read-only. Never test these examples against live industrial equipment.
-- Reconnect is disabled. The engine does not transparently replay a failed write or method call. A lost response means the result may be unknown; inspect the target before deciding to retry.
-
-## Secure profile example
-
-No keys or passwords belong in a checked-in collection. Paths point to existing local files and the pin comes from your trusted certificate inventory. Environment references are resolved by the shared profile layer.
+- 只连接配置的 `opc.tcp://主机:端口/路径`，不扫描网络、不自动跳转端点
+- 默认 `Basic256Sha256` / `SignAndEncrypt`，不自动降级，不自动信任第一次看到的证书
+- 必须提供已独立核实的叶证书 SHA-256 指纹 `server_cert_sha256` 或 PEM 根证书 `ca_file`；同时填写时两项都必须通过
+- 验证证书有效期、主机名/IP SAN 和服务端 Application URI。发现结果只是未受信元数据，不能把发现到的指纹直接当成信任依据
+- 安全连接使用已有 RSA PEM `cert_file` / `key_file`；不自动创建或配置持久凭据
+- `None` 策略和模式必须成对设置，并明确 `allow_insecure: true`，只支持匿名身份，供用户选定的本机模拟器使用
+- 用户名和证书身份必须加密。用户名模式使用 `auth: username`、`username`、`password`；用户证书模式使用 `auth: certificate`、`auth_cert_file`、`auth_key_file`
+- 机密使用 `${env:变量名}`。集合不应保存明文密码/私钥。加密 PEM 私钥目前不支持
+- 写属性、调用方法都必须确认。调用失败后不能推断设备未执行，禁止自动重放写入
 
 ```yaml
 version: 1
-profiles:
-  approved-lab:
-    endpoint: opc.tcp://lab.example.test:4840
 requests:
-  - id: read-temperature
+  - id: temperature
     protocol: opcua
     action: read
-    endpoint: ${endpoint}
+    endpoint: opc.tcp://lab.example.test:4840
     timeout: 20s
     params:
       node_ids: ["ns=2;s=Temperature"]
@@ -38,31 +32,33 @@ requests:
       auth: anonymous
 ```
 
-For CA trust, use `ca_file` (PEM roots, with server-supplied intermediates) instead of, or in addition to, the pin. There is no default system-root or trust-all fallback. `server_cert_sha256` is exactly 64 hexadecimal digits; colon separators are accepted. The hash is of the leaf certificate DER, not the PEM file or entire concatenated chain.
+指纹是叶证书 DER 的 SHA-256（64 位十六进制，允许冒号分隔），不是 PEM 文件或整个证书链的哈希。`ca_file` 使用 PEM 根证书和服务端提供的中间证书，不存在默认信任所有证书的后备路线。
 
-For username identity add `auth: username`, `username: ${env:OPCUA_USERNAME}`, and `password: ${env:OPCUA_PASSWORD}`. For a distinct X509 user identity use `auth: certificate`, `auth_cert_file`, and `auth_key_file`. These are separate from the secure-channel `cert_file`/`key_file`. Private keys must be PEM RSA key pairs supported by Go's X509 loader; encrypted PEM keys are not supported.
+## 操作
 
-## Actions and parameters
+- `discover`：列出服务端端点、安全策略、模式、URI 和指纹，明确标记 `trusted: false`
+- `browse` / `references`：`node_id` 默认 `i=85`，可选 `direction: forward/inverse/both`、`reference_type`、`include_subtypes`。支持 BrowseNext 分页和 continuation 清理；`max_references` 默认 1000，范围 1–100000，超过上限明确报不完整
+- `read`：一个 `node_id` 或最多 256 个 `node_ids`。`attribute` 默认 Value，可使用名称或编号 1–27
+- `attributes`：默认读取全部 27 种属性，可用 `attributes` 列表筛选。保留每个属性的状态码，不把不支持的属性伪装成成功
+- `write`：明确 `node_id`、`attribute`、`value_type`、`value`。非 Value 属性严格限制为上游可写内建属性及其正确类型；服务端最终决定访问权限
+- `method-arguments`：只读发现 `method_id`（或 `node_id`）的 InputArguments / OutputArguments，不调用方法
+- `call`：明确 `object_id`、`method_id`、最多 64 个 `{type: Int32, value: 6}` 参数。检查方法状态、逐参数状态，并输出结果
+- `subscribe`：真实数据变化订阅；`interval_ms` 默认 1000，范围 50–60000；`max_events` 默认 10，范围 1–100000。到达数量、取消或超时即清理订阅和会话
 
-Common: `security_policy` (`Basic256Sha256`, or explicitly allowed `None`), `security_mode` (`SignAndEncrypt`, `Sign`, `None`), `allow_insecure` Boolean, `auth` (`anonymous`, `username`, `certificate`), certificate/trust/authentication parameters above. Parent request `timeout` bounds the operation. Each protocol request and connection is additionally bounded; cleanup uses its own short deadline after cancellation.
+NodeId 支持 `i=2258`、`ns=2;s=Temperature` 及库支持的 GUID/字节串形式。父请求 timeout 限制整个操作，每次连接/请求也有边界，取消后的清理使用独立短超时。
 
-| Action | Parameters and behavior |
-|---|---|
-| `discover` | No authenticated session; emits advertised endpoint URL, policy, mode, application URI and leaf fingerprint with `trusted: false` |
-| `browse` | `node_id` defaults to `i=85` (Objects). Follows forward references and BrowseNext continuation pages. `max_references` defaults to 1000, range 1–100000. Reaching the bound is an explicit incomplete-result error and releases the continuation point |
-| `read` | `node_id`, or `node_ids` list (maximum 256). Reads Value with source/server timestamps and status. A non-Good per-node status is reported and fails the operation |
-| `write` | `node_id`, required `value_type`, `value`. One typed Value write; requires confirmation. Per-node server status is checked |
-| `call` | `object_id`, `method_id`, `arguments` list of `{type: Int32, value: 6}` (maximum 64). Reports typed output values and input status codes. Requires confirmation; checks method and argument status |
-| `subscribe` | `node_id` or `node_ids`; `interval_ms` default 1000, range 50–60000; `max_events` default 10, range 1–100000. Real monitored Value data-change notifications with statuses/timestamps. Stops at the count, cancellation or deadline; deletes subscription and closes session |
+类型：Boolean、SByte、Byte、Int16、UInt16、Int32、UInt32、Int64、UInt64、Float、Double、String、DateTime（带时区 RFC3339）、ByteString（Base64）、LocalizedText（`{text: 温度, locale: zh-CN}`）、QualifiedName（`{name: 温度, namespace: 2}`）。类型后加 `[]` 表示一维数组，最多 10000 个元素。严格拒绝越界、小数整数和非有限浮点值。64 位整数可用十进制字符串，避免 JSON 浮点精度丢失。
 
-Node identifiers use standard forms such as `i=2258`, `ns=2;s=Temperature`, or standard GUID/byte-string NodeIds accepted by the library.
+## 终端内交互
 
-`value_type`/argument `type` supports `Boolean`, `SByte`, `Byte`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Int64`, `UInt64`, `Float`, `Double`, `String`, `DateTime` (RFC3339 with timezone), and `ByteString` (base64). Add `[]` for a typed one-dimensional array, maximum 10000 elements. Integer widths/ranges are enforced; fractional integers, missing type/value and non-finite floating values are rejected. Use quoted decimal strings for large 64-bit numbers when interoperating with JSON tools that lose integer precision.
+选择节点后 Enter 下钻、a 属性、f 正反向引用、r 读取、s 订阅、退格返回。属性表按 e 打开类型化 JSON 编辑器；节点按 c 读取方法参数并打开表单，填写所属对象 NodeId 和输入参数后还需要明确确认。F3 可编辑保存请求，F4 编辑完整 YAML，F8 取消。方法表单不会自动调用设备。
 
-## Verification scope and limits
+## 验证边界
 
-Unit tests cover typed values/ranges, invalid arguments, certificate pin/CA/hostname/URI/expiry rejection, no insecure downgrade or credentials, continuation release, and the shared write gate. Disposable loopback-server integration exercises discovery, a multi-page browse, read, typed write, a test-only registered method, monitored subscription, and a pinned encrypted anonymous session. Exact run results are tracked by CI; tests never contact an industrial endpoint.
+单元测试覆盖类型/范围、参数、指纹/CA/主机名/URI/有效期拒绝、分页清理与写入确认。本机模拟器覆盖发现、分页浏览、属性读取、结构化值读写、测试方法、订阅和 pin 加密连接；不接触工业设备。方法自定义类型、多维数组、事件/报警、CRL/OCSP、历史值服务、PubSub 和厂商完整认证套件尚不支持。上游本身未完成的自定义类型/事件功能不算已完成能力。
 
-Username and X509-user profile construction is implemented; interoperability with each vendor's identity-policy setup needs testing in an authorized lab. This engine does not implement historical reads, events/alarms, complex ExtensionObjects/structures, multidimensional arrays, CRL/OCSP revocation retrieval, PubSub, or a full vendor-specific OPC UA compliance suite. It does not claim that a successful simulator test makes a command safe for production equipment.
+订阅在瞬时通信错误后最多重连5次，每次重新发现和验证证书、恢复剩余事件数量；可设置 auto_reconnect=false，reconnect_interval_ms 调整间隔。证书、权限和节点错误不会重试，写入/调用从不重放。
 
-Primary API references: [gopcua v0.9.1 source and examples](https://github.com/gopcua/opcua/tree/v0.9.1), [OPC UA service specification](https://reference.opcfoundation.org/Core/Part4/v105/docs/).
+当前仍需补齐持久连接历史、路径跳转和完整可调整多面板布局；不能把本机模拟器通过等同于真实设备验证。
+
+来源：[ua-client 功能清单](https://github.com/FreeOpcUa/ua-client)、[gopcua v0.9.1](https://github.com/gopcua/opcua/tree/v0.9.1)、[OPC UA 服务规范](https://reference.opcfoundation.org/Core/Part4/v105/docs/)

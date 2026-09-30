@@ -55,6 +55,37 @@ func (h *rtuTCPHandler) Send(request []byte) ([]byte, error) {
 	if _, e = io.ReadFull(c, prefix); e != nil {
 		return nil, e
 	}
+
+	if prefix[1] == 43 {
+		if prefix[2] != 14 {
+			return nil, fmt.Errorf("unsupported MEI response")
+		}
+		header := make([]byte, 5)
+		if _, e = io.ReadFull(c, header); e != nil {
+			return nil, e
+		}
+		response := append(prefix, header...)
+		for i := 0; i < int(header[4]); i++ {
+			field := make([]byte, 2)
+			if _, e = io.ReadFull(c, field); e != nil {
+				return nil, e
+			}
+			if len(response)+2+int(field[1])+2 > 256 {
+				return nil, fmt.Errorf("oversized RTU device identification")
+			}
+			value := make([]byte, int(field[1]))
+			if _, e = io.ReadFull(c, value); e != nil {
+				return nil, e
+			}
+			response = append(response, field...)
+			response = append(response, value...)
+		}
+		crc := make([]byte, 2)
+		if _, e = io.ReadFull(c, crc); e != nil {
+			return nil, e
+		}
+		return append(response, crc...), nil
+	}
 	remaining := 0
 	if prefix[1]&0x80 != 0 {
 		remaining = 2

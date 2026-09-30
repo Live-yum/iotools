@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 
@@ -23,10 +24,14 @@ func (u *UI) editRequest() {
 	if len(u.indexes) == 0 {
 		return
 	}
+	if _, err := config.Parse(u.raw); err != nil {
+		u.modal("此文件使用 Slumber 格式，请用 F4 直接编辑原始 YAML；也可通过 --import slumber 导入新文件后使用 F3 表单")
+		return
+	}
 	r := u.collection.Requests[u.selected]
 	params, _ := yaml.Marshal(r.Params)
-	form := tview.NewForm()
-	form.AddInputField("请求 ID", r.ID, 42, nil, nil).AddInputField("显示名称", r.Name, 42, nil, nil).AddInputField("协议", r.Protocol, 42, nil, nil).AddInputField("操作", r.Action, 42, nil, nil).AddInputField("服务地址", r.Endpoint, 70, nil, nil).AddInputField("超时时间", r.Timeout, 20, nil, nil).AddTextArea("参数 YAML", string(params), 70, 10, 4<<20, nil)
+	form := tview.NewForm().SetItemPadding(0)
+	form.AddInputField("请求 ID", r.ID, 0, nil, nil).AddInputField("显示名称", r.Name, 0, nil, nil).AddInputField("协议", r.Protocol, 0, nil, nil).AddInputField("操作", r.Action, 0, nil, nil).AddInputField("服务地址", r.Endpoint, 0, nil, nil).AddInputField("超时时间", r.Timeout, 0, nil, nil).AddTextArea("参数 YAML", string(params), 0, 8, 4<<20, nil)
 	close := func() { u.pages.RemovePage("request-form"); u.App.SetFocus(u.list) }
 	form.AddButton("保存", func() {
 		get := func(i int) string { return form.GetFormItem(i).(*tview.InputField).GetText() }
@@ -53,6 +58,7 @@ func (u *UI) editRequest() {
 			return
 		}
 		u.collection, _ = config.Parse(b)
+		u.collection.SourcePath = u.path
 		u.raw = b
 		close()
 		u.populate(u.search.GetText())
@@ -63,10 +69,17 @@ func (u *UI) editRequest() {
 	u.App.SetFocus(form)
 }
 
+var sensitiveTemplate = regexp.MustCompile(`\bsensitive\s*\(`)
+
 func redactPreview(r config.Request) config.Request {
 	var walk func(any, bool) any
 	walk = func(value any, crypto bool) any {
 		switch v := value.(type) {
+		case string:
+			if sensitiveTemplate.MatchString(v) {
+				return "••••（敏感模板，按 F3/F4 主动编辑）"
+			}
+			return v
 		case map[string]any:
 			out := map[string]any{}
 			for key, x := range v {
@@ -88,6 +101,7 @@ func redactPreview(r config.Request) config.Request {
 			return value
 		}
 	}
+	r.Endpoint = walk(r.Endpoint, false).(string)
 	if r.Params != nil {
 		r.Params = walk(r.Params, false).(map[string]any)
 	}

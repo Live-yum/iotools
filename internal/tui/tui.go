@@ -4,9 +4,11 @@ package tui
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +30,7 @@ F2               在协议专用视图和原始结果之间切换
 F3               在表单内直接编辑所选请求和参数
 F4               在终端内直接编辑 YAML 请求配置
 F6               切换环境配置（profile）
+F7               当前 HTTP 响应 jq / SQLite 历史只读查询
 F8               取消正在执行的请求或订阅
 Ctrl-L           清空结果
 ? / F1           打开本帮助
@@ -35,10 +38,10 @@ Ctrl-C / q       取消当前任务并退出
 
 配置编辑器：Ctrl-S 校验并保存，Esc 放弃修改
 HTTP：展开响应树；F2 查看完整原始结果
-MQTT：按主题分层显示最新消息；Enter 展开/折叠
-OPC UA：Enter 浏览子节点，r 读取，s 订阅，退格返回
+MQTT：主题树；Enter 展开/折叠；v 查看文本/HEX/Base64/JSON
+OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参数，属性表 e 编辑，退格返回
 Kafka：选择主题后按 Enter 开始只读消费
-Modbus：p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
+Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
 
 打开程序或选择请求不会自动连接服务器
 环境变量：${名称}；敏感信息：${env:变量名}
@@ -46,6 +49,8 @@ Modbus：p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
+	lastHTTPBody           []byte
+	HTTPHistoryPath        string
 	App                    *tview.Application
 	pages                  *tview.Pages
 	list                   *tview.List
@@ -66,6 +71,8 @@ type UI struct {
 	resultPages            *tview.Pages
 	visual                 bool
 	lastRequest            config.Request
+	mqttPreviewPending     map[string]any
+	methodArgumentsPending map[string]any
 	navigation             []config.Request
 	focus                  int
 }
@@ -79,9 +86,12 @@ func clean(s string) string {
 	}, s)
 }
 func New(path, profile string, readonly bool) (*UI, error) {
-	c, b, e := config.Load(path)
+	c, b, e := engine.LoadCollection(path)
 	if e != nil {
 		return nil, e
+	}
+	if profile == "" {
+		profile = c.DefaultProfile
 	}
 	if profile != "" {
 		if _, ok := c.Profiles[profile]; !ok {
@@ -156,6 +166,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		case tcell.KeyF6:
 			u.profiles()
 			return nil
+		case tcell.KeyF7:
+			u.httpConsole()
+			return nil
 		case tcell.KeyF8:
 			u.stop()
 			u.setStatus("正在取消…")
@@ -196,7 +209,7 @@ func (u *UI) setStatus(s string) {
 	if u.readonly {
 		mode = " · 只读 READ ONLY"
 	}
-	u.status.SetText(clean(s) + "\n环境 Profile: " + u.profile + mode + " • " + u.path)
+	u.status.SetText(clean(s) + "\n环境 Profile: " + u.profile + mode + " • " + filepath.Base(u.path))
 }
 func (u *UI) populate(filter string) {
 	u.list.Clear()
@@ -258,39 +271,29 @@ func (u *UI) execute() {
 		return
 	}
 	u.navigation = nil
+	original := u.collection.Requests[u.selected]
+	if original.Protocol == "http" {
+		if original.Mutates() && u.readonly {
+			u.modal("只读模式禁止修改操作")
+			return
+		}
+		u.start(original)
+		return
+	}
 	r, e := u.collection.Resolve(u.collection.Requests[u.selected], u.profile)
 	if e != nil {
 		u.modal(e.Error())
 		return
 	}
 	if r.Mutates() {
-		if u.readonly {
-			u.modal("当前为只读模式，禁止执行修改操作。")
-			return
-		}
-		m := tview.NewModal().SetText(clean("确认执行修改操作？\n" + r.Protocol + " / " + r.Action + "\n" + r.Endpoint + "\n\n此操作可能修改目标服务器的数据，请核对目标。")).AddButtons([]string{"取消", "确认执行"})
-		m.SetDoneFunc(func(i int, _ string) {
-			u.pages.RemovePage("confirm")
-			u.App.SetFocus(u.list)
-			if i == 1 {
-				u.start(r)
-			}
-		})
-		m.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
-			if e.Key() == tcell.KeyEscape {
-				u.pages.RemovePage("confirm")
-				u.App.SetFocus(u.list)
-				return nil
-			}
-			return e
-		})
-		u.pages.AddPage("confirm", m, true, true)
-		u.App.SetFocus(m)
+		u.confirmDerived(r)
 		return
 	}
 	u.start(r)
 }
 func (u *UI) start(r config.Request) {
+	u.mqttPreviewPending = nil
+	u.methodArgumentsPending = nil
 	u.lastRequest = r
 	u.inspector.reset(r)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -299,10 +302,15 @@ func (u *UI) start(r config.Request) {
 	u.mu.Unlock()
 	u.running = true
 	u.events = nil
+	u.lastHTTPBody = nil
 	u.result.Clear()
 	u.setStatus("正在执行 " + r.ID + " · F8 取消")
+	if strings.HasPrefix(r.Endpoint, "mock://") {
+		u.setStatus("模拟设备（不连接真实设备）· " + r.ID + " · F8 取消")
+	}
 	go func() {
-		e := engine.Run(ctx, r, true, func(event engine.Event) {
+		ctx = engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, AuthorizeRequestWrite: u.authorizeChainWrite, AuthorizeChainWrite: u.authorizeChainWrite, Prompt: u.workflowPrompt, Select: u.workflowSelect})
+		e := engine.RunCollection(ctx, u.collection, r, u.profile, r.Mutates(), func(event engine.Event) {
 			b, err := json.MarshalIndent(event, "", "  ")
 			if err != nil {
 				b = []byte(fmt.Sprintf("无法显示事件：%v", err))
@@ -312,6 +320,13 @@ func (u *UI) start(r config.Request) {
 				s = s[:32768] + "\n… 界面已截断显示，请用命令行获取完整数据"
 			}
 			u.App.QueueUpdateDraw(func() {
+				if event.Kind == "response" {
+					if data, ok := event.Data.(map[string]any); ok {
+						if raw, ok := data["raw_body_base64"].(string); ok {
+							u.lastHTTPBody, _ = base64.StdEncoding.DecodeString(raw)
+						}
+					}
+				}
 				u.inspector.add(event)
 				u.events = append(u.events, s)
 				if len(u.events) > 128 {
@@ -325,6 +340,7 @@ func (u *UI) start(r config.Request) {
 		u.App.QueueUpdateDraw(func() {
 			u.running = false
 			if u.quitting {
+				u.mqttPreviewPending = nil
 				u.App.Stop()
 				return
 			}
@@ -336,6 +352,11 @@ func (u *UI) start(r config.Request) {
 			} else {
 				u.setStatus("执行完成：" + r.ID)
 			}
+			u.finishMQTTPreview(e == nil)
+			if e == nil && u.methodArgumentsPending != nil {
+				u.methodForm(u.methodArgumentsPending)
+			}
+			u.methodArgumentsPending = nil
 		})
 	}()
 }
@@ -366,14 +387,15 @@ func (u *UI) edit() {
 				editor.SetTitle(" 文件已被外部修改，已停止覆盖 · Esc 关闭 ")
 				return nil
 			}
-			if e := config.Save(u.path, b); e != nil {
+			if e := config.SaveChecked(u.path, b, func(data []byte) error { _, err := engine.ParseCollection(data); return err }); e != nil {
 				editor.SetTitle(" 保存失败：" + clean(e.Error()) + " · Esc 放弃 ")
 				return nil
 			}
-			c, e := config.Parse(b)
+			c, e := engine.ParseCollection(b)
 			if e != nil {
 				return nil
 			}
+			c.SourcePath = u.path
 			u.collection = c
 			u.raw = b
 			u.pages.RemovePage("editor")

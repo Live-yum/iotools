@@ -18,6 +18,7 @@ import (
 // inspector presents protocol-native results without changing the shared layout.
 // Source recipes remain untouched by transient browse/navigation operations.
 type inspector struct {
+	kafka           *kafkaView
 	pages           *tview.Pages
 	tree            *tview.TreeView
 	table           *tview.Table
@@ -32,6 +33,8 @@ type inspector struct {
 	annotationsSeen map[int]bool
 	protocol, scope string
 	filtered        bool
+	matrix          bool
+	matrixColumns   int
 	owner           *UI
 }
 
@@ -48,11 +51,28 @@ func newInspector(u *UI) *inspector {
 		}
 	})
 	v.tree.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if v.protocol == "mqtt" && e.Rune() == 'v' {
+			if node := v.tree.GetCurrentNode(); node != nil {
+				if message, ok := node.GetReference().(map[string]any); ok {
+					v.messageView(message)
+				}
+			}
+			return nil
+		}
 		if v.protocol == "opcua" {
 			n := v.tree.GetCurrentNode()
 			if n != nil {
 				if id, ok := n.GetReference().(string); ok {
 					switch e.Rune() {
+					case 'c':
+						u.derived("method-arguments", id)
+						return nil
+					case 'a':
+						u.derived("attributes", id)
+						return nil
+					case 'f':
+						u.derived("references", id)
+						return nil
 					case 'r':
 						u.derived("read", id)
 						return nil
@@ -70,23 +90,60 @@ func newInspector(u *UI) *inspector {
 		return e
 	})
 	v.table.SetSelectedFunc(func(row, col int) {
-		if v.protocol == "kafka" && row > 0 {
-			topic, ok := v.table.GetCell(row, 0).GetReference().(string)
-			if !ok {
-				return
-			}
-			u.derived("consume", topic)
+		if v.protocol == "kafka" {
+			v.kafkaSelect(row, col)
+			return
 		}
 	})
 	v.table.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if v.protocol == "kafka" {
+			return v.kafkaKey(e)
+		}
+		if v.protocol == "opcua" && (e.Key() == tcell.KeyBackspace || e.Key() == tcell.KeyBackspace2) {
+			u.back()
+			return nil
+		}
+		if v.protocol == "opcua" && e.Rune() == 'e' {
+			row, _ := v.table.GetSelection()
+			if row > 0 {
+				if data, ok := v.table.GetCell(row, 0).GetReference().(map[string]any); ok {
+					u.attributeForm(data)
+				}
+			}
+			return nil
+		}
 		if v.protocol != "modbus" {
 			return e
 		}
-		row, _ := v.table.GetSelection()
-		if row < 1 || row > len(v.rows) {
+		if e.Rune() == 'm' {
+			v.matrix = !v.matrix
+			v.renderRegisters()
+			return nil
+		}
+		if v.matrix && (e.Rune() == '+' || e.Rune() == '-') {
+			if e.Rune() == '+' && v.matrixColumns < 16 {
+				v.matrixColumns++
+			}
+			if e.Rune() == '-' && v.matrixColumns > 1 {
+				v.matrixColumns--
+			}
+			v.renderRegisters()
+			return nil
+		}
+		row, col := v.table.GetSelection()
+		if row < 1 || (!v.matrix && row > len(v.rows)) {
 			return e
 		}
-		address := v.rows[row-1]
+		address := 0
+		if v.matrix {
+			var ok bool
+			address, ok = v.table.GetCell(row, col).GetReference().(int)
+			if !ok {
+				return e
+			}
+		} else {
+			address = v.rows[row-1]
+		}
 		switch e.Rune() {
 		case 'S':
 			v.snapshot(false)
@@ -123,7 +180,16 @@ func newInspector(u *UI) *inspector {
 	return v
 }
 func (v *inspector) reset(r config.Request) {
+	defer func() {
+		if r.Protocol == "kafka" {
+			v.kafkaReset(r)
+		}
+	}()
 	v.protocol = r.Protocol
+	v.matrixColumns = r.Int("matrix_columns", 8)
+	if v.matrixColumns < 1 || v.matrixColumns > 16 {
+		v.matrixColumns = 8
+	}
 	v.annotationsSeen = map[int]bool{}
 	v.pins = map[int]bool{}
 	v.labels = map[int]string{}
@@ -162,10 +228,10 @@ func (v *inspector) reset(r config.Request) {
 	v.pages.SwitchToPage("tree")
 	if r.Protocol == "opcua" {
 		v.root.SetReference(r.String("node_id", "i=85"))
-		v.tree.SetTitle(" OPC UA 节点 · Enter 浏览 · r 读 · s 订阅 · 退格返回 ")
+		v.tree.SetTitle(" OPC UA 节点 · Enter 浏览 · a 属性 · f 引用 · r 读 · s 订阅 ")
 	}
 	if r.Protocol == "mqtt" {
-		v.tree.SetTitle(" MQTT 主题树 MQTT topic tree · Enter 展开/折叠 · F2 原始 ")
+		v.tree.SetTitle(" MQTT 主题树 MQTT topic tree · v 载荷视图 · Enter 展开/折叠 ")
 	}
 	if r.Protocol == "modbus" {
 		v.pages.SwitchToPage("table")
@@ -173,7 +239,15 @@ func (v *inspector) reset(r config.Request) {
 	}
 }
 func (v *inspector) add(e engine.Event) {
+	if v.protocol == "kafka" && v.kafkaEvent(e) {
+		return
+	}
 	switch e.Kind {
+	case "retained-preview":
+		if m, ok := e.Data.(map[string]any); ok {
+			v.owner.retainedPreview(m)
+		}
+		return
 	case "message":
 		if v.protocol == "mqtt" {
 			m, ok := e.Data.(map[string]any)
@@ -204,6 +278,44 @@ func (v *inspector) add(e engine.Event) {
 			}
 			leaf := topic[strings.LastIndex(topic, "/")+1:]
 			parent.SetText(display(fmt.Sprintf("%s = %s  [QoS %v, retain %v]", leaf, payload, m["qos"], m["retained"])))
+			preview := map[string]any{}
+			for _, key := range []string{"topic", "payload", "payload_hex", "payload_base64", "qos", "retained", "bytes"} {
+				value := fmt.Sprint(m[key])
+				if len(value) > 4096 {
+					value = value[:4096] + "…（完整内容请用CLI）"
+				}
+				preview[key] = value
+			}
+			if value, ok := m["payload_json"]; ok {
+				b, _ := json.MarshalIndent(value, "", "  ")
+				if len(b) > 4096 {
+					b = b[:4096]
+				}
+				preview["payload_json"] = string(b)
+			}
+			parent.SetReference(preview)
+			return
+		}
+	case "method-arguments":
+		if m, ok := e.Data.(map[string]any); ok {
+			v.owner.methodArgumentsPending = m
+		}
+		return
+	case "attribute":
+		if m, ok := e.Data.(map[string]any); ok {
+			v.pages.SwitchToPage("table")
+			v.table.SetTitle(" OPC UA 属性 · e 编辑 · F2 原始结果 · 退格返回 ")
+			headers := []string{"节点", "属性", "值", "类型", "状态"}
+			if v.table.GetRowCount() == 0 {
+				for i, h := range headers {
+					v.table.SetCell(0, i, tview.NewTableCell(h).SetSelectable(false).SetTextColor(tcell.ColorAqua))
+				}
+			}
+			row := v.table.GetRowCount()
+			values := []any{m["node_id"], m["attribute"], m["value"], m["value_type"], m["status"]}
+			for i, x := range values {
+				v.table.SetCell(row, i, tview.NewTableCell(display(fmt.Sprint(x))).SetReference(m))
+			}
 			return
 		}
 	case "reference":
@@ -292,6 +404,7 @@ func (v *inspector) add(e engine.Event) {
 }
 func (v *inspector) renderRegisters() {
 	v.table.Clear()
+	v.table.SetTitle(" 寄存器 · m 矩阵 · p 固定 · l 标签 · f 筛选 · d 快照 · S 保存 · O 对比 ")
 	headers := []string{"固定", "地址", "标签", "u16", "i16", "十六进制", "f32", "快照差值", "趋势(u16)", "f64", "u32 M10K", "i32 M10K", "规则结果"}
 	for i, s := range headers {
 		v.table.SetCell(0, i, tview.NewTableCell(s).SetTextColor(tcell.ColorAqua).SetSelectable(false))
@@ -303,6 +416,10 @@ func (v *inspector) renderRegisters() {
 		}
 	}
 	sort.Ints(v.rows)
+	if v.matrix {
+		v.renderRegisterMatrix()
+		return
+	}
 	for i, address := range v.rows {
 		r := v.values[address]
 		pin := ""
@@ -387,7 +504,9 @@ func (u *UI) derived(action, target string) {
 			r.Timeout = "5m"
 			r.Params["max_events"] = 1000
 		}
-		u.navigation = append(u.navigation, u.lastRequest)
+		if !u.lastRequest.Mutates() {
+			u.navigation = append(u.navigation, u.lastRequest)
+		}
 	} else if r.Protocol == "kafka" {
 		r.Params["topic"] = target
 		r.Params["limit"] = 100
@@ -404,6 +523,10 @@ func (u *UI) back() {
 	}
 	r := u.navigation[len(u.navigation)-1]
 	u.navigation = u.navigation[:len(u.navigation)-1]
+	if r.Mutates() {
+		u.setStatus("返回历史中的修改操作不会自动重放，请重新明确选择并确认")
+		return
+	}
 	u.start(r)
 }
 
@@ -452,4 +575,49 @@ func optional(r map[string]any, key string) string {
 		return fmt.Sprint(value)
 	}
 	return ""
+}
+
+func (v *inspector) messageView(m map[string]any) {
+	text := fmt.Sprintf("主题：%v\n字节数：%v · QoS：%v · 保留：%v\n\n文本：\n%v\n\n十六进制：\n%v\n\nBase64：\n%v", m["topic"], m["bytes"], m["qos"], m["retained"], m["payload"], m["payload_hex"], m["payload_base64"])
+	if value, ok := m["payload_json"]; ok {
+		text += "\n\nJSON：\n" + fmt.Sprint(value)
+	}
+	view := tview.NewTextView().SetText(clean(text)).SetWrap(true).SetScrollable(true)
+	view.SetBorder(true).SetTitle(" MQTT 多表示载荷 · Esc 返回 ")
+	view.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyEscape {
+			v.owner.pages.RemovePage("mqtt-payload")
+			v.owner.App.SetFocus(v.tree)
+			return nil
+		}
+		return e
+	})
+	v.owner.pages.AddPage("mqtt-payload", view, true, true)
+	v.owner.App.SetFocus(view)
+}
+
+func (v *inspector) renderRegisterMatrix() {
+	v.table.Clear()
+	columns := v.matrixColumns
+	if columns < 1 {
+		columns = 8
+		v.matrixColumns = columns
+	}
+	v.table.SetTitle(" 寄存器矩阵 · m 返回表格 · +/- 调整列数 · p 固定 · l 标签 ")
+	for i := 0; i < columns; i++ {
+		v.table.SetCell(0, i, tview.NewTableCell(fmt.Sprintf("列 %d", i+1)).SetSelectable(false).SetTextColor(tcell.ColorAqua))
+	}
+	for i, address := range v.rows {
+		value := v.values[address]
+		pin := ""
+		if v.pins[address] {
+			pin = "*"
+		}
+		label := v.labels[address]
+		if label != "" {
+			label = " " + label
+		}
+		text := fmt.Sprintf("%s%d%s = %v", pin, address, label, value["u16"])
+		v.table.SetCell(i/columns+1, i%columns, tview.NewTableCell(display(text)).SetReference(address))
+	}
 }

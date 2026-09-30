@@ -1,0 +1,35 @@
+# 不需要网络或硬件。模拟器仅在明确选择 mock://local 时启用。
+version: 1
+requests:
+  - id: mock-registers
+    name: 本地模拟寄存器（非真实设备）
+    protocol: modbus
+    action: read-holding
+    endpoint: mock://local
+    timeout: 30s
+    params:
+      unit: 1
+      address: 0
+      count: 16
+      samples: 20
+      interval_ms: 500
+      pins: [10]
+      labels: {10: 模拟电压}
+      rules:
+        - address: 10
+          repr: u16
+          ops: ["/10"]
+          decimals: 1
+          suffix: ' V（模拟）'
+  - id: mock-bits
+    name: 本地模拟线圈
+    protocol: modbus
+    action: read-coils
+    endpoint: mock://local
+    params: {unit: 1, address: 0, count: 16}
+  - id: mock-write
+    name: 修改本进程模拟值（仍需确认）
+    protocol: modbus
+    action: write-register
+    endpoint: mock://local
+    params: {unit: 1, address: 10, count: 1, value: 2300}

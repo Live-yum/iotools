@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -18,11 +19,44 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 	// Schema Registry and Kafka Connect are HTTP protocols; use the same verified
 	// TLS/auth/response engine rather than starting an external helper.
 	switch r.Action {
-	case "schemas", "schema", "register-schema", "connectors", "connector", "update-connector":
+	case "pause-connector", "resume-connector", "delete-connector", "delete-subject", "purge-subject", "delete-schema", "schema-versions", "schemas", "schema", "register-schema", "connectors", "connector", "update-connector":
+		if (r.Action == "schema" || r.Action == "schema-versions" || r.Action == "register-schema" || r.Action == "delete-subject" || r.Action == "purge-subject" || r.Action == "delete-schema") && r.String("subject", "") == "" {
+			return fmt.Errorf("subject required")
+		}
+		if (r.Action == "connector" || r.Action == "update-connector" || r.Action == "pause-connector" || r.Action == "resume-connector" || r.Action == "delete-connector") && r.String("connector", "") == "" {
+			return fmt.Errorf("connector required")
+		}
+		if (r.Action == "schema" || r.Action == "delete-schema") && r.String("version", "latest") != "latest" {
+			n, e := exactInt(r.Params["version"])
+			if e != nil || n < 1 {
+				return fmt.Errorf("schema version requires positive integer or latest")
+			}
+		}
+		if r.Action == "purge-subject" && r.String("confirm_subject", "") != r.String("subject", "") {
+			return fmt.Errorf("永久删除必须明确提供匹配的 confirm_subject")
+		}
 		h := r
 		h.Protocol = "http"
 		h.Action = "GET"
 		switch r.Action {
+		case "pause-connector", "resume-connector":
+			h.Action = "PUT"
+			operation := strings.TrimSuffix(r.Action, "-connector")
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + url.PathEscape(r.String("connector", "")) + "/" + operation
+		case "delete-connector":
+			h.Action = "DELETE"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + url.PathEscape(r.String("connector", ""))
+		case "delete-subject", "purge-subject":
+			h.Action = "DELETE"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + url.PathEscape(r.String("subject", ""))
+			if r.Action == "purge-subject" {
+				h.Endpoint += "?permanent=true"
+			}
+		case "delete-schema":
+			h.Action = "DELETE"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + url.PathEscape(r.String("subject", "")) + "/versions/" + url.PathEscape(r.String("version", "latest"))
+		case "schema-versions":
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + url.PathEscape(r.String("subject", "")) + "/versions"
 		case "schemas":
 			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects"
 		case "schema":
@@ -87,7 +121,31 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		if r.String("offset", "earliest") == "latest" {
 			offset = kgo.NewOffset().AtEnd()
 		}
-		opts = append(opts, kgo.ConsumeTopics(topic), kgo.ConsumeResetOffset(offset))
+		if value := r.String("offset", "earliest"); value != "earliest" && value != "latest" {
+			return fmt.Errorf("offset requires earliest/latest")
+		}
+		if start := r.String("start_time", ""); start != "" {
+			timestamp, e := kafkaStartTime(start, time.Now())
+			if e != nil {
+				return e
+			}
+			offset = kgo.NewOffset().AfterMilli(timestamp.UnixMilli())
+		}
+		if selections, exists := r.Params["consume_partitions"]; exists {
+			ids, e := kafkaPartitions(selections)
+			if e != nil {
+				return e
+			}
+			assigned := map[int32]kgo.Offset{}
+			for _, id := range ids {
+				assigned[id] = offset
+			}
+			opts = append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: assigned}))
+		} else if _, exists := r.Params["partition"]; exists {
+			opts = append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {int32(r.Int("partition", 0)): offset}}))
+		} else {
+			opts = append(opts, kgo.ConsumeTopics(topic), kgo.ConsumeResetOffset(offset))
+		}
 	}
 	cl, e := kgo.NewClient(opts...)
 	if e != nil {
@@ -110,6 +168,17 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		}
 		send(emit, "brokers", v)
 		return nil
+	case "delete-group":
+		group := r.String("group", "")
+		if group == "" {
+			return fmt.Errorf("group required")
+		}
+		v, e := admin.DeleteGroup(ctx, group)
+		if e != nil {
+			return e
+		}
+		send(emit, "group-deleted", v)
+		return v.Err
 	case "groups":
 		v, e := admin.ListGroups(ctx)
 		if e != nil {
@@ -138,6 +207,39 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		}
 		send(emit, "offsets", v)
 		return v.Error()
+	case "topic-config":
+		if topic == "" {
+			return fmt.Errorf("topic required")
+		}
+		v, e := admin.DescribeTopicConfigs(ctx, topic)
+		if e != nil {
+			return e
+		}
+		send(emit, "topic-config", v)
+		for _, item := range v {
+			if item.Err != nil {
+				return item.Err
+			}
+		}
+		return nil
+	case "expand-partitions":
+		if topic == "" {
+			return fmt.Errorf("topic required")
+		}
+		if _, ok := r.Params["partitions"]; !ok {
+			return fmt.Errorf("explicit final partitions required")
+		}
+		v, e := admin.UpdatePartitions(ctx, r.Int("partitions", 0), topic)
+		if e != nil {
+			return e
+		}
+		send(emit, "partitions-expanded", v)
+		for _, item := range v {
+			if item.Err != nil {
+				return item.Err
+			}
+		}
+		return nil
 	case "create-topic":
 		if topic == "" {
 			return fmt.Errorf("topic required")
@@ -225,6 +327,9 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 				if err != nil {
 					return err
 				}
+				if !kafkaMatchFilter(key, r.String("key_filter", ""), r.String("key_prefix", "")) || !kafkaMatchFilter(value, "", r.String("value_prefix", "")) {
+					continue
+				}
 				rendered, _ := json.Marshal(value)
 				if filter != "" && !strings.Contains(string(rendered), filter) && !strings.Contains(fmt.Sprint(value), filter) {
 					continue
@@ -237,4 +342,48 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 	default:
 		return unsupported(r, "topics", "brokers", "groups", "group", "lag", "offsets", "create-topic", "delete-topic", "alter-topic", "produce", "consume", "schemas", "schema", "register-schema", "connectors", "connector", "update-connector")
 	}
+}
+
+func kafkaStartTime(value string, now time.Time) (time.Time, error) {
+	now = now.UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	switch value {
+	case "today":
+		return today, nil
+	case "yesterday":
+		return today.AddDate(0, 0, -1), nil
+	case "last7days":
+		return now.AddDate(0, 0, -7), nil
+	}
+	t, e := time.Parse(time.RFC3339Nano, value)
+	if e != nil {
+		return time.Time{}, fmt.Errorf("start_time 需要 today/yesterday/last7days 或带时区 RFC3339")
+	}
+	return t, nil
+}
+func kafkaMatchFilter(value any, contains, prefix string) bool {
+	text, ok := value.(string)
+	if !ok {
+		b, _ := json.Marshal(value)
+		text = string(b)
+	}
+	return (contains == "" || strings.Contains(text, contains)) && (prefix == "" || strings.HasPrefix(text, prefix))
+}
+
+func kafkaPartitions(raw any) ([]int32, error) {
+	values, ok := raw.([]any)
+	if !ok || len(values) == 0 || len(values) > 1024 {
+		return nil, fmt.Errorf("consume_partitions 必须是1..1024个分区编号")
+	}
+	out := []int32{}
+	seen := map[int64]bool{}
+	for _, value := range values {
+		n, e := exactInt(value)
+		if e != nil || n < 0 || n > 2147483647 || seen[n] {
+			return nil, fmt.Errorf("分区编号必须唯一且为0..2147483647的整数")
+		}
+		seen[n] = true
+		out = append(out, int32(n))
+	}
+	return out, nil
 }

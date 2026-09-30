@@ -1,30 +1,16 @@
-# Security model
+# 安全模型
 
-- The application never connects just because a collection is opened or selected.
-- Write-like operations (including HTTP POST/PUT/PATCH/DELETE, Kafka produce/admin,
-  MQTT publish/retained cleanup, Modbus writes and OPC UA method calls) are gated.
-  A collection cannot grant itself permission. CLI needs --allow-writes; TUI asks.
-- Read-only mode takes precedence over other flags. Modbus broadcast writes are
-  disabled; MQTT retained cleanup only accepts one exact topic, never a wildcard.
-- TLS certificate verification is never globally disabled. Custom CA bundles and
-  client cert/key paths are supported. Credentials are never generated automatically.
-- OPC UA defaults to Basic256Sha256 / SignAndEncrypt. Supply a trusted certificate
-  SHA-256 pin or CA and the client certificate/key. Endpoint discovery is untrusted
-  information, not approval to trust the displayed fingerprint. Validate fingerprints
-  with the server administrator over a separate trusted channel. Certificate
-  validity, hostname and advertised application URI are checked before credentials.
-- Explicit unencrypted OPC UA is for an isolated local simulator only. It requires
-  security_policy: None, security_mode: None, allow_insecure: true and anonymous auth.
-- YAML templates expand named profile values and explicitly prefixed environment
-  variables only. They do not execute commands or implicitly read files.
-- Secret environment references remain references when saved. Do not put literal
-  secrets into a tracked collection. Request bodies and server results may contain
-  private data; do not share screenshots or explicitly exported files indiscriminately.
-- Remote terminal control characters are replaced before rendering. TUI markup is
-  disabled for response content. Responses, messages, queued updates and retained
-  event count are bounded. Errors are shown instead of silently pretending success.
-- The binary has no automatic update/download behavior. Build-time dependencies and
-  license texts are locked and verified. CI needs network package access, not runtime.
+- 打开或选中集合不会自动连接；只执行用户明确选择的请求
+- HTTP 修改、Kafka 生产/管理、MQTT 发布/保留清理、Modbus 写入、OPC UA 方法调用均受确认限制。集合本身不能授予权限；命令行需 `--allow-writes`，TUI 显示确认
+- 只读模式优先。请求链的修改步骤在 TUI 逐步显示方法/目标并确认；CLI 另需 `--allow-chain-writes`，不能因主请求获准而自动扩大授权
+- Modbus 禁用广播、地址回绕和无界写入；raw PDU 也受功能码、unit、地址和数量约束
+- MQTT 递归清理必须先做有限时间预览，再确认精确主题快照；执行前重新校验。MQTT 3.1.1 没有原子比较删除，清理期间应暂停发布方；不把通配符直接当成删除目标
+- TLS 始终验证证书。支持指定 CA 和客户端证书；不自动生成凭据，不存在全局 skip_verify
+- OPC UA 默认 Basic256Sha256 / SignAndEncrypt，要求独立核实的 pin/CA 和客户端证书。发现结果不是信任授权；连接前验证有效期、主机名及 Application URI
+- 显式不加密 OPC UA 仅供隔离本机模拟器，要求 None 策略/模式、allow_insecure=true 和匿名身份。订阅断线只在瞬时通信错误时有界恢复，每次重新验证证书；从不重放写入/调用
+- `${变量}` 和 `${env:变量}` 不执行命令。Slumber `{{...}}` 功能只在执行时求值；文件读取必须由明确 file() 模板指定，command() 禁用。加载/预览不触发请求链
+- 保存时保留环境变量引用；不要将明文密钥放进版本库。请求体、响应和显式启用的 SQLite 历史可能包含隐私，请勿随意分享文件或截图
+- 远端终端控制字符会替换，响应及确认目标中的 TUI 标记会转义。响应、排队事件、主题数、消息体和历史查询都有边界；错误会明确报告，不伪装成功
+- 不自动更新或下载运行组件。构建依赖与许可证锁定并检查；分发包运行不依赖编译工具链
 
-The tool is a diagnostic client, not a production safety controller. Only connect
-to systems you are authorized to use. Test writes on an isolated simulator first.
+这是诊断客户端，不是生产设备安全控制器。仅连接获授权系统，先在隔离模拟器验证写入。回环协议测试不能替代真实工业设备、物理串口和厂商环境验收。

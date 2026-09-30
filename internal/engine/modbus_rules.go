@@ -14,7 +14,7 @@ import (
 )
 
 type RegisterRule struct {
-	Address   *int              `yaml:"address" json:"address"`
+	Address   *int              `yaml:"address" json:"address,omitempty"`
 	Repr      string            `yaml:"repr" json:"repr"`
 	Next      []int             `yaml:"next,omitempty" json:"next,omitempty"`
 	WordOrder string            `yaml:"word_order,omitempty" json:"word_order,omitempty"`
@@ -91,6 +91,22 @@ func parseRegisterAnnotations(r config.Request) (registerAnnotations, error) {
 		if v, ok := r.Params[k]; ok {
 			params[k] = v
 		}
+	}
+	// Collection maps carry string keys; normalize labels before decoding the
+	// strongly typed address map, retaining strict numeric/duplicate validation.
+	if raw, ok := params["labels"].(map[string]any); ok {
+		labels := map[int]any{}
+		for key, value := range raw {
+			address, err := strconv.Atoi(key)
+			if err != nil || address < 0 || address > 65535 {
+				return a, fmt.Errorf("invalid label address %q", key)
+			}
+			if _, exists := labels[address]; exists {
+				return a, fmt.Errorf("duplicate label address %q", key)
+			}
+			labels[address] = value
+		}
+		params["labels"] = labels
 	}
 	b, e := yaml.Marshal(params)
 	if e != nil {

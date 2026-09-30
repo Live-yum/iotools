@@ -45,7 +45,7 @@ chmod +x iotools
 - Enter / F5：执行所选请求；修改数据时弹出确认
 - F2：切换协议专用视图与原始 JSON 结果
 - F3：直接编辑单个请求表单；F4：完整 YAML；Ctrl-S 校验保存，Esc 放弃
-- F6：切换环境；F8：取消当前请求或订阅
+- F6：切换环境；F7：HTTP响应jq / SQLite历史只读查询；F8：取消当前请求或订阅
 - ? / F1：中文帮助；Ctrl-C / q：取消并退出
 
 协议结果视图：
@@ -53,8 +53,8 @@ chmod +x iotools
 - HTTP：展开响应状态、头部和 JSON；F2 查看原始结果
 - Kafka：主题/分区表；选择主题后 Enter 只读消费；支持注册表 Avro 编解码
 - MQTT：主题树、最新载荷、QoS、保留标记；Enter 展开/折叠
-- Modbus：寄存器表、固定项、标签、u16 趋势、快照差值
-- OPC UA：节点浏览；Enter 下钻，r 读取，s 订阅，退格返回
+- Modbus：寄存器表/矩阵（m切换，+/-列数）、固定项、标签、趋势、快照差值
+- OPC UA：Enter下钻，a属性，f引用，r读取，s订阅，c方法表单；属性表e编辑，退格返回
 
 详细操作见 [终端交互说明](docs/tui.md)。固定项和标签可以保存回当前请求；S 保存快照，O 载入对比。
 这些操作不会擅自修改服务器数据。
@@ -81,6 +81,10 @@ iotools --profile local --run http-get
 iotools --profile local --run mqtt-publish --allow-writes
 iotools --profile production --read-only
 ```
+
+Slumber v4/v5文件可直接载入并用F4原格式编辑；`--import slumber --input slumber.yml --file imported.yaml` 可导入新的原生文件（不覆盖）。还支持v3/REST/OpenAPI/Insomnia。模板、文件函数、链授权、jq和历史见[HTTP工作流中文指南](docs/http-slumber.md)。
+
+`--history-db history.sqlite` 明确启用历史保存；F7可查询该文件。历史可能包含敏感响应，不默认写盘。CLI请求链写入还需 `--allow-chain-writes`，TUI按渲染后的真实目标逐步骤确认。
 
 命令行输出 JSON 行。修改操作必须明确传 --allow-writes；--read-only 优先级
 更高。Modbus 写入还必须明确填写 unit、address 和对应类型的值。错误类型、

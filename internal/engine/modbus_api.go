@@ -73,7 +73,7 @@ func newModbusAPIHandler(base config.Request, scope *ModbusWriteScope) (http.Han
 	gate := make(chan struct{}, 1)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeAPIJSON(w, http.StatusOK, map[string]any{"status": "configured", "device_present": false, "read_only": scope == nil})
+		writeAPIJSON(w, http.StatusOK, map[string]any{"status": "configured", "device_present": false, "read_only": scope == nil, "simulated": base.Endpoint == "mock://local"})
 	})
 	handle := func(write bool) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +189,7 @@ func newModbusAPIHandler(base config.Request, scope *ModbusWriteScope) (http.Han
 			if write {
 				w.WriteHeader(http.StatusNoContent)
 			} else {
-				writeAPIJSON(w, 200, map[string]any{"values": values})
+				writeAPIJSON(w, 200, map[string]any{"values": values, "simulated": base.Endpoint == "mock://local"})
 			}
 		}
 	}
@@ -206,6 +206,9 @@ func newModbusAPIHandler(base config.Request, scope *ModbusWriteScope) (http.Han
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
+		if base.Endpoint == "mock://local" {
+			w.Header().Set("X-Iotools-Simulated", "true")
+		}
 		mux.ServeHTTP(w, r)
 	}), nil
 }

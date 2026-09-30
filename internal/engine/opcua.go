@@ -25,11 +25,14 @@ import (
 
 // OPC UA discovery is untrusted metadata. Session establishment independently
 // validates the advertised certificate before any identity token is transmitted.
-func runOPCUA(ctx context.Context, r config.Request, emit Emit) error {
+func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	switch r.Action {
-	case "discover", "browse", "read", "write", "call", "subscribe":
+	case "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
 	default:
-		return unsupported(r, "discover", "browse", "read", "write", "call", "subscribe")
+		return unsupported(r, "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe")
+	}
+	if err := validateOPCUAOperation(r); err != nil {
+		return err
 	}
 	address, err := url.Parse(r.Endpoint)
 	if err != nil || address.Scheme != "opc.tcp" || address.Hostname() == "" || address.User != nil {
@@ -75,36 +78,12 @@ func runOPCUA(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	send(emit, "connected", map[string]any{"security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String()})
 	switch r.Action {
-	case "browse":
+	case "method-arguments":
+		return opcuaMethodArguments(ctx, c, r, emit)
+	case "browse", "references":
 		return opcuaBrowse(ctx, c, r, emit)
-	case "read":
-		nodes, err := opcuaNodes(r)
-		if err != nil {
-			return err
-		}
-		req := &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnBoth}
-		for _, n := range nodes {
-			req.NodesToRead = append(req.NodesToRead, &ua.ReadValueID{NodeID: n, AttributeID: ua.AttributeIDValue})
-		}
-		res, err := c.Read(ctx, req)
-		if err != nil {
-			return err
-		}
-		if res == nil || len(res.Results) != len(nodes) {
-			return fmt.Errorf("incomplete OPC UA read response")
-		}
-		var failed bool
-		for i, v := range res.Results {
-			if v == nil {
-				return fmt.Errorf("empty OPC UA data value")
-			}
-			send(emit, "value", opcuaData(nodes[i].String(), v))
-			failed = failed || v.Status != ua.StatusOK
-		}
-		if failed {
-			return fmt.Errorf("one or more OPC UA reads returned a non-Good status")
-		}
-		return nil
+	case "read", "attributes":
+		return opcuaReadAttributes(ctx, c, r, emit)
 	case "write":
 		n, err := ua.ParseNodeID(r.String("node_id", ""))
 		if err != nil {
@@ -114,7 +93,8 @@ func runOPCUA(ctx context.Context, r config.Request, emit Emit) error {
 		if err != nil {
 			return err
 		}
-		res, err := c.Write(ctx, &ua.WriteRequest{NodesToWrite: []*ua.WriteValue{{NodeID: n, AttributeID: ua.AttributeIDValue, Value: &ua.DataValue{EncodingMask: ua.DataValueValue, Value: v}}}})
+		attribute, _ := opcuaAttribute(r.Params["attribute"])
+		res, err := c.Write(ctx, &ua.WriteRequest{NodesToWrite: []*ua.WriteValue{{NodeID: n, AttributeID: attribute, Value: &ua.DataValue{EncodingMask: ua.DataValueValue, Value: v}}}})
 		if err != nil {
 			return err
 		}
@@ -358,7 +338,22 @@ func opcuaBrowse(ctx context.Context, c opcuaBrowser, r config.Request, emit Emi
 	if limit < 1 || limit > 100000 {
 		return fmt.Errorf("max_references must be 1..100000")
 	}
-	res, err := c.Browse(ctx, &ua.BrowseRequest{View: &ua.ViewDescription{}, RequestedMaxReferencesPerNode: 100, NodesToBrowse: []*ua.BrowseDescription{{NodeID: node, BrowseDirection: ua.BrowseDirectionForward, IncludeSubtypes: true, ResultMask: uint32(ua.BrowseResultMaskAll)}}})
+	direction, e := opcuaBrowseDirection(r)
+	if e != nil {
+		return e
+	}
+	var referenceType *ua.NodeID
+	if id := r.String("reference_type", ""); id != "" {
+		referenceType, e = ua.ParseNodeID(id)
+		if e != nil {
+			return e
+		}
+	}
+	includeSubtypes := true
+	if _, ok := r.Params["include_subtypes"]; ok {
+		includeSubtypes = r.Bool("include_subtypes")
+	}
+	res, err := c.Browse(ctx, &ua.BrowseRequest{View: &ua.ViewDescription{}, RequestedMaxReferencesPerNode: 100, NodesToBrowse: []*ua.BrowseDescription{{NodeID: node, BrowseDirection: direction, ReferenceTypeID: referenceType, IncludeSubtypes: includeSubtypes, ResultMask: uint32(ua.BrowseResultMaskAll)}}})
 	if err != nil {
 		return err
 	}
@@ -539,6 +534,10 @@ func opcuaZero(kind string) any {
 		return ""
 	case "DateTime":
 		return "2000-01-01T00:00:00Z"
+	case "LocalizedText":
+		return map[string]any{"text": ""}
+	case "QualifiedName":
+		return map[string]any{"name": "", "namespace": 0}
 	default:
 		return 0
 	}
@@ -549,6 +548,51 @@ func opcuaScalar(kind string, raw any) (any, error) {
 	}
 	text := fmt.Sprint(raw)
 	switch kind {
+	case "LocalizedText":
+		m, ok := raw.(map[string]any)
+		if !ok || len(m) > 2 {
+			return nil, fmt.Errorf("LocalizedText 要求 {text,locale}")
+		}
+		value, ok := m["text"].(string)
+		if !ok {
+			return nil, fmt.Errorf("LocalizedText.text 必须是字符串")
+		}
+		locale := ""
+		if x, exists := m["locale"]; exists {
+			locale, ok = x.(string)
+			if !ok {
+				return nil, fmt.Errorf("LocalizedText.locale 必须是字符串")
+			}
+		}
+		for key := range m {
+			if key != "text" && key != "locale" {
+				return nil, fmt.Errorf("未知 LocalizedText 字段")
+			}
+		}
+		return ua.NewLocalizedTextWithLocale(value, locale), nil
+	case "QualifiedName":
+		m, ok := raw.(map[string]any)
+		if !ok || len(m) > 2 {
+			return nil, fmt.Errorf("QualifiedName 要求 {name,namespace}")
+		}
+		value, ok := m["name"].(string)
+		if !ok {
+			return nil, fmt.Errorf("QualifiedName.name 必须是字符串")
+		}
+		ns := int64(0)
+		if x, exists := m["namespace"]; exists {
+			var e error
+			ns, e = exactInt(x)
+			if e != nil || ns < 0 || ns > 65535 {
+				return nil, fmt.Errorf("QualifiedName.namespace 超出 0..65535")
+			}
+		}
+		for key := range m {
+			if key != "name" && key != "namespace" {
+				return nil, fmt.Errorf("未知 QualifiedName 字段")
+			}
+		}
+		return &ua.QualifiedName{NamespaceIndex: uint16(ns), Name: value}, nil
 	case "Boolean":
 		switch value := raw.(type) {
 		case bool:

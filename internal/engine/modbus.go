@@ -12,6 +12,22 @@ import (
 )
 
 func runModbus(ctx context.Context, r config.Request, emit Emit) error {
+	if r.Action == "scan-units" || r.Action == "sweep-holding" || r.Action == "search-holding" {
+		return runModbusRange(ctx, r, emit)
+	}
+	if r.Action == "read-raw" || r.Action == "write-raw" {
+		if _, err := validateRawPDU(r); err != nil {
+			return err
+		}
+	}
+	if r.Action == "write-typed" {
+		var err error
+		r, err = prepareTypedWrite(r)
+		if err != nil {
+			return err
+		}
+	}
+
 	annotations, err := parseRegisterAnnotations(r)
 	if err != nil {
 		return err
@@ -39,6 +55,12 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 	var handler modbus.ClientHandler
 	var close func() error
 	switch {
+	case r.Endpoint == "mock://local":
+		h := modbus.NewTCPClientHandler("")
+		h.SlaveId = byte(unit)
+		handler = &mockModbusHandler{packager: h}
+		close = func() error { return nil }
+		send(emit, "simulation", map[string]any{"simulated": true, "endpoint": r.Endpoint, "message": "本地内存模拟器；未连接真实设备；写入仅在当前进程保存"})
 	case strings.HasPrefix(r.Endpoint, "tcp://"):
 		h := modbus.NewTCPClientHandler(strings.TrimPrefix(r.Endpoint, "tcp://"))
 		h.Timeout = timeout
@@ -61,9 +83,15 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		handler = h
 		close = h.Close
 	default:
-		return fmt.Errorf("Modbus endpoint must use tcp://host:port, rtu+tcp://host:port or rtu://device")
+		return fmt.Errorf("Modbus endpoint must use tcp://host:port, rtu+tcp://host:port rtu://device or explicit mock://local")
 	}
 	defer close()
+	if r.Action == "read-device-id" {
+		return runModbusDeviceID(ctx, r, handler, emit)
+	}
+	if r.Action == "read-raw" || r.Action == "write-raw" {
+		return runModbusRaw(r, handler, emit)
+	}
 	client := modbus.NewClient(handler)
 	iterations := r.Int("samples", 1)
 	interval := r.Int("interval_ms", 1000)

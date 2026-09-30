@@ -16,9 +16,11 @@ import (
 )
 
 type Collection struct {
-	Version  int                          `yaml:"version" json:"version"`
-	Profiles map[string]map[string]string `yaml:"profiles,omitempty" json:"profiles,omitempty"`
-	Requests []Request                    `yaml:"requests" json:"requests"`
+	SourcePath     string                       `yaml:"-" json:"-"`
+	DefaultProfile string                       `yaml:"default_profile,omitempty" json:"default_profile,omitempty"`
+	Version        int                          `yaml:"version" json:"version"`
+	Profiles       map[string]map[string]string `yaml:"profiles,omitempty" json:"profiles,omitempty"`
+	Requests       []Request                    `yaml:"requests" json:"requests"`
 }
 
 type Request struct {
@@ -47,6 +49,11 @@ func Parse(data []byte) (*Collection, error) {
 	}
 	if c.Version != 1 {
 		return nil, fmt.Errorf("unsupported collection version %d (expected 1)", c.Version)
+	}
+	if c.DefaultProfile != "" {
+		if _, ok := c.Profiles[c.DefaultProfile]; !ok {
+			return nil, fmt.Errorf("default_profile does not exist: %s", c.DefaultProfile)
+		}
 	}
 	seen := map[string]bool{}
 	for _, r := range c.Requests {
@@ -79,6 +86,9 @@ func Load(path string) (*Collection, []byte, error) {
 		return nil, nil, e
 	}
 	c, e := Parse(b)
+	if c != nil {
+		c.SourcePath = path
+	}
 	return c, b, e
 }
 func (r Request) Duration() (time.Duration, error) {
@@ -144,7 +154,7 @@ func (r Request) Mutates() bool {
 	case "mqtt":
 		return r.Action == "publish" || r.Action == "clean-retained"
 	case "kafka":
-		return r.Action == "produce" || r.Action == "create-topic" || r.Action == "delete-topic" || r.Action == "alter-topic" || r.Action == "register-schema" || r.Action == "update-connector"
+		return r.Action == "pause-connector" || r.Action == "resume-connector" || r.Action == "delete-connector" || r.Action == "delete-group" || r.Action == "delete-subject" || r.Action == "purge-subject" || r.Action == "delete-schema" || r.Action == "expand-partitions" || r.Action == "produce" || r.Action == "create-topic" || r.Action == "delete-topic" || r.Action == "alter-topic" || r.Action == "register-schema" || r.Action == "update-connector"
 	case "modbus":
 		return strings.HasPrefix(r.Action, "write")
 	case "opcua":
@@ -256,7 +266,15 @@ func (c *Collection) Resolve(r Request, profile string) (Request, error) {
 // Save validates before changing disk, writes a private temp file, and replaces the
 // collection atomically on supported filesystems. There is no plaintext backup.
 func Save(path string, data []byte) error {
-	if _, e := Parse(data); e != nil {
+	return SaveChecked(path, data, func(data []byte) error { _, e := Parse(data); return e })
+}
+
+// SaveChecked atomically saves a document only after its format validator succeeds.
+func SaveChecked(path string, data []byte, validate func([]byte) error) error {
+	if validate == nil {
+		return fmt.Errorf("document validator required")
+	}
+	if e := validate(data); e != nil {
 		return e
 	}
 	info, e := os.Lstat(path)

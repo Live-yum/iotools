@@ -207,3 +207,40 @@ func TestSnapshotUIRejectsOverwriteAndLoadsDiff(t *testing.T) {
 		t.Fatal("baseline not loaded")
 	}
 }
+
+func TestMQTTPayloadViewsPreserveHexAndBase64(t *testing.T) {
+	u, _ := newTestUI(t)
+	v := u.inspector
+	v.reset(config.Request{Protocol: "mqtt", Action: "subscribe"})
+	v.add(engine.Event{Kind: "message", Data: map[string]any{"topic": "raw/data", "payload": "二进制", "payload_hex": "00ff80", "payload_base64": "AP+A", "bytes": 3, "qos": 1, "retained": false}})
+	m := v.topics["/raw/data"].GetReference().(map[string]any)
+	v.messageView(m)
+	_, p := u.pages.GetFrontPage()
+	view := p.(*tview.TextView)
+	if !strings.Contains(view.GetText(false), "00ff80") || !strings.Contains(view.GetText(false), "AP+A") {
+		t.Fatal("payload views lost raw representations")
+	}
+	view.GetInputCapture()(tcell.NewEventKey(tcell.KeyEscape, 0, 0))
+	if page, _ := u.pages.GetFrontPage(); page != "main" {
+		t.Fatal("payload close failed")
+	}
+}
+
+func TestModbusMatrixPreservesAddressSelection(t *testing.T) {
+	u, _ := newTestUI(t)
+	v := u.inspector
+	v.reset(config.Request{Protocol: "modbus", Params: map[string]any{"matrix_columns": 2}})
+	v.add(engine.Event{Kind: "registers", Data: []map[string]any{{"address": 10, "u16": uint16(1)}, {"address": 20, "u16": uint16(2)}, {"address": 30, "u16": uint16(3)}}})
+	v.table.GetInputCapture()(tcell.NewEventKey(tcell.KeyRune, 'm', 0))
+	if v.table.GetCell(2, 0).GetReference() != 30 {
+		t.Fatal("matrix lost non-contiguous address")
+	}
+	v.table.GetInputCapture()(tcell.NewEventKey(tcell.KeyRune, '+', 0))
+	if v.matrixColumns != 3 || v.table.GetCell(1, 2).GetReference() != 30 {
+		t.Fatal("matrix column adjustment lost address")
+	}
+	v.table.GetInputCapture()(tcell.NewEventKey(tcell.KeyRune, 'm', 0))
+	if v.matrix || v.table.GetCell(1, 1).Text != "10" {
+		t.Fatal("table restore failed")
+	}
+}

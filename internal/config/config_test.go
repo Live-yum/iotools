@@ -132,3 +132,13 @@ func TestReplaceRequestPreservesUnrelatedSource(t *testing.T) {
 		t.Fatal("duplicate ID accepted")
 	}
 }
+
+func TestDefaultProfileValidation(t *testing.T) {
+	if _, e := Parse([]byte("version: 1\ndefault_profile: missing\nrequests: []\n")); e == nil {
+		t.Fatal("missing default profile accepted")
+	}
+	c, e := Parse([]byte("version: 1\ndefault_profile: local\nprofiles: {local: {host: localhost}}\nrequests: []\n"))
+	if e != nil || c.DefaultProfile != "local" {
+		t.Fatalf("%+v %v", c, e)
+	}
+}
