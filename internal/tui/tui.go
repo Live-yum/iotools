@@ -49,10 +49,11 @@ OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参�
 Kafka：选择主题后按 Enter 开始只读消费
 Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
 Modbus 高级：C 列，K 快捷键，I 导入标注，E 导出标注，D 导出 CSV；M 完整配置/CSV对比/时间/写日志
+Modbus 暂停不清缓存/重置样本；当前I/O可结束，总时限继续计时
 Modbus 操作：/ 地址或唯一标签跳转，R 读取设置，v/Enter 详情，g 字段/规则图
 w 写入编辑（FC5/6/15/16/23），b 本机字序，u 单元，t 预览空间
-[/] 读取窗口，{/} 数量，r 明确读取，z 取消，y 当前列复制；K 重映射
-c 规则，P 标注面板，i 设备标识，j 原始PDU，B 扫描范围，U 探测明确unit列表
+[/] 读取窗口，{/} 数量，r 明确读取，z 暂停/继续，F8 取消，y 当前列复制；K 重映射
+V 设备/串口选择与明确发现，c 规则，P 标注面板，i 设备标识，j 原始PDU，B 扫描范围，U 探测明确unit列表
 
 打开程序或选择请求不会自动连接服务器
 环境变量：${名称}；敏感信息：${env:变量名}
@@ -60,7 +61,9 @@ c 规则，P 标注面板，i 设备标识，j 原始PDU，B 扫描范围，U �
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
+	BuildVersion            string
 	modbusSession           *modbusSessionState
+	modbusPause             *engine.ModbusPauseController
 	localCancels            map[uint64]context.CancelFunc
 	nextLocalWork           uint64
 	uaCopyPending           bool
@@ -341,6 +344,11 @@ func (u *UI) startCollection(r config.Request, collection *config.Collection, pr
 	u.lastRequest = r
 	u.inspector.reset(r)
 	u.modbusSessionStart(r)
+	u.modbusPause = nil
+	if r.Protocol == "modbus" && !r.Mutates() {
+		u.modbusPause = engine.NewModbusPauseController()
+	}
+	pauseController := u.modbusPause
 	ctx, cancel := context.WithCancel(context.Background())
 	u.mu.Lock()
 	u.cancel = cancel
@@ -354,6 +362,9 @@ func (u *UI) startCollection(r config.Request, collection *config.Collection, pr
 		u.setStatus("模拟设备（不连接真实设备）· " + r.ID + " · F8 取消")
 	}
 	go func() {
+		if pauseController != nil {
+			ctx = engine.WithModbusPause(ctx, pauseController)
+		}
 		if r.Protocol == "modbus" {
 			ctx = engine.WithModbusObserver(ctx, func(operation engine.ModbusOperation) { u.App.QueueUpdateDraw(func() { u.modbusOperation(operation) }) })
 		}
@@ -387,6 +398,9 @@ func (u *UI) startCollection(r config.Request, collection *config.Collection, pr
 		u.App.QueueUpdateDraw(func() {
 			u.running = false
 			u.modbusSessionEnd(r, e)
+			if u.modbusPause == pauseController {
+				u.modbusPause = nil
+			}
 			if u.quitting {
 				u.mqttPreviewPending = nil
 				if u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {

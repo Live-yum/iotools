@@ -347,8 +347,8 @@ func TestModbusInteractionIntegerEditingAndDispatchSafety(t *testing.T) {
 		}
 		p.(*tview.Form).GetInputCapture()(tcell.NewEventKey(tcell.KeyEscape, 0, 0))
 	}
-	if len(modbusDefaultKeys) != 38 {
-		t.Fatal(fmt.Sprint("expected38 actual native actions, got ", len(modbusDefaultKeys)))
+	if len(modbusDefaultKeys) != 39 {
+		t.Fatal(fmt.Sprint("expected39 actual native actions, got ", len(modbusDefaultKeys)))
 	}
 }
 
@@ -519,7 +519,7 @@ func TestModbusInteractionLiveReadCancelAndConfirmedFC23(t *testing.T) {
 	}
 	stopped := make(chan struct{})
 	u.App.QueueUpdateDraw(func() {
-		u.inspector.modbusDispatch("pause")
+		u.App.GetInputCapture()(tcell.NewEventKey(tcell.KeyF8, 0, 0))
 		u.modbusSession.statsView = nil
 		u.App.SetAfterDrawFunc(func(tcell.Screen) {
 			if !u.running {

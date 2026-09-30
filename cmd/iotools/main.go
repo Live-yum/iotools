@@ -295,6 +295,7 @@ func run(args []string) error {
 		if err != nil {
 			return err
 		}
+		u.BuildVersion = version
 		u.HTTPHistoryPath = *historyDB
 		return u.Run()
 	}

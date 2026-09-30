@@ -12,6 +12,15 @@ import (
 )
 
 func runModbus(ctx context.Context, r config.Request, emit Emit) error {
+	if r.Mutates() {
+		ctx = WithModbusPause(ctx, nil)
+	}
+	if !r.Mutates() {
+		if err := waitModbusPause(ctx); err != nil {
+			return err
+		}
+	}
+	ctx = withModbusGap(ctx)
 	if r.Action == "read-write-registers" {
 		if _, _, _, err := validateModbusReadWrite(r); err != nil {
 			return err
@@ -57,6 +66,13 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 	if timeout > 5*time.Second {
 		timeout = 5 * time.Second
 	}
+	connectTimeout, requestTimeout, err := modbusTransportTimeouts(r, timeout)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(r.Endpoint, "rtu://") && requestTimeout > 5*time.Second {
+		return fmt.Errorf("serial request_timeout_ms must not exceed5000; cancellation is bounded by the serial read timeout")
+	}
 	var handler modbus.ClientHandler
 	var close func() error
 	switch {
@@ -70,12 +86,12 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		h := modbus.NewTCPClientHandler(strings.TrimPrefix(r.Endpoint, "tcp://"))
 		h.Timeout = timeout
 		h.SlaveId = byte(unit)
-		handler = &tcpContextHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "tcp://"), ctx: ctx, timeout: timeout}
+		handler = &tcpContextHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "tcp://"), ctx: ctx, timeout: requestTimeout, connectTimeout: connectTimeout}
 		close = func() error { return nil }
 	case strings.HasPrefix(r.Endpoint, "rtu+tcp://"):
 		h := modbus.NewRTUClientHandler("")
 		h.SlaveId = byte(unit)
-		handler = &rtuTCPHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "rtu+tcp://"), ctx: ctx, timeout: timeout}
+		handler = &rtuTCPHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "rtu+tcp://"), ctx: ctx, timeout: requestTimeout, connectTimeout: connectTimeout}
 		close = func() error { return nil }
 	case strings.HasPrefix(r.Endpoint, "rtu://"):
 		h := modbus.NewRTUClientHandler(strings.TrimPrefix(r.Endpoint, "rtu://"))
@@ -84,29 +100,30 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		h.Parity = r.String("parity", "N")
 		h.StopBits = r.Int("stop_bits", 1)
 		h.SlaveId = byte(unit)
-		h.Timeout = timeout
+		h.Timeout = requestTimeout
 		handler = h
 		close = h.Close
 	default:
 		return fmt.Errorf("Modbus endpoint must use tcp://host:port, rtu+tcp://host:port rtu://device or explicit mock://local")
 	}
 	defer close()
+	handler = &modbusTimedHandler{ClientHandler: handler, ctx: ctx, gap: time.Duration(r.Int("request_gap_ms", 0)) * time.Millisecond}
 	if r.Action == "read-device-id" {
 		start := time.Now()
 		err := runModbusDeviceID(ctx, r, handler, emit)
-		observeModbusOperation(ctx, r, start, err)
+		observeModbusTimedOperation(ctx, r, start, err, handler)
 		return err
 	}
 	if r.Action == "read-raw" || r.Action == "write-raw" {
 		start := time.Now()
 		err := runModbusRaw(r, handler, emit)
-		observeModbusOperation(ctx, r, start, err)
+		observeModbusTimedOperation(ctx, r, start, err, handler)
 		return err
 	}
 	if r.Action == "read-write-registers" {
 		start := time.Now()
 		err := runModbusReadWrite(r, handler, emit)
-		observeModbusOperation(ctx, r, start, err)
+		observeModbusTimedOperation(ctx, r, start, err, handler)
 		return err
 	}
 	client := modbus.NewClient(handler)
@@ -119,6 +136,11 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		iterations = 1
 	}
 	for n := 0; n < iterations; n++ {
+		if !r.Mutates() {
+			if err := waitModbusPause(ctx); err != nil {
+				return err
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -185,7 +207,7 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		if e == nil && (r.Action == "read-coils" || r.Action == "read-discrete") && len(data) < (count+7)/8 {
 			e = fmt.Errorf("truncated Modbus bit response")
 		}
-		observeModbusOperation(ctx, r, operationStart, e)
+		observeModbusTimedOperation(ctx, r, operationStart, e, handler)
 		if e != nil {
 			return e
 		}

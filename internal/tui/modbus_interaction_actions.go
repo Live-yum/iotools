@@ -17,6 +17,8 @@ func (v *inspector) modbusDispatch(action string) {
 	u := v.owner
 	address, selected := v.modbusSelectedAddress()
 	switch action {
+	case "device":
+		v.modbusDeviceForm()
 	case "custom-rule":
 		v.modbusRuleForm(-1)
 	case "annotations":
@@ -74,7 +76,7 @@ func (v *inspector) modbusDispatch(action string) {
 		}
 		u.start(modbusReadRequest(v.modbus.request))
 	case "pause":
-		u.stop()
+		u.toggleModbusPause()
 	case "stats":
 		u.modbusStatsPanel()
 	case "activity":

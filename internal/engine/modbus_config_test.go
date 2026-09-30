@@ -20,7 +20,7 @@ func TestMTUIFullConfigOfflineReadOnlyConversion(t *testing.T) {
 		t.Fatal(plan)
 	}
 	for _, r := range plan.Requests {
-		if r.Mutates() || r.Endpoint != "tcp://127.0.0.1:1502" || r.Int("address", -1) != 195 || r.Int("samples", 0) != 1 || r.Int("unit", 0) != 7 || r.Timeout != "3000ms" {
+		if r.Mutates() || r.Endpoint != "tcp://127.0.0.1:1502" || r.Int("address", -1) != 195 || r.Int("samples", 0) != 1 || r.Int("unit", 0) != 7 || r.Timeout != "5000ms" || r.Int("request_timeout_ms", 0) != 3000 || r.Int("connect_timeout_ms", 0) != 1000 {
 			t.Fatalf("unsafe/inaccurate request: %#v", r)
 		}
 		if err := validateParams(r); err != nil {

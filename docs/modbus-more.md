@@ -12,7 +12,7 @@ Go 实现独立编写，没有复制 GPL 源码。
 ## 入口与安全边界
 
 Modbus 结果表按 `M` 打开更多菜单：完整配置导入、CSV快照比较、采样时间显示、写日志查看。
-`M` 对应可在 `K` 修改的 `more` 动作；当前有13个原生表格动作映射。
+`M` 对应可在 `K` 修改的 `more` 动作；当前有39个真实原生动作映射（不同于上游32动作拆分）。
 所有新菜单都保持 Esc 只关闭本机界面，F8 取消当前采样，Ctrl-C 退出。
 打开、预览、取消、保存都不会自动连接设备、启动API或更改会话只读状态。
 
@@ -25,7 +25,7 @@ Modbus 结果表按 `M` 打开更多菜单：完整配置导入、CSV快照比�
 转换的字段：
 
 - `device.interface`：mock、TCP、RTU-over-TCP、串口及串口参数；主机禁止嵌入凭据和变量模板
-- `device.unit_id`、`word_order`、`request_timeout_ms`；设备单次超时最高5000ms，超出会在预览警告
+- `device.unit_id`、`word_order`、`connect_timeout_ms`、`request_timeout_ms`、`request_gap_ms`；连接/请求/间隔最高60000ms，串口请求最高5000ms；超出在预览警告
 - `startup.address/type` 与 `batch.size/anchor`：计算起始读取范围；start/middle/end和地址边界与上游窗口算法一致
 - `refresh_interval_ms`：保存为采样间隔，但 `samples` 固定为1，连续采样需用户另外明确配置
 - 全部四类 `registers`：pins、labels、custom rules，保持不同地址空间隔离
@@ -35,7 +35,6 @@ Modbus 结果表按 `M` 打开更多菜单：完整配置导入、CSV快照比�
 
 **这不是丢失信息却声称完全兼容的配置加载器。** 未转换字段逐项列入预览，不保存其值：
 
-- 独立 `connect_timeout_ms`、请求后 `request_gap_ms`；原生使用请求超时，且本次只生成单次读取
 - `batch.read_full_customs/custom_by_registers`、`startup.panel`、`matrix.show_context`的不同视图/额外读取行为
 - `api`：任何监听或unit覆盖均不启用，仍需显式CLI服务命令
 - `read_only`：导入只读动作，不让外部配置授予当前会话写权限
@@ -112,14 +111,14 @@ Enter查看完整操作ID、目标和错误详情。查看器不改变文件，�
 ## 32个上游动作逐项核对
 
 下表区分可执行同一设备能力、已有不同界面和仍缺工作流。存在F3参数编辑不等于
-已实现上游专用弹窗，当前38个原生动作也不与32个上游动作逐项等同（含不同拆分）。
+已实现上游专用弹窗，当前39个原生动作也不与32个上游动作逐项等同（含不同拆分）。
 
 | 上游动作 | 当前入口/状态 | 仍有差异 |
 |---|---|---|
-| about | CLI `--version`、中文帮助 | 没有独立About弹窗 |
+| about | F1内显示构建SHA/许可证/源码，CLI `--version` | 信息合并到中文帮助，不另设独立About窗 |
 | pin | p，K可改键 | 同能力，原生请求级保存 |
 | dump | D CSV，E标注JSON | 当前请求空间已读行；不汇总已切换请求的旧会话 |
-| help | ? / F1 | 中文帮助，不能像上游帮助菜单直接运行所有动作 |
+| help | ? / F1，帮助中M打开所有实际Modbus动作 | 按Enter进入对应工作流，修改仍需确认 |
 | refresh | r执行当前读取；F5执行源请求 | 都是重新执行有界请求；结果表Enter现在打开详情 |
 | register_type | t预览下一空间；R四空间选择 | 预览后明确应用/读取；固定四空间循环，未使用上游cycle_register_types子集 |
 | write | w类型/线圈/位翻转/±1/编码预览及二次确认 | FC5/6/15/16/23；没有上游同版式位光标，整数严格拒绝溢出 |
@@ -127,14 +126,14 @@ Enter查看完整操作ID、目标和错误详情。查看器不改变文件，�
 | label | l，K可改键 | 同能力 |
 | custom_rule | c结构化规则编辑、同响应预览、明确保存/删除 | enum/bits/ops用结构化JSON字段，界面非上游逐项列表 |
 | columns | C显隐/顺序/宽度/过滤 | 同能力，另有M时间模式 |
-| pause | z/F8取消，r重新读取 | 未保留上游同一会话暂停/继续状态，重新读取清历史 |
+| pause | z暂停/继续，F8取消 | 保留请求/连接/历史/剩余样本；已发I/O可结束，原总时限继续计时 |
 | word_order | b本机四字序重解释；R保存/读取 | 必须先停止采样；同响应解释，不混合旧邻接词 |
 | unit_id | u/R单元设置，U四空间显式列表探测与结果选择 | 最多32个明确Unit；有stop-first/异常区分，未有ASCII和异常显隐 |
 | inspect | v/Enter逐寄存器详情，NOW/MIN/MAX/AVG | 同屏显示各模式；左右选择图字段，多词仅同响应 |
 | device_id | i访问级别/对象选择、明确读取与专用对象表 | 不在打开或切换级别时自动连接；运行中禁止重复提交 |
 | raw_request | j功能码/HEX校验预览与结果表 | 已知只读/写功能码分类；未知功能码保持安全限制 |
 | graph | g字段/规则独立图，跟随/冻结与本机清历史 | 有界原始响应历史，不跨缺失点连线；64位图统计为近似 |
-| device | F3端点/串口参数；显式unit扫描 | 缺同级网络发现/串口枚举交互选择器；不自动扫描外部设备 |
+| device | V专用设备表单、只读串口枚举、TCP端口发现的完整目标预览/取消/结果选用 | 已实现TCP发现；ICMP Ping仍待补；不自动扫描；见[设备说明](modbus-device.md) |
 | settings | F3/F4、C/K/M | 同类设置分散原生入口；部分上游显示/主题策略未移植 |
 | copy_column | y复制可见选中列，Ctrl-Y复制所选行 | 统一安全确认，列最多1MiB；不包含未读或不可见列 |
 | write_logs | write_log_file + M写日志查看 | 持久JSONL尝试/结果与详情；非上游CSV，未知旧值不额外读取 |

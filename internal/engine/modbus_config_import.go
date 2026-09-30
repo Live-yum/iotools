@@ -92,13 +92,19 @@ func ImportMTUIConfig(data []byte, prefix string) (MTUIConfigPlan, error) {
 	if err != nil {
 		return plan, err
 	}
-	if d.RequestTimeout > 5000 {
-		d.RequestTimeout = 5000
-		warn("device.request_timeout_ms：受原生单次通信上限限制为5000ms")
-	}
-	warn("device.connect_timeout_ms：原生客户端使用同一请求超时；未导入独立连接超时")
-	if d.Gap != 0 {
-		warn("device.request_gap_ms：未导入请求后间隔；生成请求均为单次读取")
+	for _, field := range []struct {
+		key   string
+		value *int
+		max   int
+	}{{"connect_timeout_ms", &d.ConnectTimeout, 60000}, {"request_timeout_ms", &d.RequestTimeout, 60000}, {"request_gap_ms", &d.Gap, 60000}} {
+		limit := field.max
+		if field.key == "request_timeout_ms" && strings.HasPrefix(endpoint, "rtu://") {
+			limit = 5000
+		}
+		if *field.value > limit {
+			*field.value = limit
+			warn(fmt.Sprintf("device.%s：预览中明确限制为%dms", field.key, limit))
+		}
 	}
 	startup := struct {
 		Address int    `json:"address"`
@@ -213,14 +219,14 @@ func ImportMTUIConfig(data []byte, prefix string) (MTUIConfigPlan, error) {
 		if err != nil {
 			return plan, err
 		}
-		params := map[string]any{"address": address, "count": batch.Size, "unit": d.Unit, "word_order": order, "samples": 1, "interval_ms": interval, "matrix_columns": matrix.Columns, "columns": cols}
+		params := map[string]any{"connect_timeout_ms": d.ConnectTimeout, "request_timeout_ms": d.RequestTimeout, "request_gap_ms": d.Gap, "address": address, "count": batch.Size, "unit": d.Unit, "word_order": order, "samples": 1, "interval_ms": interval, "matrix_columns": matrix.Columns, "columns": cols}
 		for k, v := range annotations {
 			params[k] = v
 		}
 		for k, v := range transport {
 			params[k] = v
 		}
-		r := config.Request{ID: prefix + "-" + kind, Name: name + " · " + kind, Protocol: "modbus", Action: actions[kind], Endpoint: endpoint, Timeout: strconv.Itoa(d.RequestTimeout) + "ms", Params: params}
+		r := config.Request{ID: prefix + "-" + kind, Name: name + " · " + kind, Protocol: "modbus", Action: actions[kind], Endpoint: endpoint, Timeout: strconv.Itoa(d.ConnectTimeout+d.RequestTimeout+1000) + "ms", Params: params}
 		if err := validateParams(r); err != nil {
 			return plan, err
 		}

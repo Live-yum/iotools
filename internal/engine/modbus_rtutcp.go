@@ -13,10 +13,11 @@ import (
 // RTU-over-TCP carries RTU ADUs, including CRC, without an MBAP header.
 // A separate implementation avoids accidentally using the TCP/MBAP transporter.
 type rtuTCPHandler struct {
-	packager *modbus.RTUClientHandler
-	address  string
-	ctx      context.Context
-	timeout  time.Duration
+	packager       *modbus.RTUClientHandler
+	address        string
+	ctx            context.Context
+	timeout        time.Duration
+	connectTimeout time.Duration
 }
 
 func (h *rtuTCPHandler) Encode(pdu *modbus.ProtocolDataUnit) ([]byte, error) {
@@ -29,7 +30,7 @@ func (h *rtuTCPHandler) Verify(request, response []byte) error {
 	return h.packager.Verify(request, response)
 }
 func (h *rtuTCPHandler) Send(request []byte) ([]byte, error) {
-	d := net.Dialer{Timeout: h.timeout}
+	d := net.Dialer{Timeout: h.dialTimeout()}
 	c, e := d.DialContext(h.ctx, "tcp", h.address)
 	if e != nil {
 		return nil, e
@@ -107,4 +108,11 @@ func (h *rtuTCPHandler) Send(request []byte) ([]byte, error) {
 		return nil, e
 	}
 	return append(prefix, tail...), nil
+}
+
+func (h *rtuTCPHandler) dialTimeout() time.Duration {
+	if h.connectTimeout > 0 {
+		return h.connectTimeout
+	}
+	return h.timeout
 }

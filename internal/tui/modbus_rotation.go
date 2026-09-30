@@ -230,8 +230,24 @@ func (v *inspector) modbusUnsavedLayout() (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	active := v.modbus.request
+	active, err := v.owner.collection.Resolve(v.modbus.request, v.owner.profile)
+	if err != nil {
+		return nil, err
+	}
 	if modbusReadAction(active.Action) == active.Action {
+		if active.Endpoint != resolved.Endpoint {
+			changes["__device_endpoint"] = active.Endpoint
+		}
+		activeDuration, _ := active.Duration()
+		savedDuration, _ := resolved.Duration()
+		if activeDuration != savedDuration {
+			changes["__device_timeout"] = active.Timeout
+		}
+		for _, key := range []string{"baud", "data_bits", "parity", "stop_bits", "connect_timeout_ms", "request_timeout_ms", "request_gap_ms"} {
+			if value, ok := active.Params[key]; ok && !reflect.DeepEqual(value, resolved.Params[key]) {
+				changes[key] = value
+			}
+		}
 		if active.Action != resolved.Action {
 			changes["__read_action"] = active.Action
 		}
@@ -258,7 +274,10 @@ func (u *UI) modbusRotationPreview(c modbusRotationCandidate) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "当前：%s\n目标：%s\n\n只切换本机集合，不连接任何服务器，也不修改只读状态。\n当前结果会清空；新请求仍需明确执行，写入仍需确认。\n", c.sourcePath, c.path)
 	if len(changes) > 0 {
-		b.WriteString("\n存在尚未保存的临时读取/字序/列布局/矩阵设置。请选择保存后切换或明确放弃。\n")
+		b.WriteString("\n存在尚未保存的临时设备/读取/字序/列布局/矩阵设置。请选择保存后切换或明确放弃。\n")
+		if endpoint, ok := changes["__device_endpoint"].(string); ok {
+			fmt.Fprintf(&b, "待保存设备目标：%s\n", modbusLogText(modbusEndpointSummary(endpoint)))
+		}
 	}
 	for i, r := range c.collection.Requests {
 		if i >= 1000 {

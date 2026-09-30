@@ -13,10 +13,11 @@ import (
 // TCP requests use a context-bound connection per transaction: cancelling a
 // read never leaves a stale response that could be consumed by a later write.
 type tcpContextHandler struct {
-	packager *modbus.TCPClientHandler
-	address  string
-	ctx      context.Context
-	timeout  time.Duration
+	packager       *modbus.TCPClientHandler
+	address        string
+	ctx            context.Context
+	timeout        time.Duration
+	connectTimeout time.Duration
 }
 
 func (h *tcpContextHandler) Encode(p *modbus.ProtocolDataUnit) ([]byte, error) {
@@ -27,7 +28,7 @@ func (h *tcpContextHandler) Decode(b []byte) (*modbus.ProtocolDataUnit, error) {
 }
 func (h *tcpContextHandler) Verify(a, b []byte) error { return h.packager.Verify(a, b) }
 func (h *tcpContextHandler) Send(request []byte) ([]byte, error) {
-	c, e := (&net.Dialer{Timeout: h.timeout}).DialContext(h.ctx, "tcp", h.address)
+	c, e := (&net.Dialer{Timeout: h.dialTimeout()}).DialContext(h.ctx, "tcp", h.address)
 	if e != nil {
 		return nil, e
 	}
@@ -64,4 +65,11 @@ func (h *tcpContextHandler) Send(request []byte) ([]byte, error) {
 		return nil, e
 	}
 	return append(header, body...), nil
+}
+
+func (h *tcpContextHandler) dialTimeout() time.Duration {
+	if h.connectTimeout > 0 {
+		return h.connectTimeout
+	}
+	return h.timeout
 }

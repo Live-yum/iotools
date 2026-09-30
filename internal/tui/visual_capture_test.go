@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
+	"github.com/rivo/tview"
 	"os"
 	"path/filepath"
 	"testing"
@@ -133,13 +134,21 @@ func TestVisualCaptures(t *testing.T) {
 	u.App.SetFocus(risk)
 	capture("16-tls-risk-small")
 	u.pages.RemovePage("tls-risk")
-	visualModbus := config.Request{ID: "modbus-visual", Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local", Params: map[string]any{"unit": 1, "address": 10, "count": 2, "word_order": "ABCD"}}
+	visualModbus := config.Request{ID: "modbus-visual", Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local", Params: map[string]any{"unit": 1, "address": 10, "count": 4, "word_order": "ABCD"}}
 	u.collection.Requests = []config.Request{visualModbus}
 	u.selected = 0
 	u.lastRequest = visualModbus
 	u.inspector.reset(visualModbus)
+	interpreter, err := engine.NewModbusInterpreter(visualModbus)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 20; i++ {
-		u.inspector.add(engine.Event{Time: time.Unix(1700000000+int64(i), 0), Kind: "registers", Data: []map[string]any{{"address": 10, "u16": uint16(20 + i%7)}, {"address": 11, "u16": uint16(5)}}})
+		rendered, err := interpreter.Interpret(map[int]uint16{10: uint16(20 + i%7), 11: 5, 12: 0, 13: 0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.inspector.add(engine.Event{Time: time.Unix(1700000000+int64(i), 0), Kind: "registers", Data: rendered})
 	}
 	u.inspector.table.Select(1, 0)
 	u.inspector.modbusReadForm(nil)
@@ -161,4 +170,20 @@ func TestVisualCaptures(t *testing.T) {
 	u.pages.RemovePage("modbus-device-id")
 	u.inspector.modbusRangeForm(false)
 	capture("22-modbus-sweep-small")
+	u.pages.RemovePage("modbus-sweep")
+	u.App.SetFocus(u.inspector.table)
+	u.running = true
+	u.modbusPause = engine.NewModbusPauseController()
+	u.toggleModbusPause()
+	capture("23-modbus-paused-small")
+	u.running = false
+	u.modbusPause = nil
+	u.inspector.modbusDeviceForm()
+	capture("24-modbus-device-small")
+	_, devicePage := u.pages.GetFrontPage()
+	u.inspector.modbusNetworkForm(devicePage.(*tview.Form))
+	capture("25-modbus-discovery-small")
+	u.pages.RemovePage("modbus-network-form")
+	u.inspector.modbusActionMenu()
+	capture("26-modbus-actions-small")
 }

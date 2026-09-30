@@ -34,8 +34,8 @@ type modbusAdvanced struct {
 	keymap      map[string]rune
 }
 
-var modbusDefaultKeys = map[string]rune{"custom-rule": 'c', "annotations": 'P', "device-id": 'i', "raw": 'j', "sweep": 'B', "unit-scan": 'U', "matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D', "more": 'M', "go-to": '/', "read-controls": 'R', "inspect": 'v', "graph": 'g', "write": 'w', "word-order": 'b', "unit": 'u', "register-type": 't', "page-up": '[', "page-down": ']', "batch-decrease": '{', "batch-increase": '}', "stats": 's', "activity": 'a', "rotation": 'N', "clear-session": 'X', "copy-column": 'y', "refresh": 'r', "pause": 'z'}
-var modbusActionLabels = map[string]string{"custom-rule": "规则编辑", "annotations": "标签/规则面板", "device-id": "设备标识", "raw": "原始请求", "sweep": "有界扫描", "unit-scan": "明确单元探测", "matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV", "more": "更多操作", "go-to": "地址/标签跳转", "read-controls": "读取设置", "inspect": "寄存器详情", "graph": "字段/规则图", "write": "编辑写入", "word-order": "本机重解释字序", "unit": "Unit设置", "register-type": "预览下一空间", "page-up": "预览前一窗口", "page-down": "预览后一窗口", "batch-decrease": "预览减少读取数量", "batch-increase": "预览增加读取数量", "stats": "通信统计", "activity": "活动日志", "rotation": "集合轮换", "clear-session": "清本机会话", "copy-column": "复制当前列", "refresh": "明确读取", "pause": "取消采样"}
+var modbusDefaultKeys = map[string]rune{"device": 'V', "custom-rule": 'c', "annotations": 'P', "device-id": 'i', "raw": 'j', "sweep": 'B', "unit-scan": 'U', "matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D', "more": 'M', "go-to": '/', "read-controls": 'R', "inspect": 'v', "graph": 'g', "write": 'w', "word-order": 'b', "unit": 'u', "register-type": 't', "page-up": '[', "page-down": ']', "batch-decrease": '{', "batch-increase": '}', "stats": 's', "activity": 'a', "rotation": 'N', "clear-session": 'X', "copy-column": 'y', "refresh": 'r', "pause": 'z'}
+var modbusActionLabels = map[string]string{"device": "设备选择/发现", "custom-rule": "规则编辑", "annotations": "标签/规则面板", "device-id": "设备标识", "raw": "原始请求", "sweep": "有界扫描", "unit-scan": "明确单元探测", "matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV", "more": "更多操作", "go-to": "地址/标签跳转", "read-controls": "读取设置", "inspect": "寄存器详情", "graph": "字段/规则图", "write": "编辑写入", "word-order": "本机重解释字序", "unit": "Unit设置", "register-type": "预览下一空间", "page-up": "预览前一窗口", "page-down": "预览后一窗口", "batch-decrease": "预览减少读取数量", "batch-increase": "预览增加读取数量", "stats": "通信统计", "activity": "活动日志", "rotation": "集合轮换", "clear-session": "清本机会话", "copy-column": "复制当前列", "refresh": "明确读取", "pause": "暂停/继续采样"}
 
 func modbusColumnExists(key string) bool {
 	for _, c := range modbusColumns {
@@ -271,7 +271,32 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 		return err
 	}
 	oldSpace, oldUnit := modbusReadAction(r.Action), r.Int("unit", 1)
+	oldResolved, resolveErr := u.collection.Resolve(r, u.profile)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	deviceChanged := false
 	for key, value := range changes {
+		if key == "__device_endpoint" {
+			endpoint, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid device endpoint")
+			}
+			r.Endpoint = endpoint
+			deviceChanged = endpoint != oldResolved.Endpoint
+			continue
+		}
+		if key == "__device_timeout" {
+			value, ok := value.(string)
+			if !ok {
+				return fmt.Errorf("invalid timeout")
+			}
+			r.Timeout = value
+			if _, err := r.Duration(); err != nil {
+				return err
+			}
+			continue
+		}
 		if key == "__read_action" {
 			action, ok := value.(string)
 			if !ok || modbusReadAction(action) != action {
@@ -282,8 +307,13 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 		}
 		r.Params[key] = value
 	}
-	if modbusReadAction(r.Action) != oldSpace || r.Int("unit", 1) != oldUnit {
+	if deviceChanged || modbusReadAction(r.Action) != oldSpace || r.Int("unit", 1) != oldUnit {
 		for _, key := range []string{"pins", "labels", "rules"} {
+			delete(r.Params, key)
+		}
+	}
+	if deviceChanged && !strings.HasPrefix(r.Endpoint, "rtu://") {
+		for _, key := range []string{"baud", "data_bits", "parity", "stop_bits"} {
 			delete(r.Params, key)
 		}
 	}
@@ -309,6 +339,20 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 	u.collection = c
 	u.raw = b
 	for key, value := range changes {
+		if key == "__device_endpoint" {
+			v.modbus.request.Endpoint = value.(string)
+			if u.lastRequest.ID == r.ID {
+				u.lastRequest.Endpoint = value.(string)
+			}
+			continue
+		}
+		if key == "__device_timeout" {
+			v.modbus.request.Timeout = value.(string)
+			if u.lastRequest.ID == r.ID {
+				u.lastRequest.Timeout = value.(string)
+			}
+			continue
+		}
 		if key == "__read_action" {
 			v.modbus.request.Action = value.(string)
 			if u.lastRequest.ID == r.ID {

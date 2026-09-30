@@ -174,9 +174,19 @@ func (v *inspector) persistAnnotations() error {
 }
 
 func (u *UI) showHelp() {
-	view := tview.NewTextView().SetText(help).SetWrap(true).SetScrollable(true)
+	build := u.BuildVersion
+	if build == "" {
+		build = "dev"
+	}
+	text := fmt.Sprintf("版本：%s\n许可证：Apache-2.0\n源码：https://github.com/Live-yum/iotools\nM：打开当前Modbus视图全部实际动作\n\n%s", clean(build), help)
+	view := tview.NewTextView().SetText(text).SetWrap(true).SetScrollable(true)
 	view.SetBorder(true).SetTitle(" 中文帮助 · 方向键/PgDn/滚轮滚动 · Esc/q 关闭 ")
 	view.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyRune && e.Rune() == 'M' && u.inspector.modbus != nil && u.inspector.protocol == "modbus" {
+			u.pages.RemovePage("help")
+			u.inspector.modbusActionMenu()
+			return nil
+		}
 		if e.Key() == tcell.KeyEscape || e.Rune() == 'q' {
 			u.pages.RemovePage("help")
 			u.App.SetFocus(u.list)

@@ -94,6 +94,7 @@ func modbusSampleTime(row map[string]any, mode string, now time.Time) string {
 func (v *inspector) modbusMoreMenu() {
 	list := tview.NewList().ShowSecondaryText(true)
 	close := func() { v.owner.pages.RemovePage("modbus-more"); v.owner.App.SetFocus(v.table) }
+	list.AddItem("设备选择与明确发现", "V串口元数据、TCP/RTU-over-TCP参数；网络目标先预览", 'h', func() { close(); v.modbusDeviceForm() })
 	list.AddItem("地址/标签跳转与读取设置", "/定位；R预览空间、地址、unit、窗口、字序与采样；不自动连接", 'r', func() { close(); v.modbusReadForm(nil) })
 	list.AddItem("寄存器详情/字段图", "v详情 g图表；同响应多词与规则，禁止混合旧值", 'v', func() { close(); v.modbusInspect(false) })
 	list.AddItem("类型/线圈写入编辑", "原始词预览后再次核对目标；只读模式与运行中禁止", 'e', func() { close(); v.modbusWriteForm() })
