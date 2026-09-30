@@ -6,6 +6,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   native:
     name: Native ${{ matrix.os }}
@@ -26,6 +28,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -42,7 +47,7 @@ jobs:
       - name: Build portable binary
         env:
           CGO_ENABLED: '0'
-        run: go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o dist/${{ matrix.binary }} ./cmd/iotools
+        run: go build -trimpath -ldflags "-s -w -X main.version=${{ env.IOTOOLS_SHA }}" -o dist/${{ matrix.binary }} ./cmd/iotools
       - name: Verify standalone runtime dependencies
         run: go run ./scripts/verifybinary dist/${{ matrix.binary }}
       - name: Binary smoke test
@@ -62,7 +67,7 @@ jobs:
           (cd dist && sha256sum ${{ matrix.binary }} > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-${{ matrix.target }}-${{ github.sha }}
+          name: iotools-${{ matrix.target }}-${{ env.IOTOOLS_SHA }}
           path: dist/
           if-no-files-found: error
           retention-days: 14
