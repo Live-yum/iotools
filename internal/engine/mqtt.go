@@ -426,5 +426,6 @@ func mqttMessage(topic string, payload []byte, qos byte, retained bool) map[stri
 			result["payload_json"] = value
 		}
 	}
+	mqttPayloadMetadata(result, payload)
 	return result
 }

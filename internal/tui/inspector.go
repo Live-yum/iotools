@@ -18,6 +18,7 @@ import (
 // inspector presents protocol-native results without changing the shared layout.
 // Source recipes remain untouched by transient browse/navigation operations.
 type inspector struct {
+	mqttHistory     *mqttHistoryState
 	modbus          *modbusAdvanced
 	kafka           *kafkaView
 	pages           *tview.Pages
@@ -52,6 +53,12 @@ func newInspector(u *UI) *inspector {
 		}
 	})
 	v.tree.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if v.protocol == "mqtt" {
+			e = v.mqttHistoryKey(e)
+			if e == nil {
+				return nil
+			}
+		}
 		if v.protocol == "mqtt" && e.Rune() == 'v' {
 			if node := v.tree.GetCurrentNode(); node != nil {
 				if message, ok := node.GetReference().(map[string]any); ok {
@@ -65,6 +72,12 @@ func newInspector(u *UI) *inspector {
 			if n != nil {
 				if id, ok := n.GetReference().(string); ok {
 					switch e.Rune() {
+					case 'p':
+						if !u.running {
+							u.derived("node-path", id)
+							u.uaCopyPending = true
+						}
+						return nil
 					case 'v':
 						if !u.running {
 							u.derived("read", id)
@@ -219,6 +232,7 @@ func newInspector(u *UI) *inspector {
 	return v
 }
 func (v *inspector) reset(r config.Request) {
+	defer v.mqttHistoryReset(r)
 	defer v.modbusAdvancedReset(r)
 	defer func() {
 		if r.Protocol == "kafka" {
@@ -271,7 +285,7 @@ func (v *inspector) reset(r config.Request) {
 		v.tree.SetTitle(" OPC UA 节点 · Enter 浏览 · a 属性 · f 引用 · r 读 · s 订阅 ")
 	}
 	if r.Protocol == "mqtt" {
-		v.tree.SetTitle(" MQTT 主题树 MQTT topic tree · v 载荷视图 · Enter 展开/折叠 ")
+		v.tree.SetTitle(" MQTT topic tree · v载荷 · h历史 · g图表 · /搜索 · o/O展开/折叠 ")
 	}
 	if r.Protocol == "modbus" {
 		v.pages.SwitchToPage("table")
@@ -283,6 +297,10 @@ func (v *inspector) add(e engine.Event) {
 		return
 	}
 	switch e.Kind {
+	case "browse-path":
+		if m, ok := e.Data.(map[string]any); ok {
+			v.owner.uaCopyValue = fmt.Sprint(m["path"])
+		}
 	case "value":
 		if v.protocol == "opcua" {
 			if m, ok := e.Data.(map[string]any); ok {
@@ -331,6 +349,7 @@ func (v *inspector) add(e engine.Event) {
 			if !ok {
 				return
 			}
+			v.mqttHistoryAdd(m)
 			topic := fmt.Sprint(m["topic"])
 
 			parent := v.root
@@ -356,19 +375,18 @@ func (v *inspector) add(e engine.Event) {
 			leaf := topic[strings.LastIndex(topic, "/")+1:]
 			parent.SetText(display(fmt.Sprintf("%s = %s  [QoS %v, retain %v]", leaf, payload, m["qos"], m["retained"])))
 			preview := map[string]any{}
-			for _, key := range []string{"topic", "payload", "payload_hex", "payload_base64", "qos", "retained", "bytes"} {
+			for _, key := range []string{"topic", "payload", "payload_hex", "payload_base64", "qos", "retained", "bytes", "payload_format"} {
 				value := fmt.Sprint(m[key])
 				if len(value) > 4096 {
 					value = value[:4096] + "…（完整内容请用CLI）"
 				}
 				preview[key] = value
 			}
-			if value, ok := m["payload_json"]; ok {
-				b, _ := json.MarshalIndent(value, "", "  ")
-				if len(b) > 4096 {
-					b = b[:4096]
+			for _, key := range []string{"payload_json", "payload_messagepack"} {
+				if value, ok := m[key]; ok {
+					b, _ := json.MarshalIndent(value, "", "  ")
+					preview[key] = mqttHistoryClip(string(b), 4096)
 				}
-				preview["payload_json"] = string(b)
 			}
 			parent.SetReference(preview)
 			return
@@ -668,6 +686,9 @@ func (v *inspector) messageView(m map[string]any) {
 	text := fmt.Sprintf("主题：%v\n字节数：%v · QoS：%v · 保留：%v\n\n文本：\n%v\n\n十六进制：\n%v\n\nBase64：\n%v", m["topic"], m["bytes"], m["qos"], m["retained"], m["payload"], m["payload_hex"], m["payload_base64"])
 	if value, ok := m["payload_json"]; ok {
 		text += "\n\nJSON：\n" + fmt.Sprint(value)
+	}
+	if value, ok := m["payload_messagepack"]; ok {
+		text += "\n\nMessagePack：\n" + fmt.Sprint(value)
 	}
 	view := tview.NewTextView().SetText(clean(text)).SetWrap(true).SetScrollable(true)
 	view.SetBorder(true).SetTitle(" MQTT 多表示载荷 · Esc 返回 ")

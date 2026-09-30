@@ -68,3 +68,18 @@ NodeId 支持 `i=2258`、`ns=2;s=Temperature` 及库支持的 GUID/字节串形�
 仍需补齐选中节点的完整浏览路径复制、证书生成向导、更多安全策略及各属性/引用/订阅同时可调布局；不能把本机模拟器通过等同于真实设备验证。
 
 来源：[ua-client 功能清单](https://github.com/FreeOpcUa/ua-client)、[gopcua v0.9.1](https://github.com/gopcua/opcua/tree/v0.9.1)、[OPC UA 服务规范](https://reference.opcfoundation.org/Core/Part4/v105/docs/)
+
+## 后续源码补齐：策略、身份和路径复制
+
+现代服务策略支持 Basic256Sha256、Aes128_Sha256_RsaOaep、Aes256_Sha256_RsaPss；
+三者均经过加密回环读取验证。Basic128Rsa15/Basic256已废弃，仅在
+allow_legacy_security=true时允许旧设备兼容，默认拒绝。所有策略仍校验证书，
+不存在自动降级。None仍需独立明确选项。
+
+连接表单可明确“创建客户端证书”：生成RSA3072、自签名客户端证书与私钥，
+Application URI默认urn:iotools:client，一年有效。只创建两个新文件，不覆盖；
+可取消且不上传私钥。服务端管理员仍须信任公钥证书。程序不会替用户修改服务端信任。
+Windows的真实私钥访问隔离取决于目录ACL；POSIX私有模式不代替Windows ACL。
+
+p读取并复制浏览路径，n复制NodeId，v读取并复制Value，都先展示并明确确认。
+多父节点/环/超过64层无法确定唯一路径时明确报错，不生成可能指向错误对象的路径。

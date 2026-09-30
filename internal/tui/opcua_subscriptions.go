@@ -91,7 +91,7 @@ func (u *UI) subscribeUA(node string) {
 				entry.Status = "已完成"
 			}
 			u.renderUASubscriptions()
-			if u.quitting && !u.running && u.activeUASubscriptions() == 0 {
+			if u.quitting && !u.running && u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {
 				u.App.Stop()
 			}
 		})

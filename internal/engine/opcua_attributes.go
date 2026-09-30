@@ -108,6 +108,9 @@ func opcuaReadAttributes(ctx context.Context, c *opcua.Client, r config.Request,
 }
 func validateOPCUAOperation(r config.Request) error {
 	switch r.Action {
+	case "node-path":
+		_, e := ua.ParseNodeID(r.String("node_id", "i=85"))
+		return e
 	case "browse-path":
 		_, e := parseUABrowsePath(r.String("browse_path", ""))
 		return e

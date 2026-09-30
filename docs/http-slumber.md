@@ -150,3 +150,13 @@ DELETE/UPDATE/ATTACH/PRAGMA。它不是任意修改数据库的 sqlite3 shell。
 请求体/加密变换、身份及TLS文件选项；程序不会执行这个命令。默认禁止触发依赖请求，
 CLI可明确加 `--execute-triggers`，链式修改仍需独立write授权。引号安全转义；NUL/
 非UTF-8二进制不能作为shell参数，明确要求导出为文件。生成结果可能含机密，请勿公开。
+
+## 请求历史管理
+
+F11显示当前集合的历史，Enter查看完整原始/派生响应，Ctrl-Y明确复制。
+按D必须输入匹配的历史ID再确认永久删除；取消或ID不匹配不改数据库。
+CLI支持 --history-list、--history-get ID、--history-delete ID1,ID2，并要求明确
+--history-db；删除另需 --allow-history-delete。命令必须同时选定集合 --file。
+操作按集合绝对路径隔离，跨集合/缺失ID使整批回滚；没有空列表“全部删除”。
+历史查询用只读连接，删除使用单个事务；后台执行不会阻塞订阅界面，退出会取消。
+读取二进制响应保留raw_body_base64，不用替换字符损失原始字节。

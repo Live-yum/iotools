@@ -2,11 +2,13 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Optional deterministic screen captures use the real tview drawing pipeline.
@@ -93,4 +95,20 @@ func TestVisualCaptures(t *testing.T) {
 	u.edit()
 	capture("08-yaml-editor-small")
 	u.pages.RemovePage("editor")
+	s.SetSize(120, 40)
+	u.inspector.reset(config.Request{Protocol: "mqtt", Action: "subscribe", Endpoint: "mqtt://127.0.0.1:1883"})
+	for i := 0; i < 24; i++ {
+		value := 20 + i%8
+		u.inspector.add(engine.Event{Kind: "message", Data: map[string]any{"topic": "实验室/温度", "payload": fmt.Sprint(value), "payload_json": value, "payload_format": "json", "qos": 1, "retained": false, "bytes": 2, "received_at": time.Date(2026, 9, 30, 12, 0, i, 0, time.UTC).Format(time.RFC3339)}})
+	}
+	u.inspector.mqttHistoryOpen("实验室/温度", false)
+	capture("09-mqtt-history")
+	u.pages.RemovePage("mqtt-history")
+	u.inspector.mqttHistoryOpen("实验室/温度", true)
+	capture("10-mqtt-graph")
+	u.pages.RemovePage("mqtt-history")
+	u.lastRequest = config.Request{Protocol: "opcua", Action: "browse", Endpoint: "opc.tcp://127.0.0.1:4840"}
+	u.uaConnectionForm(u.lastRequest, nil)
+	capture("11-opcua-connect")
+	u.pages.RemovePage("ua-connect")
 }

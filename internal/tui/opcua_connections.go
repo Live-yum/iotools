@@ -19,6 +19,7 @@ type uaConnectionRecord struct {
 	Profile       string            `json:"profile"`
 	NodeID        string            `json:"node_id"`
 	Preferences   map[string]string `json:"preferences"`
+	AllowLegacy   bool              `json:"allow_legacy_security"`
 	AllowInsecure bool              `json:"allow_insecure"`
 	Updated       time.Time         `json:"updated"`
 }
@@ -82,7 +83,7 @@ func (u *UI) rememberUAConnection(r config.Request) {
 			preferences[key] = value
 		}
 	}
-	entry := uaConnectionRecord{r.Endpoint, r.ID, u.profile, r.String("node_id", "i=85"), preferences, r.Bool("allow_insecure"), time.Now().UTC()}
+	entry := uaConnectionRecord{r.Endpoint, r.ID, u.profile, r.String("node_id", "i=85"), preferences, r.Bool("allow_legacy_security"), r.Bool("allow_insecure"), time.Now().UTC()}
 	kept := []uaConnectionRecord{entry}
 	for _, old := range h.Records {
 		if old.Endpoint != entry.Endpoint || old.Profile != entry.Profile {
@@ -151,6 +152,7 @@ func (u *UI) uaHistory() {
 				}
 			}
 			source.Params["allow_insecure"] = entry.AllowInsecure
+			source.Params["allow_legacy_security"] = entry.AllowLegacy
 			delete(source.Params, "password")
 			close()
 			u.uaConnectionForm(*source, nil)
@@ -194,6 +196,8 @@ func (u *UI) uaConnectionForm(source config.Request, discovered map[string]any) 
 	form.GetFormItem(5).(*tview.InputField).SetMaskCharacter('*')
 	insecure := r.Bool("allow_insecure")
 	form.AddCheckbox("明确允许匿名None（隔离模拟器）", insecure, func(v bool) { insecure = v })
+	legacy := r.Bool("allow_legacy_security")
+	form.AddCheckbox("明确允许废弃策略（仅旧设备实验室兼容）", legacy, func(v bool) { legacy = v })
 	close := func() { u.pages.RemovePage("ua-connect"); u.App.SetFocus(u.inspector.tree) }
 	form.AddButton("连接并浏览", func() {
 		get := func(i int) string { return form.GetFormItem(i).(*tview.InputField).GetText() }
@@ -207,6 +211,7 @@ func (u *UI) uaConnectionForm(source config.Request, discovered map[string]any) 
 			}
 		}
 		r.Params["allow_insecure"] = insecure
+		r.Params["allow_legacy_security"] = legacy
 		resolved, e := u.collection.Resolve(r, u.profile)
 		if e != nil {
 			form.SetTitle("配置错误：" + display(e.Error()))
@@ -215,6 +220,7 @@ func (u *UI) uaConnectionForm(source config.Request, discovered map[string]any) 
 		close()
 		u.start(resolved)
 	})
+	form.AddButton("创建客户端证书", func() { u.uaIdentityForm(form) })
 	form.AddButton("取消", close).SetCancelFunc(close)
 	u.pages.AddPage("ua-connect", form, true, true)
 	u.App.SetFocus(form)

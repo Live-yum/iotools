@@ -174,7 +174,10 @@ func localUAServer(t *testing.T, secure bool) (string, *server.MapNamespace, map
 	if secure {
 		der, key, _, _ := testUACertificate(t, "urn:iotools:test:server")
 		_, _, clientCert, clientKey := testUACertificate(t, "urn:iotools:test:client")
-		opts = append(opts, server.Certificate(der), server.PrivateKey(key), server.EnableSecurity("Basic256Sha256", ua.MessageSecurityModeSignAndEncrypt))
+		opts = append(opts, server.Certificate(der), server.PrivateKey(key))
+		for _, policy := range []string{"Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss"} {
+			opts = append(opts, server.EnableSecurity(policy, ua.MessageSecurityModeSignAndEncrypt))
+		}
 		sum := sha256.Sum256(der)
 		params = map[string]any{"cert_file": clientCert, "key_file": clientKey, "server_cert_sha256": hex.EncodeToString(sum[:])}
 	} else {
@@ -312,5 +315,22 @@ func TestOPCUACallWriteGateAndCancelledSubscription(t *testing.T) {
 	}
 	if time.Since(started) > 5*time.Second {
 		t.Fatal("subscription cancellation/cleanup was not bounded")
+	}
+}
+
+func TestOPCUAModernPoliciesOnEncryptedLoopback(t *testing.T) {
+	endpoint, ns, params := localUAServer(t, true)
+	params["node_id"] = ua.NewStringNodeID(ns.ID(), "Value").String()
+	for _, policy := range []string{"Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss"} {
+		params["security_policy"] = policy
+		if e := Run(context.Background(), config.Request{Protocol: "opcua", Action: "read", Endpoint: endpoint, Timeout: "10s", Params: params}, false, nil); e != nil {
+			t.Fatalf("%s: %v", policy, e)
+		}
+	}
+	for _, policy := range []string{"Basic128Rsa15", "Basic256"} {
+		params["security_policy"] = policy
+		if _, _, e := opcuaOptions(config.Request{Params: params}, nil, "127.0.0.1"); e == nil || !strings.Contains(e.Error(), "allow_legacy_security") {
+			t.Fatalf("legacy gate: %v", e)
+		}
 	}
 }

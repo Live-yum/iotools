@@ -35,6 +35,7 @@ F7               当前 HTTP 响应 jq / SQLite 历史只读查询
 F8               取消正在执行的请求或订阅
 F9               OPC UA 连接历史（密码不保存）
 F10              OPC UA 独立后台订阅面板
+F11              HTTP历史列表/查看/明确删除
 Ctrl-Y           在结果表复制所选行（明确确认后）
 Ctrl-L           清空结果
 ? / F1           打开本帮助
@@ -42,7 +43,7 @@ Ctrl-C / q       取消当前任务并退出
 
 配置编辑器：Ctrl-S 校验并保存，Esc 放弃修改
 HTTP：展开响应树；F2 查看完整原始结果
-MQTT：主题树；Enter 展开/折叠；v 查看文本/HEX/Base64/JSON
+MQTT：v 载荷；h 历史表；g 图表；/ 搜索；o/O 全部展开/折叠；历史 s 选择字段
 OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参数，g 路径，属性表 e 编辑，退格返回
 Kafka：选择主题后按 Enter 开始只读消费
 Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
@@ -54,6 +55,8 @@ Modbus 高级：C 列，K 快捷键，I 导入标注，E 导出标注，D 导出
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
+	localCancels            map[uint64]context.CancelFunc
+	nextLocalWork           uint64
 	uaCopyPending           bool
 	uaCopyValue             string
 	uaSubscriptions         map[string]*liveUASubscription
@@ -185,6 +188,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 			return nil
 		case tcell.KeyF7:
 			u.httpConsole()
+			return nil
+		case tcell.KeyF11:
+			u.httpHistory()
 			return nil
 		case tcell.KeyF10:
 			u.showUASubscriptions()
@@ -366,7 +372,7 @@ func (u *UI) start(r config.Request) {
 			u.running = false
 			if u.quitting {
 				u.mqttPreviewPending = nil
-				if u.activeUASubscriptions() == 0 {
+				if u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {
 					u.App.Stop()
 				}
 				return
@@ -495,7 +501,10 @@ func (u *UI) quit() {
 	u.quitting = true
 	u.stop()
 	u.stopUASubscriptions()
-	if !u.running && u.activeUASubscriptions() == 0 {
+	for _, cancel := range u.localCancels {
+		cancel()
+	}
+	if !u.running && u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {
 		u.App.Stop()
 	}
 }

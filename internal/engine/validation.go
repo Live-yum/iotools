@@ -15,7 +15,7 @@ var protocolParams = map[string]string{
 	"mqtt":   "auto_reconnect reconnect_interval_ms scan_duration_ms max_topics confirm_topics confirm_token topic topics qos payload payload_encoding retain client_id username password ca_file cert_file key_file limit ignore_retained",
 	"kafka":  "consume_partitions partition start_time key_filter key_prefix value_prefix confirm_subject tls ca_file cert_file key_file sasl username password topic group groups partitions replication_factor configs key value offset limit filter subject version connector json headers body bearer key_format value_format key_subject value_subject key_version value_version schema_registry_url schema_registry_username schema_registry_password schema_registry_bearer schema_registry_ca_file schema_registry_cert_file schema_registry_key_file",
 	"modbus": "columns keymap matrix_columns address count unit value values samples interval_ms word_order baud data_bits parity stop_bits pins labels rules units end_address match_value pdu_hex read_code object_id value_type",
-	"opcua":  "browse_path auto_reconnect reconnect_interval_ms allow_insecure interval_ms max_events max_references auth auth_cert_file auth_key_file ca_file cert_file key_file method_id node_id node_ids attribute attributes direction reference_type include_subtypes object_id password security_mode security_policy server_cert_sha256 username value_type arguments value",
+	"opcua":  "allow_legacy_security browse_path auto_reconnect reconnect_interval_ms allow_insecure interval_ms max_events max_references auth auth_cert_file auth_key_file ca_file cert_file key_file method_id node_id node_ids attribute attributes direction reference_type include_subtypes object_id password security_mode security_policy server_cert_sha256 username value_type arguments value",
 }
 
 func validateParams(r config.Request) error {
@@ -43,7 +43,7 @@ func validateParams(r config.Request) error {
 			}
 		}
 	}
-	for _, k := range []string{"auto_reconnect", "persist", "tls", "retain", "ignore_retained", "allow_insecure", "include_subtypes"} {
+	for _, k := range []string{"allow_legacy_security", "auto_reconnect", "persist", "tls", "retain", "ignore_retained", "allow_insecure", "include_subtypes"} {
 		if v, ok := r.Params[k]; ok {
 			if _, ok := v.(bool); !ok {
 				return fmt.Errorf("%s must be a YAML boolean", k)

@@ -45,14 +45,14 @@ chmod +x iotools
 - Enter / F5：执行所选请求；修改数据时弹出确认
 - F2：切换协议专用视图与原始 JSON 结果
 - F3：直接编辑单个请求表单；F4：完整 YAML；Ctrl-S 校验保存，Esc 放弃
-- F6：切换环境；F7：HTTP响应jq / SQLite历史只读查询；F8：取消当前请求或订阅
+- F6：环境；F7：HTTP jq/SQL/curl；F8：取消；F9：OPC UA历史；F10：独立订阅；F11：HTTP历史管理
 - ? / F1：中文帮助；Ctrl-C / q：取消并退出
 
 协议结果视图：
 
 - HTTP：展开响应状态、头部和 JSON；F2 查看原始结果
 - Kafka：主题/分区表；选择主题后 Enter 只读消费；支持注册表 Avro 编解码
-- MQTT：主题树、最新载荷、QoS、保留标记；Enter 展开/折叠
+- MQTT：主题树、JSON/MessagePack、h历史、g图表、/搜索、o/O展开折叠；[详细操作](docs/mqtt-history.md)
 - Modbus：寄存器表/矩阵（m切换，+/-列数）、固定项、标签、趋势、快照差值
 - OPC UA：Enter下钻，a属性，f引用，r读取，s订阅，c方法表单；属性表e编辑，退格返回
 

@@ -34,3 +34,22 @@ func TestUABrowsePathLoopback(t *testing.T) {
 		t.Fatalf("found=%v error=%v", found, e)
 	}
 }
+
+func TestUANodePathRoundtripOnLoopback(t *testing.T) {
+	endpoint, _, params := localUAServer(t, false)
+	params["node_id"] = "i=85"
+	path := ""
+	if e := Run(context.Background(), config.Request{Protocol: "opcua", Action: "node-path", Endpoint: endpoint, Params: params}, false, func(e Event) {
+		if e.Kind == "browse-path" {
+			path = e.Data.(map[string]any)["path"].(string)
+		}
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if path != "/Objects" {
+		t.Fatal(path)
+	}
+	if escapeUABrowseName(&ua.QualifiedName{NamespaceIndex: 2, Name: "A/B:C"}) != "2:A&/B&:C" {
+		t.Fatal("path escaping")
+	}
+}

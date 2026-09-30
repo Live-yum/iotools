@@ -144,7 +144,11 @@ func (u *UI) attributeForm(data map[string]any) {
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle(" 属性写入 · JSON 值 · Esc 取消 ")
 	form.AddInputField("属性", fmt.Sprint(data["attribute"]), 40, nil, nil)
-	form.AddInputField("类型", strings.TrimPrefix(fmt.Sprint(data["value_type"]), "TypeID"), 40, nil, nil)
+	kind := strings.TrimPrefix(fmt.Sprint(data["value_type"]), "TypeID")
+	if name, ok := data["value_type_name"].(string); ok && name != "" {
+		kind = name
+	}
+	form.AddInputField("类型", kind, 40, nil, nil)
 	raw, _ := json.Marshal(editableUAValue(data["value"]))
 	form.AddInputField("JSON 值", string(raw), 64, nil, nil)
 	close := func() { u.pages.RemovePage("ua-attribute"); u.App.SetFocus(u.inspector.table) }
@@ -186,6 +190,12 @@ func decodeSingle(d *json.Decoder, value *any) error {
 }
 func editableUAValue(value any) any {
 	switch v := value.(type) {
+	case ua.ByteArray:
+		values := make([]any, len(v))
+		for i, n := range v {
+			values[i] = n
+		}
+		return values
 	case *ua.NodeID:
 		if v != nil {
 			return v.String()

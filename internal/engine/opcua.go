@@ -28,7 +28,7 @@ import (
 // validates the advertised certificate before any identity token is transmitted.
 func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	switch r.Action {
-	case "browse-path", "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
+	case "node-path", "browse-path", "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
 	default:
 		return unsupported(r, "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe")
 	}
@@ -85,6 +85,8 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	send(emit, "connected", map[string]any{"security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String()})
 	switch r.Action {
+	case "node-path":
+		return opcuaNodeBrowsePath(ctx, c, r, emit)
 	case "browse-path":
 		node, e := resolveUABrowsePath(ctx, c, r.String("browse_path", ""))
 		if e != nil {
@@ -167,8 +169,14 @@ func opcuaOptions(r config.Request, endpoints []*ua.EndpointDescription, host st
 	policy := r.String("security_policy", "Basic256Sha256")
 	modeName := r.String("security_mode", "SignAndEncrypt")
 	mode := ua.MessageSecurityModeFromString(modeName)
-	if policy != "Basic256Sha256" && policy != "None" {
-		return nil, nil, fmt.Errorf("supported OPC UA policies are Basic256Sha256 and explicitly allowed None")
+	switch policy {
+	case "Basic256Sha256", "Aes128_Sha256_RsaOaep", "Aes256_Sha256_RsaPss", "None":
+	case "Basic128Rsa15", "Basic256":
+		if !r.Bool("allow_legacy_security") {
+			return nil, nil, fmt.Errorf("已废弃策略仅在明确allow_legacy_security=true时启用；建议现代SHA256策略")
+		}
+	default:
+		return nil, nil, fmt.Errorf("不支持的OPC UA安全策略 %s", policy)
 	}
 	if mode != ua.MessageSecurityModeSignAndEncrypt && mode != ua.MessageSecurityModeSign && mode != ua.MessageSecurityModeNone {
 		return nil, nil, fmt.Errorf("invalid OPC UA security_mode")
@@ -336,7 +344,16 @@ func opcuaData(node string, v *ua.DataValue) map[string]any {
 		value = v.Value.Value()
 		typ = v.Value.Type()
 	}
-	return map[string]any{"node_id": node, "value": value, "value_type": typ, "status": v.Status.Error(), "source_timestamp": v.SourceTimestamp, "server_timestamp": v.ServerTimestamp}
+	typeName := ""
+	isArray := false
+	if v.Value != nil {
+		typeName = strings.TrimPrefix(v.Value.Type().String(), "TypeID")
+		isArray = v.Value.Has(ua.VariantArrayValues)
+		if isArray {
+			typeName += "[]"
+		}
+	}
+	return map[string]any{"value_type_name": typeName, "value_is_array": isArray, "node_id": node, "value": value, "value_type": typ, "status": v.Status.Error(), "source_timestamp": v.SourceTimestamp, "server_timestamp": v.ServerTimestamp}
 }
 
 type opcuaBrowser interface {
@@ -532,6 +549,9 @@ func opcuaVariant(kind string, raw any) (*ua.Variant, error) {
 				return nil, err
 			}
 			array = reflect.Append(array, reflect.ValueOf(v))
+		}
+		if base == "Byte" {
+			return ua.NewVariant(ua.ByteArray(array.Interface().([]byte)))
 		}
 		return ua.NewVariant(array.Interface())
 	}

@@ -122,3 +122,17 @@ func resolveUABrowsePath(ctx context.Context, c opcuaBrowser, text string) (*ua.
 	}
 	return current, nil
 }
+
+func escapeUABrowseName(q *ua.QualifiedName) string {
+	var out strings.Builder
+	for _, r := range q.Name {
+		if strings.ContainsRune("&/.<>:#!;", r) {
+			out.WriteByte('&')
+		}
+		out.WriteRune(r)
+	}
+	if q.NamespaceIndex > 0 {
+		return fmt.Sprintf("%d:%s", q.NamespaceIndex, out.String())
+	}
+	return out.String()
+}

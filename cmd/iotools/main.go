@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 
 	"github.com/Live-yum/iotools/internal/engine"
 	"github.com/Live-yum/iotools/internal/sample"
@@ -35,6 +37,10 @@ func run(args []string) error {
 	serveModbus := flags.String("serve-modbus", "", "以指定请求启动仅回环地址的 Modbus HTTP API")
 	listen := flags.String("listen", "127.0.0.1:8082", "本机 API 监听地址，禁止公网绑定")
 	allow := flags.Bool("allow-writes", false, "明确允许本次命令行修改操作")
+	historyList := flags.Bool("history-list", false, "列出当前集合的HTTP历史")
+	historyGet := flags.Int64("history-get", 0, "查看当前集合指定HTTP历史ID")
+	historyDelete := flags.String("history-delete", "", "永久删除当前集合的明确ID列表（逗号分隔）")
+	allowHistoryDelete := flags.Bool("allow-history-delete", false, "明确允许本次不可恢复的本机历史删除")
 	historySQL := flags.String("history-query", "", "执行只读 SQLite 查询，需要 --history-db，不连接服务器")
 	historyDB := flags.String("history-db", "", "明确启用 HTTP SQLite 历史文件（可能保存响应中的敏感数据）")
 	allowChains := flags.Bool("allow-chain-writes", false, "明确允许请求链修改操作，必须同时指定 --allow-writes")
@@ -129,6 +135,39 @@ func run(args []string) error {
 	}
 	if *allowChains && (!*allow || *readonly) {
 		return fmt.Errorf("--allow-chain-writes 必须配合 --allow-writes，且不能在只读模式使用")
+	}
+	if *historyList || *historyGet > 0 || *historyDelete != "" {
+		if *historyDB == "" {
+			return fmt.Errorf("历史操作需要明确 --history-db")
+		}
+		if *historyDelete != "" {
+			ids := []int64{}
+			for _, text := range strings.Split(*historyDelete, ",") {
+				id, e := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
+				if e != nil {
+					return e
+				}
+				ids = append(ids, id)
+			}
+			count, e := engine.DeleteHTTPHistory(context.Background(), *historyDB, c.SourcePath, ids, *allowHistoryDelete)
+			if e != nil {
+				return e
+			}
+			fmt.Printf("已永久删除 %d 条历史\n", count)
+			return nil
+		}
+		if *historyGet > 0 {
+			entry, e := engine.GetHTTPHistory(context.Background(), *historyDB, c.SourcePath, *historyGet)
+			if e != nil {
+				return e
+			}
+			return json.NewEncoder(os.Stdout).Encode(entry)
+		}
+		rows, e := engine.ListHTTPHistory(context.Background(), *historyDB, c.SourcePath, "")
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(rows)
 	}
 	if *validate {
 		fmt.Printf("配置校验通过：%d 个请求，%d 个环境\n", len(c.Requests), len(c.Profiles))

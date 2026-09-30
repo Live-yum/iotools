@@ -137,3 +137,17 @@ func TestOPCUANodeIDAndGUIDBuiltins(t *testing.T) {
 		t.Fatal("invalid Guid accepted")
 	}
 }
+
+func TestOPCUAByteArrayRemainsArrayNotByteString(t *testing.T) {
+	v, e := opcuaVariant("Byte[]", []any{1, 2, 255})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if v.Type() != ua.TypeIDByte || !v.Has(ua.VariantArrayValues) {
+		t.Fatalf("wrong array type: %v", v.Type())
+	}
+	data := opcuaData("i=1", &ua.DataValue{Value: v, Status: ua.StatusOK})
+	if data["value_type_name"] != "Byte[]" {
+		t.Fatal(data["value_type_name"])
+	}
+}

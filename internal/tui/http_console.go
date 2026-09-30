@@ -72,7 +72,9 @@ func (u *UI) httpConsole() {
 				u.cancel = nil
 				u.mu.Unlock()
 				if u.quitting {
-					u.App.Stop()
+					if u.activeUASubscriptions() == 0 && len(u.localCancels) == 0 {
+						u.App.Stop()
+					}
 					return
 				}
 				if err != nil {
