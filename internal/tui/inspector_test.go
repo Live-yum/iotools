@@ -32,7 +32,7 @@ func TestMQTTTopicTreeUpdatesInPlace(t *testing.T) {
 		t.Fatal("latest value missing")
 	}
 	u.App.ForceDraw()
-	if !strings.Contains(snapshot(s), "MQTT topic tree") {
+	if !strings.Contains(strings.ReplaceAll(snapshot(s), " ", ""), "MQTT主题树") {
 		t.Fatal("topic tree not rendered")
 	}
 }
