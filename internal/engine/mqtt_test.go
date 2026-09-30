@@ -23,7 +23,19 @@ func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 	if e := s.Serve(); e != nil {
 		t.Fatal(e)
 	}
-	defer s.Close()
+	defer func() {
+		// mochi v2.7.9 GetByListener recursively RLocks Clients via Len; if a
+		// disconnect writer is waiting, broker.Close can deadlock. Shut down this
+		// test listener with a snapshot callback (one RLock only) before CloseAll.
+		l.Close(func(_ string) {
+			for _, client := range s.Clients.GetAll() {
+				client.Stop(nil)
+			}
+		})
+		if e := s.Close(); e != nil {
+			t.Errorf("close MQTT fixture: %v", e)
+		}
+	}()
 	r := config.Request{Protocol: "mqtt", Endpoint: "mqtt://" + l.Address(), Action: "publish", Timeout: "3s", Params: map[string]any{"topic": "test/value", "payload": "42", "retain": true, "qos": 1}}
 	if e := Run(context.Background(), r, true, nil); e != nil {
 		t.Fatal(e)

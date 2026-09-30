@@ -51,6 +51,13 @@ func validateParams(r config.Request) error {
 		}
 	}
 	if r.Protocol == "modbus" {
+		if r.Mutates() {
+			for _, k := range []string{"address", "unit"} {
+				if _, ok := r.Params[k]; !ok {
+					return fmt.Errorf("Modbus writes require an explicit %s", k)
+				}
+			}
+		}
 		if r.Action == "write-register" {
 			v, ok := r.Params["value"]
 			if !ok {

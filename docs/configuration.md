@@ -101,6 +101,6 @@ Common params: `unit` (1..247; default 1), zero-based `address` (0..65535),
 `count` (1..125; default 1), `samples` (default 1), `interval_ms` (>=10; default
 1000), `word_order: ABCD|CDAB|BADC|DCBA` for paired-register values. Registers
 include u16/i16/hex/binary/ASCII and paired u32/i32/f32 views. Write requests run
-once even when `samples` is greater than one. Broadcast and wraparound addressing
+once even when `samples` is greater than one. Writes require explicitly supplied unit and address. Broadcast and wraparound addressing
 are blocked. Transport calls time out within five seconds, bounded also by the
 request timeout; serial cancellation completes at the next transport boundary.
