@@ -18,6 +18,7 @@ import (
 // HTTPWorkflowOptions controls only explicit workflow capabilities. History is
 // opt-in because response bodies and headers may contain credentials or private data.
 type HTTPWorkflowOptions struct {
+	NoNetwork             bool
 	HistoryPath           string
 	AllowChainWrites      bool
 	AuthorizeChainWrite   func(context.Context, config.Request) (bool, error)
@@ -186,6 +187,9 @@ func (w *httpWorkflow) codec(id string) (codec.Config, error) {
 	return c, e
 }
 func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
+	if w.options.NoNetwork {
+		return fmt.Errorf("生成期间禁止触发网络请求；需要时明确启用 execute-triggers")
+	}
 	if e := w.ctx.Err(); e != nil {
 		return e
 	}

@@ -18,6 +18,7 @@ import (
 // inspector presents protocol-native results without changing the shared layout.
 // Source recipes remain untouched by transient browse/navigation operations.
 type inspector struct {
+	modbus          *modbusAdvanced
 	kafka           *kafkaView
 	pages           *tview.Pages
 	tree            *tview.TreeView
@@ -64,6 +65,18 @@ func newInspector(u *UI) *inspector {
 			if n != nil {
 				if id, ok := n.GetReference().(string); ok {
 					switch e.Rune() {
+					case 'v':
+						if !u.running {
+							u.derived("read", id)
+							u.uaCopyPending = true
+						}
+						return nil
+					case 'n':
+						u.copyText(id)
+						return nil
+					case 'g':
+						u.uaPathForm()
+						return nil
 					case 'c':
 						u.derived("method-arguments", id)
 						return nil
@@ -76,8 +89,11 @@ func newInspector(u *UI) *inspector {
 					case 'r':
 						u.derived("read", id)
 						return nil
+					case 'S':
+						u.unsubscribeUA(id)
+						return nil
 					case 's':
-						u.derived("subscribe", id)
+						u.subscribeUA(id)
 						return nil
 					}
 				}
@@ -90,12 +106,31 @@ func newInspector(u *UI) *inspector {
 		return e
 	})
 	v.table.SetSelectedFunc(func(row, col int) {
+		if v.protocol == "opcua" && row > 0 {
+			if data, ok := v.table.GetCell(row, 0).GetReference().(map[string]any); ok {
+				if _, endpoint := data["url"]; endpoint {
+					u.uaConnectionForm(u.lastRequest, data)
+					return
+				}
+			}
+		}
 		if v.protocol == "kafka" {
 			v.kafkaSelect(row, col)
 			return
 		}
 	})
 	v.table.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyCtrlY {
+			row, _ := v.table.GetSelection()
+			if row > 0 {
+				values := []string{}
+				for c := 0; c < v.table.GetColumnCount(); c++ {
+					values = append(values, tview.Unescape(v.table.GetCell(row, c).Text))
+				}
+				u.copyText(strings.Join(values, "\t"))
+			}
+			return nil
+		}
 		if v.protocol == "kafka" {
 			return v.kafkaKey(e)
 		}
@@ -114,6 +149,10 @@ func newInspector(u *UI) *inspector {
 		}
 		if v.protocol != "modbus" {
 			return e
+		}
+		e = v.modbusAdvancedKey(e)
+		if e == nil {
+			return nil
 		}
 		if e.Rune() == 'm' {
 			v.matrix = !v.matrix
@@ -180,6 +219,7 @@ func newInspector(u *UI) *inspector {
 	return v
 }
 func (v *inspector) reset(r config.Request) {
+	defer v.modbusAdvancedReset(r)
 	defer func() {
 		if r.Protocol == "kafka" {
 			v.kafkaReset(r)
@@ -243,6 +283,43 @@ func (v *inspector) add(e engine.Event) {
 		return
 	}
 	switch e.Kind {
+	case "value":
+		if v.protocol == "opcua" {
+			if m, ok := e.Data.(map[string]any); ok {
+				b, _ := json.Marshal(m["value"])
+				v.owner.uaCopyValue = string(b)
+			}
+		}
+	case "endpoint":
+		if v.protocol == "opcua" {
+			if m, ok := e.Data.(map[string]any); ok {
+				v.pages.SwitchToPage("table")
+				v.table.SetTitle(" OPC UA 发现（未受信）· Enter 选择并编辑连接 · F9历史 ")
+				if v.table.GetRowCount() == 0 {
+					for i, h := range []string{"端点", "策略", "模式", "身份"} {
+						v.table.SetCell(0, i, tview.NewTableCell(h).SetSelectable(false))
+					}
+				}
+				row := v.table.GetRowCount()
+				for i, key := range []string{"url", "security_policy", "security_mode", "identity_tokens"} {
+					value := fmt.Sprint(m[key])
+					if key == "security_policy" {
+						value = strings.TrimPrefix(value, "http://opcfoundation.org/UA/SecurityPolicy#")
+					}
+					v.table.SetCell(row, i, tview.NewTableCell(display(value)).SetReference(m))
+				}
+				return
+			}
+		}
+	case "path-resolved":
+		if m, ok := e.Data.(map[string]any); ok {
+			node := fmt.Sprint(m["node_id"])
+			v.owner.lastRequest.Params["node_id"] = node
+			v.root.SetReference(node)
+			v.root.SetText(display(fmt.Sprint(m["path"]) + " · " + node))
+			return
+		}
+
 	case "retained-preview":
 		if m, ok := e.Data.(map[string]any); ok {
 			v.owner.retainedPreview(m)
@@ -403,8 +480,11 @@ func (v *inspector) add(e engine.Event) {
 	}
 }
 func (v *inspector) renderRegisters() {
+	if v.renderModbusAdvanced() {
+		return
+	}
 	v.table.Clear()
-	v.table.SetTitle(" 寄存器 · m 矩阵 · p 固定 · l 标签 · f 筛选 · d 快照 · S 保存 · O 对比 ")
+	v.table.SetTitle(" 寄存器 · m 矩阵 · p 固定 · l 标签 · f 筛选 · d 快照 · S 保存 · O 对比 " + v.modbusAdvancedHelp())
 	headers := []string{"固定", "地址", "标签", "u16", "i16", "十六进制", "f32", "快照差值", "趋势(u16)", "f64", "u32 M10K", "i32 M10K", "规则结果"}
 	for i, s := range headers {
 		v.table.SetCell(0, i, tview.NewTableCell(s).SetTextColor(tcell.ColorAqua).SetSelectable(false))
@@ -498,6 +578,13 @@ func (u *UI) derived(action, target string) {
 	r.Params = params
 	r.Action = action
 	if r.Protocol == "opcua" {
+		parent := r.String("node_id", "i=85")
+		for _, key := range []string{"node_ids", "method_id", "object_id", "arguments", "attribute", "attributes", "value", "value_type", "browse_path", "direction", "reference_type"} {
+			delete(r.Params, key)
+		}
+		if action == "method-arguments" {
+			r.Params["object_id"] = parent
+		}
 		delete(r.Params, "node_ids")
 		r.Params["node_id"] = target
 		if action == "subscribe" {

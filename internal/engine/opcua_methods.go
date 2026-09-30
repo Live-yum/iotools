@@ -21,7 +21,7 @@ func methodArgument(a *ua.Argument) (MethodArgument, error) {
 	if a == nil || a.DataType == nil {
 		return MethodArgument{}, fmt.Errorf("方法参数缺少 DataType")
 	}
-	types := map[uint32]string{1: "Boolean", 2: "SByte", 3: "Byte", 4: "Int16", 5: "UInt16", 6: "Int32", 7: "UInt32", 8: "Int64", 9: "UInt64", 10: "Float", 11: "Double", 12: "String", 13: "DateTime", 15: "ByteString", 20: "QualifiedName", 21: "LocalizedText"}
+	types := map[uint32]string{1: "Boolean", 2: "SByte", 3: "Byte", 4: "Int16", 5: "UInt16", 6: "Int32", 7: "UInt32", 8: "Int64", 9: "UInt64", 10: "Float", 11: "Double", 12: "String", 13: "DateTime", 14: "Guid", 17: "NodeId", 15: "ByteString", 20: "QualifiedName", 21: "LocalizedText"}
 	kind := ""
 	if a.DataType.Namespace() == 0 {
 		kind = types[a.DataType.IntID()]

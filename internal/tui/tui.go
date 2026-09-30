@@ -24,6 +24,7 @@ import (
 const help = `IOTOOLS · 中文操作帮助
 
 Tab / Shift-Tab   在请求列表、详情、结果、搜索框之间切换
+Alt + ←/→        调整左栏宽度；Alt + ↑/↓ 调整结果面板高度
 ↑ ↓ / j k        选择已保存的请求
 Enter / F5       执行请求；修改数据前必须确认
 F2               在协议专用视图和原始结果之间切换
@@ -32,6 +33,9 @@ F4               在终端内直接编辑 YAML 请求配置
 F6               切换环境配置（profile）
 F7               当前 HTTP 响应 jq / SQLite 历史只读查询
 F8               取消正在执行的请求或订阅
+F9               OPC UA 连接历史（密码不保存）
+F10              OPC UA 独立后台订阅面板
+Ctrl-Y           在结果表复制所选行（明确确认后）
 Ctrl-L           清空结果
 ? / F1           打开本帮助
 Ctrl-C / q       取消当前任务并退出
@@ -39,9 +43,10 @@ Ctrl-C / q       取消当前任务并退出
 配置编辑器：Ctrl-S 校验并保存，Esc 放弃修改
 HTTP：展开响应树；F2 查看完整原始结果
 MQTT：主题树；Enter 展开/折叠；v 查看文本/HEX/Base64/JSON
-OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参数，属性表 e 编辑，退格返回
+OPC UA：Enter 浏览，a 属性，f 引用，r 读取，s 订阅，c 方法参数，g 路径，属性表 e 编辑，退格返回
 Kafka：选择主题后按 Enter 开始只读消费
 Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f 仅看固定项，d 建立差值快照，S 保存快照，O 载入对比
+Modbus 高级：C 列，K 快捷键，I 导入标注，E 导出标注，D 导出 CSV
 
 打开程序或选择请求不会自动连接服务器
 环境变量：${名称}；敏感信息：${env:变量名}
@@ -49,32 +54,38 @@ Modbus：m 矩阵，+/- 调整列数，p 固定寄存器，l 添加标签，f �
 界面结果数量有限；需要完整采集时使用命令行 JSON 输出`
 
 type UI struct {
-	lastHTTPBody           []byte
-	HTTPHistoryPath        string
-	App                    *tview.Application
-	pages                  *tview.Pages
-	list                   *tview.List
-	detail, result, status *tview.TextView
-	search                 *tview.InputField
-	collection             *config.Collection
-	raw                    []byte
-	path, profile          string
-	readonly               bool
-	indexes                []int
-	selected               int
-	cancel                 context.CancelFunc
-	running                bool
-	quitting               bool
-	mu                     sync.Mutex
-	events                 []string
-	inspector              *inspector
-	resultPages            *tview.Pages
-	visual                 bool
-	lastRequest            config.Request
-	mqttPreviewPending     map[string]any
-	methodArgumentsPending map[string]any
-	navigation             []config.Request
-	focus                  int
+	uaCopyPending           bool
+	uaCopyValue             string
+	uaSubscriptions         map[string]*liveUASubscription
+	uaSubTable              *tview.Table
+	topLayout, mainLayout   *tview.Flex
+	listWidth, resultHeight int
+	lastHTTPBody            []byte
+	HTTPHistoryPath         string
+	App                     *tview.Application
+	pages                   *tview.Pages
+	list                    *tview.List
+	detail, result, status  *tview.TextView
+	search                  *tview.InputField
+	collection              *config.Collection
+	raw                     []byte
+	path, profile           string
+	readonly                bool
+	indexes                 []int
+	selected                int
+	cancel                  context.CancelFunc
+	running                 bool
+	quitting                bool
+	mu                      sync.Mutex
+	events                  []string
+	inspector               *inspector
+	resultPages             *tview.Pages
+	visual                  bool
+	lastRequest             config.Request
+	mqttPreviewPending      map[string]any
+	methodArgumentsPending  map[string]any
+	navigation              []config.Request
+	focus                   int
 }
 
 func clean(s string) string {
@@ -114,6 +125,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 	u.search.SetChangedFunc(func(s string) { u.populate(s) })
 	top := tview.NewFlex().AddItem(u.list, 30, 1, true).AddItem(u.detail, 0, 2, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).AddItem(u.search, 1, 0, false).AddItem(top, 0, 1, true).AddItem(u.resultPages, 0, 1, false).AddItem(u.status, 2, 0, false)
+	u.topLayout = top
+	u.mainLayout = root
+	u.listWidth = 30
 	u.pages.AddPage("main", root, true, true)
 	u.list.SetChangedFunc(func(index int, main, secondary string, shortcut rune) {
 		if index >= 0 && index < len(u.indexes) {
@@ -127,7 +141,7 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		u.inspector.reset(c.Requests[0])
 	}
 	u.setStatus("就绪 · Enter 执行 · F4 编辑 · F6 环境 · F8 取消 · ? 帮助")
-	u.App.SetRoot(u.pages, true).EnableMouse(true)
+	u.App.SetRoot(u.pages, true).EnableMouse(true).EnablePaste(true)
 	u.App.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		if e.Key() == tcell.KeyCtrlC {
 			u.quit()
@@ -136,6 +150,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		name, _ := u.pages.GetFrontPage()
 		if name != "main" {
 			return e
+		}
+		if u.resizeLayout(e) {
+			return nil
 		}
 		switch e.Key() {
 		case tcell.KeyCtrlC:
@@ -169,8 +186,15 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		case tcell.KeyF7:
 			u.httpConsole()
 			return nil
+		case tcell.KeyF10:
+			u.showUASubscriptions()
+			return nil
+		case tcell.KeyF9:
+			u.uaHistory()
+			return nil
 		case tcell.KeyF8:
 			u.stop()
+			u.stopUASubscriptions()
 			u.setStatus("正在取消…")
 			return nil
 		case tcell.KeyCtrlL:
@@ -293,6 +317,8 @@ func (u *UI) execute() {
 }
 func (u *UI) start(r config.Request) {
 	u.mqttPreviewPending = nil
+	u.uaCopyPending = false
+	u.uaCopyValue = ""
 	u.methodArgumentsPending = nil
 	u.lastRequest = r
 	u.inspector.reset(r)
@@ -332,8 +358,7 @@ func (u *UI) start(r config.Request) {
 				if len(u.events) > 128 {
 					u.events = u.events[len(u.events)-128:]
 				}
-				u.result.SetText(strings.Join(u.events, "\n\n"))
-				u.result.ScrollToEnd()
+				u.updateResult(strings.Join(u.events, "\n\n"))
 			})
 		})
 		cancel()
@@ -341,7 +366,9 @@ func (u *UI) start(r config.Request) {
 			u.running = false
 			if u.quitting {
 				u.mqttPreviewPending = nil
-				u.App.Stop()
+				if u.activeUASubscriptions() == 0 {
+					u.App.Stop()
+				}
 				return
 			}
 			u.mu.Lock()
@@ -352,11 +379,18 @@ func (u *UI) start(r config.Request) {
 			} else {
 				u.setStatus("执行完成：" + r.ID)
 			}
+			if e == nil {
+				u.rememberUAConnection(u.lastRequest)
+			}
 			u.finishMQTTPreview(e == nil)
 			if e == nil && u.methodArgumentsPending != nil {
 				u.methodForm(u.methodArgumentsPending)
 			}
 			u.methodArgumentsPending = nil
+			if e == nil && u.uaCopyPending {
+				u.copyText(u.uaCopyValue)
+			}
+			u.uaCopyPending = false
 		})
 	}()
 }
@@ -387,15 +421,15 @@ func (u *UI) edit() {
 				editor.SetTitle(" 文件已被外部修改，已停止覆盖 · Esc 关闭 ")
 				return nil
 			}
-			if e := config.SaveChecked(u.path, b, func(data []byte) error { _, err := engine.ParseCollection(data); return err }); e != nil {
+			if e := config.SaveChecked(u.path, b, func(data []byte) error { _, err := engine.ParseCollectionAt(data, u.path); return err }); e != nil {
 				editor.SetTitle(" 保存失败：" + clean(e.Error()) + " · Esc 放弃 ")
 				return nil
 			}
-			c, e := engine.ParseCollection(b)
+			c, e := engine.ParseCollectionAt(b, u.path)
 			if e != nil {
 				return nil
 			}
-			c.SourcePath = u.path
+			c.SourcePath, _ = filepath.Abs(u.path)
 			u.collection = c
 			u.raw = b
 			u.pages.RemovePage("editor")
@@ -445,7 +479,7 @@ func (u *UI) profiles() {
 	u.pages.AddPage("profiles", list, true, true)
 	u.App.SetFocus(list)
 }
-func (u *UI) Run() error { defer u.stop(); return u.App.Run() }
+func (u *UI) Run() error { defer u.stop(); defer u.stopUASubscriptions(); return u.App.Run() }
 func Run(path, profile string, readonly bool) error {
 	if _, e := os.Stat(path); e != nil {
 		return e
@@ -460,7 +494,8 @@ func Run(path, profile string, readonly bool) error {
 func (u *UI) quit() {
 	u.quitting = true
 	u.stop()
-	if !u.running {
+	u.stopUASubscriptions()
+	if !u.running && u.activeUASubscriptions() == 0 {
 		u.App.Stop()
 	}
 }

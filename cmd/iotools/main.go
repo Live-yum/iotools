@@ -29,6 +29,8 @@ func run(args []string) error {
 	input := flags.String("input", "", "导入源文件路径")
 	path := flags.String("file", "iotools.yaml", "请求集合 YAML 文件路径")
 	profile := flags.String("profile", "", "环境配置名称")
+	curlRequest := flags.String("curl", "", "生成指定HTTP请求的POSIX curl命令，不执行命令，默认不触发依赖请求")
+	executeTriggers := flags.Bool("execute-triggers", false, "生成curl时明确允许依赖请求；依赖修改仍需独立授权")
 	request := flags.String("run", "", "执行指定请求 ID，输出 JSON 行")
 	serveModbus := flags.String("serve-modbus", "", "以指定请求启动仅回环地址的 Modbus HTTP API")
 	listen := flags.String("listen", "127.0.0.1:8082", "本机 API 监听地址，禁止公网绑定")
@@ -63,6 +65,9 @@ func run(args []string) error {
 			return err
 		}
 		collection, err := engine.ImportCollection(data, *importFormat)
+		if *importFormat == "slumber" || *importFormat == "v4" || *importFormat == "v5" {
+			collection, _, err = engine.LoadCollection(*input)
+		}
 		if err != nil {
 			return err
 		}
@@ -164,6 +169,20 @@ func run(args []string) error {
 			}
 		}
 		return fmt.Errorf("找不到请求 %q", *serveModbus)
+	}
+	if *curlRequest != "" {
+		for _, r := range c.Requests {
+			if r.ID == *curlRequest {
+				ctx := engine.WithHTTPWorkflowOptions(context.Background(), engine.HTTPWorkflowOptions{HistoryPath: *historyDB, AllowChainWrites: *allowChains})
+				command, err := engine.GenerateCurl(ctx, c, r, *profile, *allow && !*readonly, *executeTriggers)
+				if err != nil {
+					return err
+				}
+				fmt.Println(command)
+				return nil
+			}
+		}
+		return fmt.Errorf("找不到请求 %q", *curlRequest)
 	}
 	if *request == "" {
 		u, err := tui.New(*path, *profile, *readonly)

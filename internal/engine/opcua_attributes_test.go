@@ -119,3 +119,21 @@ func TestOPCUAReferenceDirections(t *testing.T) {
 		}
 	}
 }
+
+func TestOPCUANodeIDAndGUIDBuiltins(t *testing.T) {
+	for _, kind := range []string{"NodeId", "Guid", "NodeId[]", "Guid[]"} {
+		var value any = "ns=2;s=Temperature"
+		if strings.HasPrefix(kind, "Guid") {
+			value = "1111AAAA-22BB-33CC-44DD-55EE77FF9900"
+		}
+		if strings.HasSuffix(kind, "[]") {
+			value = []any{value}
+		}
+		if _, e := opcuaVariant(kind, value); e != nil {
+			t.Fatalf("%s: %v", kind, e)
+		}
+	}
+	if _, e := opcuaVariant("Guid", "invalid"); e == nil {
+		t.Fatal("invalid Guid accepted")
+	}
+}

@@ -59,6 +59,12 @@ NodeId 支持 `i=2258`、`ns=2;s=Temperature` 及库支持的 GUID/字节串形�
 
 订阅在瞬时通信错误后最多重连5次，每次重新发现和验证证书、恢复剩余事件数量；可设置 auto_reconnect=false，reconnect_interval_ms 调整间隔。证书、权限和节点错误不会重试，写入/调用从不重放。
 
-当前仍需补齐持久连接历史、路径跳转和完整可调整多面板布局；不能把本机模拟器通过等同于真实设备验证。
+现已实现F9成功连接历史、每端点无密码偏好和节点恢复；历史保存在集合旁的.tui-state.json，最多100条。F9选择后仍需连接表单确认，不自动连接。
+
+发现结果表Enter打开连接表单，但不会把发现的未受信指纹自动填入信任配置。g打开浏览路径（Root、ns=N:名称与&转义），n复制NodeId、v读取并复制值；复制需明确确认。NodeId/Guid及其一维数组现也支持写入和方法参数。
+
+按s启动独立后台订阅（最多16节点），可以同时浏览/读取；F10实时面板，Shift+S取消选中节点，F8取消全部。退出等待会话清理。Alt左右调整左栏，Alt上下调整结果区域，日志滚动到旧内容时不再强制跳回底部。
+
+仍需补齐选中节点的完整浏览路径复制、证书生成向导、更多安全策略及各属性/引用/订阅同时可调布局；不能把本机模拟器通过等同于真实设备验证。
 
 来源：[ua-client 功能清单](https://github.com/FreeOpcUa/ua-client)、[gopcua v0.9.1](https://github.com/gopcua/opcua/tree/v0.9.1)、[OPC UA 服务规范](https://reference.opcfoundation.org/Core/Part4/v105/docs/)

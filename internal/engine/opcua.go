@@ -21,13 +21,14 @@ import (
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
+	"github.com/gopcua/opcua/uacp"
 )
 
 // OPC UA discovery is untrusted metadata. Session establishment independently
 // validates the advertised certificate before any identity token is transmitted.
 func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	switch r.Action {
-	case "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
+	case "browse-path", "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
 	default:
 		return unsupported(r, "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe")
 	}
@@ -38,7 +39,7 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	if err != nil || address.Scheme != "opc.tcp" || address.Hostname() == "" || address.User != nil {
 		return fmt.Errorf("OPC UA requires an opc.tcp URL without embedded credentials")
 	}
-	endpoints, err := opcua.GetEndpoints(ctx, r.Endpoint, opcua.AutoReconnect(false), opcua.DialTimeout(5*time.Second), opcua.RequestTimeout(10*time.Second), opcua.MaxMessageSize(16<<20))
+	endpoints, err := opcua.GetEndpoints(ctx, r.Endpoint, opcua.Dialer(isolatedOPCUADialer()), opcua.AutoReconnect(false), opcua.DialTimeout(5*time.Second), opcua.RequestTimeout(10*time.Second), opcua.MaxMessageSize(16<<20))
 	if err != nil {
 		return fmt.Errorf("OPC UA discovery failed: %w", err)
 	}
@@ -56,7 +57,13 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 			if ep.Server != nil {
 				uri = ep.Server.ApplicationURI
 			}
-			send(emit, "endpoint", map[string]any{"url": ep.EndpointURL, "security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String(), "certificate_sha256": hex.EncodeToString(sum[:]), "application_uri": uri, "trusted": false})
+			tokens := []string{}
+			for _, token := range ep.UserIdentityTokens {
+				if token != nil {
+					tokens = append(tokens, token.TokenType.String())
+				}
+			}
+			send(emit, "endpoint", map[string]any{"url": ep.EndpointURL, "security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String(), "certificate_sha256": hex.EncodeToString(sum[:]), "application_uri": uri, "trusted": false, "identity_tokens": tokens})
 		}
 		return nil
 	}
@@ -78,6 +85,14 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	}
 	send(emit, "connected", map[string]any{"security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String()})
 	switch r.Action {
+	case "browse-path":
+		node, e := resolveUABrowsePath(ctx, c, r.String("browse_path", ""))
+		if e != nil {
+			return e
+		}
+		r.Params["node_id"] = node.String()
+		send(emit, "path-resolved", map[string]any{"node_id": node.String(), "path": r.String("browse_path", "")})
+		return opcuaBrowse(ctx, c, r, emit)
 	case "method-arguments":
 		return opcuaMethodArguments(ctx, c, r, emit)
 	case "browse", "references":
@@ -194,7 +209,7 @@ func opcuaOptions(r config.Request, endpoints []*ua.EndpointDescription, host st
 	if ep == nil {
 		return nil, nil, fmt.Errorf("server does not advertise the requested security and authentication profile")
 	}
-	opts := []opcua.Option{opcua.AutoReconnect(false), opcua.DialTimeout(5 * time.Second), opcua.RequestTimeout(10 * time.Second), opcua.MaxMessageSize(16 << 20), opcua.SecurityFromEndpoint(ep, token)}
+	opts := []opcua.Option{opcua.Dialer(isolatedOPCUADialer()), opcua.AutoReconnect(false), opcua.DialTimeout(5 * time.Second), opcua.RequestTimeout(10 * time.Second), opcua.MaxMessageSize(16 << 20), opcua.SecurityFromEndpoint(ep, token)}
 	if !insecure {
 		if err := opcuaTrust(r, ep, host, time.Now()); err != nil {
 			return nil, nil, err
@@ -532,6 +547,10 @@ func opcuaZero(kind string) any {
 		return false
 	case "String", "ByteString":
 		return ""
+	case "NodeId", "NodeID":
+		return "i=0"
+	case "Guid", "GUID":
+		return "00000000-0000-0000-0000-000000000000"
 	case "DateTime":
 		return "2000-01-01T00:00:00Z"
 	case "LocalizedText":
@@ -608,6 +627,22 @@ func opcuaScalar(kind string, raw any) (any, error) {
 			return nil, fmt.Errorf("String requires text")
 		}
 		return value, nil
+	case "NodeId", "NodeID":
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("NodeId需要文本")
+		}
+		return ua.ParseNodeID(value)
+	case "Guid", "GUID":
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("Guid需要文本")
+		}
+		guid := ua.NewGUID(value)
+		if guid == nil {
+			return nil, fmt.Errorf("无效Guid")
+		}
+		return guid, nil
 	case "ByteString":
 		value, ok := raw.(string)
 		if !ok {
@@ -667,4 +702,13 @@ func opcuaScalar(kind string, raw any) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported value_type %q; use Boolean, String, ByteString(base64), DateTime(RFC3339), signed/unsigned integer widths, Float, Double or typed []", kind)
 	}
+}
+
+// gopcua's default dialer shares ClientACK globally; each concurrent client must
+// own its handshake options before applying MaxMessageSize to avoid data races.
+func isolatedOPCUADialer() *uacp.Dialer {
+	d := opcua.DefaultDialer()
+	ack := *d.ClientACK
+	d.ClientACK = &ack
+	return d
 }

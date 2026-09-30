@@ -186,6 +186,14 @@ func decodeSingle(d *json.Decoder, value *any) error {
 }
 func editableUAValue(value any) any {
 	switch v := value.(type) {
+	case *ua.NodeID:
+		if v != nil {
+			return v.String()
+		}
+	case *ua.GUID:
+		if v != nil {
+			return v.String()
+		}
 	case *ua.LocalizedText:
 		if v != nil {
 			return map[string]any{"text": v.Text, "locale": v.Locale}

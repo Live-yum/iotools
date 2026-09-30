@@ -557,9 +557,13 @@ func (v *inspector) kafkaSearch() {
 }
 func (v *inspector) kafkaDetail(item kafkaItem, row int) {
 	view := tview.NewTextView().SetText(clean(fmt.Sprint(item.data))).SetWrap(true).SetScrollable(true)
-	view.SetBorder(true).SetTitle(" Kafka " + display(item.kind) + " · Ctrl-N/P上一/下一 · Esc返回 ")
+	view.SetBorder(true).SetTitle(" Kafka " + display(item.kind) + " · Ctrl-N/P上一/下一 · Ctrl-Y复制 · Esc返回 ")
 	close := func() { v.owner.pages.RemovePage("kafka-detail"); v.owner.App.SetFocus(v.table) }
 	view.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyCtrlY {
+			v.owner.copyText(fmt.Sprint(item.data))
+			return nil
+		}
 		if e.Key() == tcell.KeyEscape {
 			close()
 			return nil

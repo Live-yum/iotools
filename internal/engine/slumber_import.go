@@ -24,13 +24,26 @@ func LoadCollection(path string) (*config.Collection, []byte, error) {
 	if e != nil {
 		return nil, nil, e
 	}
-	c, e := ParseCollection(b)
+	c, e := ParseCollectionAt(b, path)
 	if e == nil {
 		c.SourcePath, _ = filepath.Abs(path)
 	}
 	return c, b, e
 }
-func ParseCollection(data []byte) (*config.Collection, error) {
+func ParseCollection(data []byte) (*config.Collection, error) { return ParseCollectionAt(data, "") }
+func ParseCollectionAt(data []byte, path string) (*config.Collection, error) {
+	initial, err := decodeCollectionMap(data)
+	if err != nil {
+		return nil, err
+	}
+	if _, native := initial["version"]; native {
+		return config.Parse(data)
+	}
+	resolved, e := resolveCollectionDocument(data, path)
+	if e != nil {
+		return nil, e
+	}
+	data = resolved
 	root, e := decodeCollectionMap(data)
 	if e != nil {
 		return nil, e

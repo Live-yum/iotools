@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -58,7 +59,7 @@ func (u *UI) editRequest() {
 			return
 		}
 		u.collection, _ = config.Parse(b)
-		u.collection.SourcePath = u.path
+		u.collection.SourcePath, _ = filepath.Abs(u.path)
 		u.raw = b
 		close()
 		u.populate(u.search.GetText())

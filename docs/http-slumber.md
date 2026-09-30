@@ -125,8 +125,8 @@ DELETE/UPDATE/ATTACH/PRAGMA。它不是任意修改数据库的 sqlite3 shell。
 
 ## 当前明确边界与验收
 
-仍需逐项补齐/验收的原工具语义包括：所有外部格式边缘情况、跨文件/远程组合、
-无限流式上传、完整 curl 导出与原 CLI 输出/历史管理命令、Python 包接口、系统
+仍需逐项补齐/验收的原工具语义包括：所有外部格式边缘情况、更复杂导入格式、
+无限流式上传、原 CLI 输出/历史管理命令、Python 包接口、系统
 编辑器/剪贴板等平台交互，以及 jaq 与 gojq 的全部语言边界。导入限制会显式报错；
 不把这些限制算成“全功能已完成”。
 
@@ -134,3 +134,19 @@ DELETE/UPDATE/ATTACH/PRAGMA。它不是任意修改数据库的 sqlite3 shell。
 原始与派生响应、typed JSON/binary file/multipart、lazy crypto、profile/请求环、
 导入与本地引用、历史持久化隔离/persist=false、只读 SQL、jq 大整数与取消。
 所有网络测试只用回环服务器，不含真实账户、生产端点或密钥。
+
+
+## 已对源码补齐的组合与curl导出
+
+核对fork `895fd49` 的 `crates/util/src/yaml/resolve.rs`：$ref支持当前文件和本地文件，
+不是HTTP下载。现支持 `./other.yml#/path`（相对引用者目录）、绝对路径、~/路径、
+标量/数组下标引用、跨文件嵌套、循环拒绝，以及$ref出现位置决定的覆盖顺序：
+前面的字段可被引用覆盖，后面的字段覆盖引用。打开文件及F4保存不会发送网络请求。
+单文件4MiB、所有引用16MiB、64文件/64层，超限明确报错。原生version:1的JSON正文
+里的$ref仍是普通数据，不会被当成集合引用。F4只保存正在编辑的主文件。
+
+核对 `crates/core/src/http/curl.rs` 与 `crates/cli/src/commands/generate.rs`：
+`--curl 请求ID` 或F7生成当前HTTP请求的POSIX curl命令，保留query、headers、
+请求体/加密变换、身份及TLS文件选项；程序不会执行这个命令。默认禁止触发依赖请求，
+CLI可明确加 `--execute-triggers`，链式修改仍需独立write授权。引号安全转义；NUL/
+非UTF-8二进制不能作为shell参数，明确要求导出为文件。生成结果可能含机密，请勿公开。
