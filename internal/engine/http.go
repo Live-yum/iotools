@@ -24,6 +24,17 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 			return fmt.Errorf("persist must be a YAML boolean")
 		}
 	}
+	if _, unresolved := r.Params["body_stream"]; unresolved {
+		return fmt.Errorf("body_stream必须通过集合模板引擎解析")
+	}
+	if _, limited := r.Params["max_upload_bytes"]; limited {
+		if _, file := r.Params["body_file"]; !file {
+			return fmt.Errorf("max_upload_bytes仅用于body_file")
+		}
+	}
+	if e := validateHTTPDownload(r); e != nil {
+		return e
+	}
 	u, e := url.Parse(r.Endpoint)
 	if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("HTTP endpoint must be an absolute http(s) URL")
@@ -31,6 +42,17 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 	method := strings.ToUpper(r.Action)
 	if !strings.Contains(" GET HEAD OPTIONS POST PUT PATCH DELETE TRACE CONNECT ", " "+method+" ") {
 		return unsupported(r, "GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE", "TRACE", "CONNECT")
+	}
+	var streamReader io.Reader
+	var streamLength int64
+	if _, ok := r.Params["body_file"]; ok {
+		file, reader, length, err := openHTTPBodyFile(ctx, r)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		streamReader = reader
+		streamLength = length
 	}
 	body, contentType, e := httpRequestBody(r)
 	if e != nil {
@@ -54,9 +76,16 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 			return e
 		}
 	}
-	req, e := http.NewRequestWithContext(ctx, method, endpoint, strings.NewReader(body))
+	var reader io.Reader = strings.NewReader(body)
+	if streamReader != nil {
+		reader = streamReader
+	}
+	req, e := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if e != nil {
 		return e
+	}
+	if streamReader != nil {
+		req.ContentLength = streamLength
 	}
 	req.Header = headers
 	if contentType != "" && req.Header.Get("Content-Type") == "" {
@@ -80,6 +109,9 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 		return e
 	}
 	defer resp.Body.Close()
+	if _, ok := r.Params["response_file"]; ok {
+		return streamHTTPResponse(ctx, r, resp, emit)
+	}
 	data, e := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if e != nil {
 		return e

@@ -160,3 +160,22 @@ CLI支持 --history-list、--history-get ID、--history-delete ID1,ID2，并要�
 操作按集合绝对路径隔离，跨集合/缺失ID使整批回滚；没有空列表“全部删除”。
 历史查询用只读连接，删除使用单个事务；后台执行不会阻塞订阅界面，退出会取消。
 读取二进制响应保留raw_body_base64，不用替换字符损失原始字节。
+
+## 临时覆盖与流式文件
+
+CLI 请求或 curl 生成可重复指定 `--set name=value`、`--header name=value`、
+`--query name=value`、`--form name=value`；后三者不带等号表示删除字段。
+`--body` 替换正文，JSON请求会先校验JSON；`--bearer`/`--basic username:password`
+临时替换鉴权。只修改内存副本，不改原集合；敏感值建议环境模板，避免命令历史留明文。
+
+原生请求可在F3/F4设置 `body_file`，Slumber `body.type: stream` 的
+`{{ file(path) }}` 使用同一惰性文件读取，不将大文件加载到内存。
+`max_upload_bytes` 默认1GiB，上限8GiB；与body/json/form或正文加密/变换混用会明确拒绝，
+不会静默跳过变换。文件路径相对集合目录解析，写请求仍需确认。
+
+`response_file` 将响应流式保存到新的文件（0600，不覆盖已有路径），
+`max_response_bytes` 默认1GiB，上限8GiB。取消/超限/写失败会删除不完整文件。
+结果包含字节数、SHA256、HTTP状态和目标路径。HTTP错误的完整响应文件保留供检查。
+文件响应不能同时做response_transforms/query_filter，也不能作为response()依赖正文；
+这些组合会明确报错。常规响应/派生视图继续使用有界内存模式。
+生成curl输出相应的 `--data-binary @file` / `--output file`，不会执行curl。

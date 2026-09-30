@@ -45,7 +45,7 @@ func Run(ctx context.Context, r config.Request, allowWrites bool, emit Emit) err
 	case "kafka":
 		return runKafka(ctx, r, emit)
 	case "modbus":
-		return runModbus(ctx, r, emit)
+		return runModbusLogged(ctx, r, emit)
 	case "opcua":
 		return runOPCUA(ctx, r, emit)
 	}

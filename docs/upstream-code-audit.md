@@ -7,7 +7,7 @@
 - 待补：确有实现差异，列出下一步；不是把外部设备未测试冒充代码缺失
 - 上游无该功能：不虚构额外“缺项”
 
-最近已验证的发布基线是0c164355（Windows x64/Linux ARM64/Linux x64原生全部通过）。
+最近已验证的发布基线是838dabcd（Windows x64/Linux ARM64/Linux x64原生全部通过）。
 本表随后续提交更新，不应将正在开发的项误认为已包含在旧产物中。
 
 ## Slumber 用户分支
@@ -22,8 +22,8 @@
 | 同上 ReferenceSource | 只有Local/File，未实现HTTP远程引用 | 不将远程引用列为本仓库真实缺项 |
 | core/src/http/curl.rs、cli/src/commands/generate.rs | curl生成，默认禁止依赖请求，明确execute-triggers仍受修改授权；已实现 | 输出为POSIX命令，不执行；二进制NUL参数明确拒绝 |
 | cli/src/commands/db/request.rs | 历史list/get/delete；本轮实现F11和CLI，按集合隔离、逐ID确认、删除原子性验证 | 原CLI跨集合管理/批量别名、完整db shell命令族仍需逐项对应 |
-| cli/src/commands/request.rs | 配方请求、环境、鉴权、表单、响应/派生结果；现有统一配置+F3/F4可操作 | 原CLI临时override/dry-run/输出开关尚未一一暴露；下一步补不会保存回配置的覆盖入口 |
-| core HTTP RenderedBody/BodyStream | 有界内存正文与文件模板已实现 | 真正流式大文件上传/下载仍待补，不将4MiB缓冲当作流式实现 |
+| cli/src/commands/request.rs | 配方请求、环境、鉴权、表单、响应/派生结果；现有统一配置+F3/F4可操作 | 临时字段/header/query/form/body/basic/bearer覆盖已补；其余dry-run/输出开关继续逐项核对 |
+| core HTTP RenderedBody/BodyStream | 有界内存正文与文件模板已实现 | 已补body_file/response_file常量缓冲上传下载；6MiB回环验证，明确大小限制与变换/依赖边界 |
 
 Python包接口、调用外部编辑器等与“独立可移植TUI”的产品形态不同；不能把这些
 外部集成包装成已经提供。请求与配置编辑本身已经内置，运行无需Python/Node。
@@ -87,9 +87,10 @@ Python包接口、调用外部编辑器等与“独立可移植TUI”的产品�
 
 仍需实际补齐：
 
-1. 整份MTUI配置导入为统一集合，区分连接设置与不会自动启用的API/权限
-2. 其余动作的键映射与逐行采样时间/相对时间显示
-3. 线圈CSV导出和CSV快照差异输入（当前CSV仅寄存器已采集行）
-4. 配置轮换/写日志等config.rs中确有的工作流，需逐项对应而非只复制配置字段
+第四批已补整份配置显式导入、逐行时间、线圈CSV/离线差异、明确启用的写日志及查看器。
+
+1. 其余32动作完整键映射、next_config配置轮换
+2. 专用类型/字段曲线、设备/规则/raw对话框，以及统计/应用日志面板
+3. 写日志采用统一JSONL审计，尚非原CSV格式；详见[32动作逐项表](modbus-more.md)
 
 下一步依次补这些入口与回环/临时文件测试。物理串口、工业设备不在未经许可的测试范围内。

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
@@ -84,7 +85,8 @@ func redactPreview(r config.Request) config.Request {
 		case map[string]any:
 			out := map[string]any{}
 			for key, x := range v {
-				secret := key == "password" || key == "bearer" || key == "token" || key == "schema_registry_password" || key == "schema_registry_bearer" || (crypto && (key == "key" || key == "iv"))
+				normalized := strings.ToLower(key)
+				secret := normalized == "password" || normalized == "bearer" || normalized == "token" || normalized == "authorization" || normalized == "proxy-authorization" || normalized == "cookie" || normalized == "set-cookie" || normalized == "x-api-key" || normalized == "api_key" || normalized == "client_secret" || normalized == "access_token" || normalized == "schema_registry_password" || normalized == "schema_registry_bearer" || (crypto && (normalized == "key" || normalized == "iv"))
 				if secret {
 					out[key] = "••••（按 F3/F4 主动编辑原始配置）"
 				} else {

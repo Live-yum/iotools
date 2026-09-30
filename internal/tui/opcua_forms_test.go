@@ -54,3 +54,17 @@ func TestBackNeverReplaysMutation(t *testing.T) {
 		}
 	}
 }
+
+func TestHeaderCredentialsMaskedInPreview(t *testing.T) {
+	r := config.Request{Params: map[string]any{"headers": map[string]any{"Authorization": "PRIVATE", "X-API-Key": "PRIVATE", "Cookie": "PRIVATE", "Content-Type": "application/json"}}}
+	preview := redactPreview(r)
+	h := preview.Params["headers"].(map[string]any)
+	for _, key := range []string{"Authorization", "X-API-Key", "Cookie"} {
+		if h[key] == "PRIVATE" {
+			t.Fatal("credential leaked", key)
+		}
+	}
+	if h["Content-Type"] != "application/json" {
+		t.Fatal("ordinary header hidden")
+	}
+}

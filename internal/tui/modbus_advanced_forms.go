@@ -95,7 +95,7 @@ func (v *inspector) modbusColumnsPanel() {
 		if hex {
 			mode = "hex"
 		}
-		cfg := map[string]any{"visible": columns, "widths": rawWidths, "address_mode": mode}
+		cfg := map[string]any{"visible": columns, "widths": rawWidths, "address_mode": mode, "time_mode": v.modbus.timeMode}
 		cols, parsedWidths, hex, err := modbusParseColumns(cfg)
 		if err != nil {
 			table.SetTitle("无法应用：" + display(err.Error()))
@@ -240,7 +240,7 @@ func (v *inspector) modbusAdvancedHelp() string {
 	if v.modbus == nil {
 		return ""
 	}
-	actions := []string{"columns", "keymap", "import", "export", "dump"}
+	actions := []string{"columns", "keymap", "import", "export", "dump", "more"}
 	parts := []string{}
 	for _, action := range actions {
 		parts = append(parts, fmt.Sprintf("%c %s", v.modbus.keymap[action], modbusActionLabels[action]))

@@ -327,7 +327,7 @@ func importSlumber(raw map[string]any) (*config.Collection, error) {
 					case "form_urlencoded", "form_multipart":
 						r.Params[fmt.Sprint(b["type"])] = v
 					case "stream":
-						r.Params["body"] = v
+						r.Params["body_stream"] = v
 					default:
 						return fmt.Errorf("unsupported body type %v", b["type"])
 					}

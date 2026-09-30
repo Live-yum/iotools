@@ -111,4 +111,7 @@ func TestVisualCaptures(t *testing.T) {
 	u.uaConnectionForm(u.lastRequest, nil)
 	capture("11-opcua-connect")
 	u.pages.RemovePage("ua-connect")
+	u.inspector.reset(config.Request{Protocol: "modbus", Action: "read-holding", Endpoint: "mock://local"})
+	u.inspector.modbusConfigImportForm()
+	capture("12-modbus-config-import")
 }

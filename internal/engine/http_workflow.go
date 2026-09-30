@@ -113,6 +113,26 @@ func (w *httpWorkflow) renderRequest(r config.Request) (config.Request, error) {
 	resolved.Endpoint = endpoint.(string)
 	params := map[string]any{}
 	for _, key := range sortedKeys(resolved.Params) {
+		if key == "body_stream" {
+			path, stream, err := w.streamFileTemplate(resolved.Params[key])
+			if err != nil {
+				return r, err
+			}
+			if stream {
+				params["body_file"] = path
+				continue
+			}
+			value, err := w.walk(resolved.Params[key], true, 0)
+			if err != nil {
+				return r, err
+			}
+			b, err := templateBytes(value)
+			if err != nil {
+				return r, err
+			}
+			params["body"] = string(b)
+			continue
+		}
 		typed := key == "json" || key == "body" || key == "form_multipart"
 		value, e := w.walk(resolved.Params[key], typed, 0)
 		if e != nil {
@@ -129,6 +149,16 @@ func (w *httpWorkflow) renderRequest(r config.Request) (config.Request, error) {
 			value, e = normalizeJSONBytes(value)
 			if e != nil {
 				return r, e
+			}
+		}
+		if key == "body_file" || key == "response_file" {
+			name, err := templateString(value)
+			if err != nil {
+				return r, err
+			}
+			value, err = w.absoluteBodyFile(name)
+			if err != nil {
+				return r, err
 			}
 		}
 		params[key] = value
@@ -279,6 +309,11 @@ func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
 	return e
 }
 func (w *httpWorkflow) response(id, trigger string) (*HTTPHistoryEntry, error) {
+	for _, candidate := range w.collection.Requests {
+		if candidate.ID == id && candidate.Params["response_file"] != nil {
+			return nil, fmt.Errorf("response()不能读取流式文件输出请求，请选择内存响应或明确file()模板")
+		}
+	}
 	var r config.Request
 	found := false
 	for _, candidate := range w.collection.Requests {

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
 	"github.com/Live-yum/iotools/internal/sample"
 	"github.com/Live-yum/iotools/internal/tui"
@@ -27,6 +28,15 @@ func main() {
 }
 func run(args []string) error {
 	flags := flag.NewFlagSet("iotools", flag.ContinueOnError)
+	var fields, headers, queries, forms listFlag
+	var bodyOverride, bearerOverride, basicOverride optionalFlag
+	flags.Var(&fields, "set", "临时环境覆盖 name=value，可重复，不保存")
+	flags.Var(&headers, "header", "临时HTTP头 name=value，无等号删除，可重复")
+	flags.Var(&queries, "query", "临时query name=value，可重复同名")
+	flags.Var(&forms, "form", "临时表单字段 name=value，无等号删除")
+	flags.Var(&bodyOverride, "body", "临时正文，JSON先解析；不修改集合")
+	flags.Var(&bearerOverride, "bearer", "临时Bearer模板，建议环境引用")
+	flags.Var(&basicOverride, "basic", "临时Basic username:password模板，建议环境引用")
 	importFormat := flags.String("import", "", "导入 slumber/v3/rest/openapi/insomnia 到新集合，禁止覆盖")
 	input := flags.String("input", "", "导入源文件路径")
 	path := flags.String("file", "iotools.yaml", "请求集合 YAML 文件路径")
@@ -168,6 +178,33 @@ func run(args []string) error {
 			return e
 		}
 		return json.NewEncoder(os.Stdout).Encode(rows)
+	}
+	if len(fields)+len(headers)+len(queries)+len(forms) > 0 || bodyOverride.set || bearerOverride.set || basicOverride.set {
+		id := *request
+		if *curlRequest != "" {
+			id = *curlRequest
+		}
+		if id == "" {
+			return fmt.Errorf("临时覆盖需要 --run 或 --curl 请求ID")
+		}
+		found := false
+		for i, r := range c.Requests {
+			if r.ID == id {
+				updated, recipe, selected, e := engine.ApplyHTTPOverrides(c, r, *profile, makeOverrides(fields, headers, queries, forms, bodyOverride, bearerOverride, basicOverride))
+				if e != nil {
+					return e
+				}
+				updated.Requests = append([]config.Request(nil), c.Requests...)
+				updated.Requests[i] = recipe
+				c = updated
+				*profile = selected
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("找不到请求 %q", id)
+		}
 	}
 	if *validate {
 		fmt.Printf("配置校验通过：%d 个请求，%d 个环境\n", len(c.Requests), len(c.Profiles))

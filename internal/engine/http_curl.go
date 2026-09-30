@@ -142,9 +142,20 @@ func curlForRequest(r config.Request) (string, error) {
 			}
 		}
 	}
-	if body != "" {
+	if file := r.String("body_file", ""); file != "" {
+		args = append(args, "--data-binary")
+		if e = add("@" + file); e != nil {
+			return "", e
+		}
+	} else if body != "" {
 		args = append(args, "--data-binary")
 		if e = add(body); e != nil {
+			return "", e
+		}
+	}
+	if output := r.String("response_file", ""); output != "" {
+		args = append(args, "--output")
+		if e = add(output); e != nil {
 			return "", e
 		}
 	}

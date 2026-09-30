@@ -16,7 +16,11 @@ func (u *UI) authorizeChainWrite(ctx context.Context, r config.Request) (bool, e
 	}
 	answer := make(chan bool, 1)
 	u.App.QueueUpdateDraw(func() {
-		m := tview.NewModal().SetText(display("请求需要修改操作\n请求：" + r.ID + "\n方法：" + r.Action + "\n目标：" + r.Endpoint + "\n\n只批准本次步骤；取消会停止请求链。")).AddButtons([]string{"取消执行", "批准此步骤"})
+		fileNotice := ""
+		if file := r.String("body_file", ""); file != "" {
+			fileNotice = "\n将发送文件正文：" + file
+		}
+		m := tview.NewModal().SetText(display("请求需要修改操作\n请求：" + r.ID + "\n方法：" + r.Action + "\n目标：" + r.Endpoint + fileNotice + "\n\n只批准本次步骤；取消会停止请求链。")).AddButtons([]string{"取消执行", "批准此步骤"})
 		finish := func(allowed bool) {
 			u.pages.RemovePage("chain-confirm")
 			u.App.SetFocus(u.list)

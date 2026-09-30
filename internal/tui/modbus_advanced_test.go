@@ -194,7 +194,7 @@ func TestModbusPrivateExportAndCSV(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows[1][2] != "1" || rows[1][3] != "3" || !strings.HasPrefix(rows[1][4], "'=HYPERLINK") {
+	if rows[1][2] != "1" || rows[1][4] != "3" || !strings.HasPrefix(rows[1][5], "'=HYPERLINK") {
 		t.Fatalf("CSV precision/order/formula defense: %#v", rows)
 	}
 	path := filepath.Join(t.TempDir(), "dump.csv")

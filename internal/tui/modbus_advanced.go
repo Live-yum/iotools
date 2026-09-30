@@ -21,18 +21,19 @@ import (
 
 type modbusColumn struct{ key, label string }
 
-var modbusColumns = []modbusColumn{{"pin", "固定"}, {"address", "地址"}, {"label", "标签"}, {"u16", "u16"}, {"i16", "i16"}, {"hex", "十六进制"}, {"f32", "f32"}, {"delta", "快照差值"}, {"trend", "趋势(u16)"}, {"f64", "f64"}, {"u32_m10k", "u32 M10K"}, {"i32_m10k", "i32 M10K"}, {"custom", "规则结果"}, {"u8", "u8高/低"}, {"i8", "i8高/低"}, {"binary", "二进制"}, {"ascii", "ASCII"}, {"f16", "f16"}, {"bcd", "BCD"}, {"u32", "u32"}, {"i32", "i32"}, {"hex32", "十六进制32"}, {"bcd32", "BCD32"}, {"u64", "u64"}, {"i64", "i64"}}
+var modbusColumns = []modbusColumn{{"pin", "固定"}, {"address", "地址"}, {"label", "标签"}, {"u16", "u16"}, {"i16", "i16"}, {"hex", "十六进制"}, {"f32", "f32"}, {"delta", "快照差值"}, {"trend", "趋势(u16)"}, {"f64", "f64"}, {"u32_m10k", "u32 M10K"}, {"i32_m10k", "i32 M10K"}, {"custom", "规则结果"}, {"u8", "u8高/低"}, {"i8", "i8高/低"}, {"binary", "二进制"}, {"ascii", "ASCII"}, {"f16", "f16"}, {"bcd", "BCD"}, {"u32", "u32"}, {"i32", "i32"}, {"hex32", "十六进制32"}, {"bcd32", "BCD32"}, {"u64", "u64"}, {"i64", "i64"}, {"time", "采样时间(UTC)"}}
 
 type modbusAdvanced struct {
 	request    config.Request
 	columns    []string
 	widths     map[string]int
 	hexAddress bool
+	timeMode   string
 	keymap     map[string]rune
 }
 
-var modbusDefaultKeys = map[string]rune{"matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D'}
-var modbusActionLabels = map[string]string{"matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV"}
+var modbusDefaultKeys = map[string]rune{"matrix": 'm', "pin": 'p', "label": 'l', "filter": 'f', "baseline": 'd', "snapshot-save": 'S', "snapshot-open": 'O', "columns": 'C', "keymap": 'K', "import": 'I', "export": 'E', "dump": 'D', "more": 'M'}
+var modbusActionLabels = map[string]string{"matrix": "矩阵/表格", "pin": "固定寄存器", "label": "编辑标签", "filter": "仅固定项", "baseline": "差值基线", "snapshot-save": "保存快照", "snapshot-open": "快照对比", "columns": "列布局", "keymap": "快捷键", "import": "导入标注", "export": "导出标注", "dump": "导出CSV", "more": "完整配置/CSV对比/时间"}
 
 func modbusColumnExists(key string) bool {
 	for _, c := range modbusColumns {
@@ -60,7 +61,7 @@ func modbusParseColumns(raw any) ([]string, map[string]int, bool, error) {
 		return nil, nil, false, fmt.Errorf("columns必须是mapping")
 	}
 	for key := range cfg {
-		if key != "visible" && key != "widths" && key != "address_mode" {
+		if key != "visible" && key != "widths" && key != "address_mode" && key != "time_mode" {
 			return nil, nil, false, fmt.Errorf("未知columns选项:%s", key)
 		}
 	}
@@ -90,6 +91,9 @@ func modbusParseColumns(raw any) ([]string, map[string]int, bool, error) {
 			}
 			widths[key] = n
 		}
+	}
+	if value, exists := cfg["time_mode"]; exists && value != "read_at" && value != "ago" {
+		return nil, nil, false, fmt.Errorf("time_mode需read_at/ago")
 	}
 	mode := "decimal"
 	if value, ok := cfg["address_mode"]; ok {
@@ -147,7 +151,11 @@ func (v *inspector) modbusAdvancedReset(r config.Request) {
 		v.owner.setStatus("快捷键配置无效，使用默认键：" + keyErr.Error())
 		keys, _ = modbusParseKeymap(nil)
 	}
-	v.modbus = &modbusAdvanced{request: copyRequest(r), columns: cols, widths: widths, hexAddress: hex, keymap: keys}
+	timeMode := "read_at"
+	if columns, ok := r.Params["columns"].(map[string]any); ok && columns["time_mode"] == "ago" {
+		timeMode = "ago"
+	}
+	v.modbus = &modbusAdvanced{request: copyRequest(r), columns: cols, widths: widths, hexAddress: hex, keymap: keys, timeMode: timeMode}
 }
 func (v *inspector) modbusAdvancedKey(e *tcell.EventKey) *tcell.EventKey {
 	if v.protocol != "modbus" || v.modbus == nil || e.Key() != tcell.KeyRune || e.Modifiers() != tcell.ModNone {
@@ -169,6 +177,9 @@ func (v *inspector) modbusAdvancedKey(e *tcell.EventKey) *tcell.EventKey {
 		return e
 	}
 	switch action {
+	case "more":
+		v.modbusMoreMenu()
+		return nil
 	case "columns":
 		v.modbusColumnsPanel()
 		return nil
@@ -190,6 +201,8 @@ func (v *inspector) modbusAdvancedKey(e *tcell.EventKey) *tcell.EventKey {
 func (v *inspector) modbusCell(address int, key string) string {
 	row := v.values[address]
 	switch key {
+	case "time":
+		return modbusSampleTime(row, v.modbus.timeMode, time.Now())
 	case "pin":
 		if v.pins[address] {
 			return "*"
@@ -271,7 +284,7 @@ func (v *inspector) modbusSaveParams(changes map[string]any) error {
 	if err != nil {
 		return err
 	}
-	current, err := os.ReadFile(u.path)
+	current, err := modbusReadImport(u.path)
 	if err != nil {
 		return err
 	}
@@ -492,14 +505,14 @@ func (v *inspector) modbusDumpCSV() ([]byte, error) {
 	if len(v.values) == 0 {
 		return nil, fmt.Errorf("没有已读取数据")
 	}
-	columns := []string{"address", "u16", "label", "custom"}
+	columns := []string{"address", "time", "u16", "label", "custom"}
 	if v.modbus != nil && len(v.modbus.columns) > 0 {
 		columns = append([]string{}, v.modbus.columns...)
 		seen := map[string]bool{}
 		for _, key := range columns {
 			seen[key] = true
 		}
-		for _, key := range []string{"address", "u16"} {
+		for _, key := range []string{"address", "u16", "time"} {
 			if !seen[key] {
 				columns = append(columns, key)
 			}
@@ -517,11 +530,19 @@ func (v *inspector) modbusDumpCSV() ([]byte, error) {
 	}
 	sort.Ints(addresses)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	kind := strings.TrimPrefix(v.modbus.request.Action, "read-")
+	kind := modbusCSVType(v.modbus.request.Action)
+	if kind == "" {
+		return nil, fmt.Errorf("当前动作没有可导出的读取空间")
+	}
 	for _, address := range addresses {
 		row := []string{kind, now}
 		for _, key := range columns {
 			value := v.modbusCell(address, key)
+			if key == "time" {
+				if at, ok := v.values[address]["sampled_at"].(time.Time); ok {
+					value = at.UTC().Format(time.RFC3339Nano)
+				}
+			}
 			if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
 				if _, err := strconv.ParseFloat(value, 64); err != nil {
 					value = "'" + value
@@ -573,6 +594,10 @@ func (v *inspector) modbusExportForm(csvDump bool) {
 // Keep every button reachable by keyboard, including after mouse focus changes.
 func (v *inspector) modbusPanelKeys(close func(), panes []tview.Primitive, buttons *tview.Form) func(*tcell.EventKey) *tcell.EventKey {
 	return func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyF8 {
+			v.owner.stop()
+			return nil
+		}
 		if e.Key() == tcell.KeyEscape {
 			close()
 			return nil
