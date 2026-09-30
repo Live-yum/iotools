@@ -9,3 +9,14 @@
 *.key
 /private/
 /coverage.out
+
+# Android generated outputs
+android/.gradle/
+android/**/build/
+android/local.properties
+android/node_modules/
+android/app/src/main/jniLibs/
+android/app/src/main/assets/vendor/
+android/app/src/main/assets/docs/
+android/app/src/main/assets/LICENSE
+android/native-*.txt
