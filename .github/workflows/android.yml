@@ -48,6 +48,7 @@ jobs:
       - name: Build debug-signed standalone APK
         run: gradle -p android --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Verify APK signature and permissions
+        id: verify_apk
         run: |
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$tools/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/debug/app-debug.apk
@@ -80,21 +81,14 @@ jobs:
           disable-linux-hw-accel: ${{ env.ANDROID_HW_DISABLE }}
           emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -memory 1536 -gpu swiftshader_indirect ${{ env.ANDROID_EMULATOR_ACCEL }}
           emulator-boot-timeout: 1200
-          script: |
-            set +e
-            gradle -p android --no-daemon connectedDebugAndroidTest
-            test_status=$?
-            mkdir -p android-evidence
-            adb pull /sdcard/Android/data/io.github.liveyum.iotools/files/screenshots android-evidence/ || true
-            adb logcat -d > android-evidence/logcat.txt
-            echo "API=${{ env.ANDROID_TEST_API }} target=${{ env.ANDROID_TEST_TARGET }}" > android-evidence/platform.txt
-            exit "$test_status"
-      - name: Package verified APK
+          script: bash scripts/android/run-emulator-tests.sh
+      - name: Package built APK with verification reports
+        if: ${{ always() && steps.verify_apk.outcome == 'success' }}
         run: |
           mkdir -p android-dist
           cp android/app/build/outputs/apk/debug/app-debug.apk "android-dist/iotools-android-arm64-x86_64-$IOTOOLS_SHA-debug.apk"
           cp docs/android.md LICENSE android-dist/
-          (cd android-dist && sha256sum *.apk > SHA256SUMS)
+          (cd android-dist && sha256sum *.apk > SHA256SUMS && ls -lh *.apk)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
