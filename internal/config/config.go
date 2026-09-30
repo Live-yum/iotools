@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +108,11 @@ func (r Request) Int(k string, def int) int {
 		return int(n)
 	case float64:
 		return int(n)
+	case string:
+		i, e := strconv.Atoi(n)
+		if e == nil {
+			return i
+		}
 	}
 	return def
 }

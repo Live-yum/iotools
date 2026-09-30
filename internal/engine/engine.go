@@ -28,6 +28,9 @@ func Run(ctx context.Context, r config.Request, allowWrites bool, emit Emit) err
 	if r.Mutates() && !allowWrites {
 		return fmt.Errorf("%s is a write operation; explicit confirmation or --allow-writes is required", r.Action)
 	}
+	if e := validateParams(r); e != nil {
+		return e
+	}
 	d, e := r.Duration()
 	if e != nil {
 		return e

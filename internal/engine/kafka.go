@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/Live-yum/iotools/internal/config"
@@ -25,17 +26,17 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		case "schemas":
 			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects"
 		case "schema":
-			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + r.String("subject", "") + "/versions/" + r.String("version", "latest")
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + url.PathEscape(r.String("subject", "")) + "/versions/" + r.String("version", "latest")
 		case "register-schema":
 			h.Action = "POST"
-			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + r.String("subject", "") + "/versions"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/subjects/" + url.PathEscape(r.String("subject", "")) + "/versions"
 		case "connectors":
 			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors?expand=status&expand=info"
 		case "connector":
-			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + r.String("connector", "") + "/status"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + url.PathEscape(r.String("connector", "")) + "/status"
 		case "update-connector":
 			h.Action = "PUT"
-			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + r.String("connector", "") + "/config"
+			h.Endpoint = strings.TrimRight(r.Endpoint, "/") + "/connectors/" + url.PathEscape(r.String("connector", "")) + "/config"
 		}
 		return runHTTP(ctx, h, emit)
 	}

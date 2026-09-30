@@ -21,7 +21,9 @@ requests:
 
 Explicitly pass `--profile staging`. Missing variables fail before connecting.
 Profiles do not inherit values and template expansion is not recursive. YAML keys
-under `params` are protocol-specific. Unused params do not grant any permissions.
+under `params` are protocol-specific. Unknown params are rejected; malformed integer/boolean values fail before connecting.
+Exact decimal strings from profiles are supported for integer fields; booleans must
+be YAML true/false. Endpoint URLs must not embed username/password.
 
 ## Common TLS/auth
 

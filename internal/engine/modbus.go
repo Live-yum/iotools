@@ -115,6 +115,9 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 			rows := decodeRegisters(data, addr, r.String("word_order", "ABCD"))
 			send(emit, "registers", rows)
 		} else if r.Action == "read-coils" || r.Action == "read-discrete" {
+			if len(data) < (count+7)/8 {
+				return fmt.Errorf("truncated Modbus bit response")
+			}
 			bits := make([]bool, count)
 			for i := range bits {
 				bits[i] = data[i/8]&(1<<uint(i%8)) != 0
