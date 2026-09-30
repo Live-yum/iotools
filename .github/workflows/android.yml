@@ -54,6 +54,17 @@ jobs:
           "$tools/aapt" dump permissions android/app/build/outputs/apk/debug/app-debug.apk
           "$tools/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
           unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/.*/libiotools.so|assets/vendor/xterm'
+      - name: Detect already granted emulator acceleration
+        run: |
+          if test -r /dev/kvm && test -w /dev/kvm; then
+            echo "Existing KVM access is available; no permissions changed"
+            echo "ANDROID_EMULATOR_ACCEL=-accel on" >> "$GITHUB_ENV"
+            echo "ANDROID_HW_DISABLE=false" >> "$GITHUB_ENV"
+          else
+            echo "No existing KVM access; keeping software emulation"
+            echo "ANDROID_EMULATOR_ACCEL=-accel off" >> "$GITHUB_ENV"
+            echo "ANDROID_HW_DISABLE=true" >> "$GITHUB_ENV"
+          fi
       - name: Real emulator UI, protocol, editing and lifecycle tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -62,7 +73,8 @@ jobs:
           target: google_apis
           profile: pixel_2
           disable-animations: true
-          emulator-options: -no-window -no-audio -no-snapshot -gpu swiftshader_indirect -accel off
+          disable-linux-hw-accel: ${{ env.ANDROID_HW_DISABLE }}
+          emulator-options: -no-window -no-audio -no-snapshot -gpu swiftshader_indirect ${{ env.ANDROID_EMULATOR_ACCEL }}
           emulator-boot-timeout: 1200
           script: |
             gradle -p android --no-daemon connectedDebugAndroidTest
