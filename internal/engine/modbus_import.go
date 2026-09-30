@@ -28,13 +28,13 @@ type mtuiRegisters struct {
 
 func mtuiSection(action string) string {
 	switch action {
-	case "read-holding", "sweep-holding", "search-holding", "write-register", "write-registers", "write-typed":
+	case "read-holding", "sweep-holding", "search-holding", "write-register", "write-registers", "write-typed", "read-write-registers":
 		return "holdings"
-	case "read-input":
+	case "read-input", "sweep-input":
 		return "inputs"
-	case "read-coils", "write-coil", "write-coils":
+	case "read-coils", "sweep-coils", "write-coil", "write-coils":
 		return "coils"
-	case "read-discrete":
+	case "read-discrete", "sweep-discrete":
 		return "discretes"
 	}
 	return ""

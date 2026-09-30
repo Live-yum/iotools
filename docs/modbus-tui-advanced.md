@@ -54,7 +54,7 @@ Modbus结果表格。每个动作只保留一个有效按键；保存自定义�
 触发同一个动作。冲突（包括未改动的默认按键）拒绝保存。
 
 支持 matrix、pin、label、filter、baseline、snapshot-save、snapshot-open、
-columns、keymap、import、export、dump、more，以及[专用工作流](modbus-interactions.md)列出的19个动作。示例：
+columns、keymap、import、export、dump、more，以及[专用工作流](modbus-interactions.md)列出的19个动作及[协议工具](modbus-tools.md)的6个动作。示例：
 
 ```yaml
 params:
@@ -79,7 +79,7 @@ params:
 
 - 不读取系统剪贴板；可经明确确认写系统/终端剪贴板，或粘贴文本/使用本机文件
 - 完整配置可经M转换设备、启动范围和适用设置，明确预览追加四个只读请求；未转换的主题/API/策略逐项报告
-- 未提供上游全部32个动作的任意键重映射，只映射当前真实提供的32个原生动作（并非上游32个动作的一一对应）；安全按键固定
+- 未提供上游全部32个动作的任意键重映射，只映射当前真实提供的38个原生动作（并非上游32个动作的一一对应）；安全按键固定
 - time列和M时间选项提供UTC/相对时间；CSV区分采样和导出时刻，相对值在数据或视图重绘时更新
 - CSV现在覆盖线圈/离散输入，M可导入CSV快照；没有目标元数据时需要用户核对设备/unit
 

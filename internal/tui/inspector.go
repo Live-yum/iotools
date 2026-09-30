@@ -232,6 +232,9 @@ func (v *inspector) add(e engine.Event) {
 	if v.protocol == "modbus" {
 		e = v.modbusMoreEvent(e)
 		v.modbusCapture(e)
+		if v.modbusToolEvent(e) {
+			return
+		}
 	}
 	if v.protocol == "kafka" && v.kafkaEvent(e) {
 		return

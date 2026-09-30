@@ -203,8 +203,11 @@ func (v *inspector) snapshot(load bool) {
 			rows = append(rows, row)
 		}
 		snapshotAction := r.Action
-		if snapshotAction == "read-write-registers" {
+		if snapshotAction == "read-write-registers" || snapshotAction == "sweep-holding" {
 			snapshotAction = "read-holding"
+		}
+		if snapshotAction == "sweep-input" {
+			snapshotAction = "read-input"
 		}
 		now, e := engine.NewRegisterSnapshot(r.Endpoint, r.Int("unit", 1), snapshotAction, rows)
 		if e != nil {

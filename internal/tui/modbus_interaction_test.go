@@ -347,8 +347,8 @@ func TestModbusInteractionIntegerEditingAndDispatchSafety(t *testing.T) {
 		}
 		p.(*tview.Form).GetInputCapture()(tcell.NewEventKey(tcell.KeyEscape, 0, 0))
 	}
-	if len(modbusDefaultKeys) != 32 {
-		t.Fatal(fmt.Sprint("expected32 actual native actions, got ", len(modbusDefaultKeys)))
+	if len(modbusDefaultKeys) != 38 {
+		t.Fatal(fmt.Sprint("expected38 actual native actions, got ", len(modbusDefaultKeys)))
 	}
 }
 

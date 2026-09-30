@@ -44,7 +44,7 @@ func (u *UI) ensureModbusSession() *modbusSessionState {
 }
 func modbusActivityAction(action string) string {
 	switch action {
-	case "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "read-write-registers", "write-coil", "write-coils", "write-typed", "read-raw", "write-raw", "read-device-id", "scan-units", "sweep-holding", "search-holding":
+	case "read-holding", "read-input", "read-coils", "read-discrete", "write-register", "write-registers", "read-write-registers", "write-coil", "write-coils", "write-typed", "read-raw", "write-raw", "read-device-id", "scan-units", "sweep-holding", "sweep-input", "sweep-coils", "sweep-discrete", "search-holding":
 		return action
 	}
 	return "未知动作"

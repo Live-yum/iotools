@@ -17,7 +17,7 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 			return err
 		}
 	}
-	if r.Action == "scan-units" || r.Action == "sweep-holding" || r.Action == "search-holding" {
+	if r.Action == "scan-units" || r.Action == "sweep-holding" || r.Action == "sweep-input" || r.Action == "sweep-coils" || r.Action == "sweep-discrete" || r.Action == "search-holding" {
 		return runModbusRange(ctx, r, emit)
 	}
 	if r.Action == "read-raw" || r.Action == "write-raw" {

@@ -17,6 +17,18 @@ func (v *inspector) modbusDispatch(action string) {
 	u := v.owner
 	address, selected := v.modbusSelectedAddress()
 	switch action {
+	case "custom-rule":
+		v.modbusRuleForm(-1)
+	case "annotations":
+		v.modbusAnnotationPanel(false)
+	case "device-id":
+		v.modbusDeviceIDForm()
+	case "raw":
+		v.modbusRawForm()
+	case "sweep":
+		v.modbusRangeForm(false)
+	case "unit-scan":
+		v.modbusRangeForm(true)
 	case "go-to":
 		v.modbusGoToForm()
 	case "read-controls":
@@ -136,6 +148,10 @@ func (v *inspector) modbusDispatch(action string) {
 	}
 }
 func (v *inspector) modbusInteractionKey(e *tcell.EventKey) *tcell.EventKey {
+	e = v.modbusToolKey(e)
+	if e == nil {
+		return nil
+	}
 	if e.Key() == tcell.KeyEnter {
 		v.modbusDispatch("inspect")
 		return nil

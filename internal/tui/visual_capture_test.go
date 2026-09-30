@@ -152,4 +152,13 @@ func TestVisualCaptures(t *testing.T) {
 	u.pages.RemovePage("modbus-write")
 	u.inspector.modbusInspect(true)
 	capture("19-modbus-field-graph-small")
+	u.pages.RemovePage("modbus-inspect")
+	u.inspector.modbusRuleForm(10)
+	capture("20-modbus-rule-small")
+	u.pages.RemovePage("modbus-rule")
+	u.inspector.modbusDeviceIDForm()
+	capture("21-modbus-device-id-small")
+	u.pages.RemovePage("modbus-device-id")
+	u.inspector.modbusRangeForm(false)
+	capture("22-modbus-sweep-small")
 }

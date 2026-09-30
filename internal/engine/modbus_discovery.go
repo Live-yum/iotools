@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func modbusChildRequest(r config.Request) config.Request {
 	p := map[string]any{}
 	for k, v := range r.Params {
 		switch k {
-		case "units", "end_address", "match_value", "pdu_hex", "read_code", "object_id":
+		case "units", "end_address", "match_value", "pdu_hex", "read_code", "object_id", "sweep_cycles", "scan_type", "stop_first", "sweep_recover":
 			continue
 		}
 		p[k] = v
@@ -64,18 +65,43 @@ func runModbusRange(ctx context.Context, r config.Request, emit Emit) error {
 				return e
 			}
 			child := modbusChildRequest(r)
-			child.Action = "read-holding"
+			child.Action = r.String("scan_type", "read-holding")
+			switch child.Action {
+			case "read-holding", "read-input", "read-coils", "read-discrete":
+			default:
+				return fmt.Errorf("invalid scan_type")
+			}
 			child.Params["unit"] = unit
 			child.Params["address"] = address
-			child.Params["count"] = 1
+			child.Params["count"] = r.Int("count", 1)
+			if child.Int("count", 1) < 1 || child.Int("count", 1) > 125 || address+child.Int("count", 1) > 65536 {
+				return fmt.Errorf("invalid probe count/range")
+			}
 			probe, cancel := context.WithTimeout(ctx, time.Second)
-			err := runModbus(probe, child, nil)
+			values := []any{}
+			err := runModbus(probe, child, func(e Event) {
+				if e.Kind == "registers" {
+					for _, row := range e.Data.([]map[string]any) {
+						values = append(values, int(row["u16"].(uint16)))
+					}
+				}
+				if e.Kind == "bits" {
+					for _, bit := range e.Data.(map[string]any)["values"].([]bool) {
+						values = append(values, bit)
+					}
+				}
+			})
 			cancel()
-			result := map[string]any{"unit": unit, "responsive": err == nil, "simulated": r.Endpoint == "mock://local"}
+			result := map[string]any{"unit": unit, "responsive": err == nil, "simulated": r.Endpoint == "mock://local", "values": values, "type": child.Action, "address": address, "count": child.Int("count", 1)}
 			if err != nil {
 				result["error"] = err.Error()
+				var exception *modbus.ModbusError
+				result["exception"] = errors.As(err, &exception)
 			}
 			send(emit, "unit-probe", result)
+			if err == nil && r.Bool("stop_first") {
+				break
+			}
 		}
 		return ctx.Err()
 	}
@@ -96,41 +122,97 @@ func runModbusRange(ctx context.Context, r config.Request, emit Emit) error {
 			return e
 		}
 	}
+	readAction := "read-holding"
+	switch r.Action {
+	case "sweep-input":
+		readAction = "read-input"
+	case "sweep-coils":
+		readAction = "read-coils"
+	case "sweep-discrete":
+		readAction = "read-discrete"
+	case "sweep-holding", "search-holding":
+	default:
+		return fmt.Errorf("invalid range action")
+	}
+	cycles := r.Int("sweep_cycles", 1)
 	chunk := r.Int("count", 125)
-	for start := address; start <= end; start += chunk {
-		if e = ctx.Err(); e != nil {
-			return e
-		}
-		child := modbusChildRequest(r)
-		child.Action = "read-holding"
-		child.Params["address"] = start
-		count := chunk
-		if end-start+1 < count {
-			count = end - start + 1
-		}
-		child.Params["count"] = count
-		e = runModbus(ctx, child, func(event Event) {
-			if r.Action != "search-holding" {
-				if emit != nil {
+	if cycles < 1 || cycles > 1000 || chunk < 1 || chunk > 125 || (end-address+chunk)/chunk*cycles > 100000 {
+		return fmt.Errorf("range/cycles exceeds 100000 transactions or invalid count")
+	}
+	recoverReads := r.Bool("sweep_recover")
+	if recoverReads && (end-address+1)*cycles > 100000 {
+		return fmt.Errorf("recovery worst-case exceeds 100000 read transactions")
+	}
+	attempts, failedBatches, skippedPositions := 0, 0, 0
+	for cycle := 0; cycle < cycles; cycle++ {
+		recovering := false
+
+		for start := address; start <= end; {
+			if e = ctx.Err(); e != nil {
+				return e
+			}
+			child := modbusChildRequest(r)
+			child.Action = readAction
+			child.Params["address"] = start
+			count := chunk
+			if recovering {
+				count = 1
+			}
+			if end-start+1 < count {
+				count = end - start + 1
+			}
+			child.Params["count"] = count
+			attempts++
+			if attempts > 100000 {
+				return fmt.Errorf("read transaction budget exhausted")
+			}
+			e = runModbus(ctx, child, func(event Event) {
+				if r.Action != "search-holding" {
+					if emit != nil {
+						emit(event)
+					}
+					return
+				}
+				if event.Kind == "registers" {
+					for _, row := range event.Data.([]map[string]any) {
+						if row["u16"] == uint16(match) {
+							send(emit, "register-match", row)
+						}
+					}
+				} else if event.Kind == "simulation" && emit != nil {
 					emit(event)
 				}
-				return
-			}
-			if event.Kind == "registers" {
-				for _, row := range event.Data.([]map[string]any) {
-					if row["u16"] == uint16(match) {
-						send(emit, "register-match", row)
-					}
+			})
+			covered := count
+			if e != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
 				}
-			} else if event.Kind == "simulation" && emit != nil {
-				emit(event)
+				if !recoverReads {
+					return e
+				}
+				failedBatches++
+				skippedPositions++
+				recovering = true
+				covered = 1
+				send(emit, "sweep-error", map[string]any{"batch_address": start, "batch_count": count, "skipped_position": start, "error": e.Error(), "message": "batch failed; all requested values remain unknown; skipping this position does not prove this address alone failed"})
+			} else {
+				recovering = false
 			}
-		})
-		if e != nil {
-			return e
+			send(emit, "sweep-progress", map[string]any{"cycle": cycle + 1, "cycles": cycles, "through": start + covered - 1, "end_address": end, "transactions": attempts, "failed_batches": failedBatches, "skipped_positions": skippedPositions, "simulated": r.Endpoint == "mock://local"})
+			start += covered
 		}
-		send(emit, "sweep-progress", map[string]any{"through": start + count - 1, "end_address": end, "simulated": r.Endpoint == "mock://local"})
+		if cycle+1 < cycles {
+			wait := time.NewTimer(time.Duration(r.Int("interval_ms", 1000)) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				wait.Stop()
+				return ctx.Err()
+			case <-wait.C:
+			}
+		}
 	}
+
 	return nil
 }
 

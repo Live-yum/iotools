@@ -14,6 +14,12 @@ import (
 var modbusReadActions = []string{"read-holding", "read-input", "read-coils", "read-discrete"}
 
 func modbusReadAction(action string) string {
+	switch action {
+	case "sweep-input":
+		return "read-input"
+	case "sweep-discrete":
+		return "read-discrete"
+	}
 	for _, s := range modbusReadActions {
 		if s == action {
 			return s
@@ -27,7 +33,7 @@ func modbusReadAction(action string) string {
 func modbusReadRequest(r config.Request) config.Request {
 	r = copyRequest(r)
 	r.Action = modbusReadAction(r.Action)
-	for _, k := range []string{"value", "values", "value_type", "pdu_hex", "units", "end_address", "match_value", "read_code", "object_id", "write_log_previous", "read_address", "read_count"} {
+	for _, k := range []string{"value", "values", "value_type", "pdu_hex", "units", "end_address", "match_value", "read_code", "object_id", "write_log_previous", "read_address", "read_count", "sweep_cycles", "scan_type", "stop_first", "sweep_recover"} {
 		delete(r.Params, k)
 	}
 	return r
@@ -47,7 +53,12 @@ func (v *inspector) modbusSelectedAddress() (int, bool) {
 	return v.rows[row-1], true
 }
 func (v *inspector) modbusDialog(name string, form *tview.Form) func() {
-	close := func() { v.owner.pages.RemovePage(name); v.owner.App.SetFocus(v.table) }
+	close := func() {
+		v.owner.pages.RemovePage(name)
+		if front, _ := v.owner.pages.GetFrontPage(); front == "main" {
+			v.owner.App.SetFocus(v.table)
+		}
+	}
 	form.SetCancelFunc(close).SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
 		if e.Key() == tcell.KeyEscape {
 			close()
@@ -118,7 +129,7 @@ func (v *inspector) modbusSaveRead(r config.Request) error {
 			delete(saved.Params, k)
 		}
 	}
-	for _, k := range []string{"value", "values", "value_type", "pdu_hex", "units", "end_address", "match_value", "read_code", "object_id", "write_log_previous", "read_address", "read_count"} {
+	for _, k := range []string{"value", "values", "value_type", "pdu_hex", "units", "end_address", "match_value", "read_code", "object_id", "write_log_previous", "read_address", "read_count", "sweep_cycles", "scan_type", "stop_first", "sweep_recover"} {
 		delete(saved.Params, k)
 	}
 	b, err := config.ReplaceRequest(u.raw, saved.ID, saved)

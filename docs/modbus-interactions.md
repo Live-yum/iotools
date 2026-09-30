@@ -88,8 +88,8 @@ CLI仍需 `--allow-writes`，TUI仍需完整修改确认；`--read-only`始终�
 ## 实际动作分发与快捷键
 
 K配置仅限Modbus结果表。每个动作直接进入已实现工作流，绝不把自定义键重新投递
-成全局按键。现有本机动作加上本页工作流共有32个原生动作；这并非与上游32动作一一
-对应，尤其device/raw/sweep/rule专用弹窗和同会话pause/resume仍见[差异表](modbus-more.md)。
+成全局按键。现有本机动作加上本页工作流共有38个原生动作；这并非与上游32动作一一
+对应，设备/原始PDU/扫描/规则专用弹窗已补齐，见[协议工具](modbus-tools.md)；同会话pause/resume等仍见[差异表](modbus-more.md)。
 
 新动作名为 `go-to`、`read-controls`、`inspect`、`graph`、`write`、`word-order`、
 `unit`、`register-type`、`page-up`、`page-down`、`batch-decrease`、`batch-increase`、

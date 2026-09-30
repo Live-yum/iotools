@@ -97,6 +97,11 @@ func (v *inspector) modbusMoreMenu() {
 	list.AddItem("地址/标签跳转与读取设置", "/定位；R预览空间、地址、unit、窗口、字序与采样；不自动连接", 'r', func() { close(); v.modbusReadForm(nil) })
 	list.AddItem("寄存器详情/字段图", "v详情 g图表；同响应多词与规则，禁止混合旧值", 'v', func() { close(); v.modbusInspect(false) })
 	list.AddItem("类型/线圈写入编辑", "原始词预览后再次核对目标；只读模式与运行中禁止", 'e', func() { close(); v.modbusWriteForm() })
+	list.AddItem("结构化规则编辑 / 标注面板", "c规则、P标签/规则；同响应预览，明确保存/删除", 'k', func() { close(); v.modbusRuleForm(-1) })
+	list.AddItem("设备标识", "i选择FC43/14访问级别及对象，明确读取", 'd', func() { close(); v.modbusDeviceIDForm() })
+	list.AddItem("原始PDU请求", "j验证功能码/范围/十六进制；写入仍需确认", 'j', func() { close(); v.modbusRawForm() })
+	list.AddItem("有界全空间扫描", "B四空间区间与有限循环，F8取消", 'b', func() { close(); v.modbusRangeForm(false) })
+	list.AddItem("明确单元探测", "U最多32单元、四空间、首成功停止和结果选择", 'u', func() { close(); v.modbusRangeForm(true) })
 	list.AddItem("导入完整MTUI配置", "只生成四种只读请求；预览后明确保存；不会连接或启用API", 'i', func() { close(); v.modbusConfigImportForm() })
 	list.AddItem("CSV快照比较", "读取MTUI/原生CSV，与本次已收到数据对比；不自动读取设备", 'c', func() { close(); v.modbusCSVDiffForm() })
 	list.AddItem("采样时间显示", "绝对UTC/相对时间；接收响应时刻，非设备时钟", 't', func() { close(); v.modbusTimeForm() })
@@ -334,13 +339,13 @@ func (v *inspector) modbusCSVDiffForm() {
 }
 func modbusCSVType(action string) string {
 	switch action {
-	case "read-holding", "sweep-holding", "search-holding":
+	case "read-holding", "sweep-holding", "search-holding", "read-write-registers":
 		return "holding"
-	case "read-input":
+	case "read-input", "sweep-input":
 		return "input"
-	case "read-coils":
+	case "read-coils", "sweep-coils":
 		return "coil"
-	case "read-discrete":
+	case "read-discrete", "sweep-discrete":
 		return "discrete"
 	}
 	return ""
