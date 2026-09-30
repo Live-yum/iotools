@@ -1,0 +1,11 @@
+/dist/
+/iotools
+/iotools.exe
+/iotools.yaml
+*.local.yaml
+*.private.yaml
+.env*
+*.pem
+*.key
+/private/
+/coverage.out
