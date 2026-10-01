@@ -72,6 +72,10 @@ set_target_properties(${BINARY_NAME}
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+# JNI is only reached by Android's platform implementation. Do not bundle a
+# CI-JDK-dependent desktop library from that transitive optional FFI plugin.
+set(CMAKE_DISABLE_FIND_PACKAGE_JNI TRUE)
+set(JNI_FOUND FALSE)
 include(flutter/generated_plugins.cmake)
 
 

@@ -127,6 +127,9 @@ class _ExecutionReviewState extends State<_ExecutionReview>
           value is Map || value is List
               ? pretty(value)
               : value?.toString() ?? '—',
+          semanticsLabel: value is Map || value is List
+              ? pretty(value)
+              : value?.toString() ?? '—',
         ),
       ],
     ),
@@ -217,7 +220,8 @@ List<Widget> reviewParameters(BuildContext context, JsonMap request) {
     final bytes = utf8
         .encode(value is String ? value : exactEncode(value))
         .length;
-    final content = SelectableText(text, key: ValueKey('review_${entry.key}'));
+    final content = SelectableText(text, semanticsLabel: text,
+        key: ValueKey('review_${entry.key}'));
     widgets.add(
       Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),

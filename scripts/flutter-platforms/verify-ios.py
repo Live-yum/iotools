@@ -92,11 +92,32 @@ def select_simulator(devices, sdk_version):
     return choices[0]
 
 
+def simulator_xcode_settings(architecture):
+    require(architecture in ("arm64", "x86_64"), f"Unsupported simulator architecture: {architecture}")
+    # Match Flutter's explicit simulator SDK selection. The project defaults to
+    # iphoneos, and host-architecture substitutions must not change this bundle's
+    # already-verified single architecture when XCTest rebuilds the host.
+    return [
+        "xcrun", "xcodebuild", "-workspace", str(ROOT / "mobile/ios/Runner.xcworkspace"),
+        "-scheme", "Runner", "-configuration", "Debug", "-sdk", "iphonesimulator",
+        f"ARCHS={architecture}", "ONLY_ACTIVE_ARCH=YES",
+        f"BUILD_DIR={ROOT / 'mobile/build/ios'}", "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY=",
+    ]
+
+
+def simulator_test_command(udid, result, architecture):
+    return simulator_xcode_settings(architecture) + [
+        "test", "-destination", f"platform=iOS Simulator,id={udid},arch={architecture}",
+        "-parallel-testing-enabled", "NO", "-only-testing:RunnerTests", "-resultBundlePath", str(result),
+    ]
+
+
 def test_simulator(app, info, evidence, report, save):
     sdk_version = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version").strip()
     report["simulator_sdk"] = sdk_version
     save()
     devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
+    (evidence / "simulator-devices.json").write_text(json.dumps(devices, indent=2))
     runtime, selected = select_simulator(devices, sdk_version)
     udid = selected["udid"]
     if selected["state"] != "Booted":
@@ -124,15 +145,23 @@ def test_simulator(app, info, evidence, report, save):
     # UIDocumentPicker presentation. They do not automate saving to a provider.
     result = evidence / "host-tests.xcresult"
     require(not result.exists(), f"Refusing to overwrite existing test evidence: {result}")
-    command = [
-        "xcodebuild", "test", "-workspace", str(ROOT / "mobile/ios/Runner.xcworkspace"),
-        "-scheme", "Runner", "-configuration", "Debug", "-destination", f"platform=iOS Simulator,id={udid}",
-        "-parallel-testing-enabled", "NO", "-only-testing:RunnerTests", "-resultBundlePath", str(result),
-        f"BUILD_DIR={ROOT / 'mobile/build/ios'}", "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY=",
-    ]
+    architecture = report["architectures"][0]
+    command = simulator_test_command(udid, result, architecture)
     log = evidence / "host-tests.log"
     with log.open("w") as output:
         completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=1200)
+    if completed.returncode != 0:
+        # Preserve eligibility and resolved build settings on the actual runner;
+        # a destination error alone otherwise hides SDK/architecture filtering.
+        for action, name in [("-showdestinations", "xcode-destinations.log"),
+                             ("-showBuildSettings", "xcode-build-settings.log")]:
+            with (evidence / name).open("w") as output:
+                try:
+                    diagnostic = subprocess.run(simulator_xcode_settings(architecture) + [action],
+                                                stdout=output, stderr=subprocess.STDOUT, timeout=120)
+                    output.write(f"\nDiagnostic exit code: {diagnostic.returncode}\n")
+                except subprocess.TimeoutExpired:
+                    output.write("\nDiagnostic timed out after 120 seconds\n")
     require(completed.returncode == 0, f"iOS host tests failed; see {log}")
     require(result.exists(), "Xcode did not produce a test result bundle")
     # Xcode 16+ summary verifies tests actually ran rather than trusting exit 0.

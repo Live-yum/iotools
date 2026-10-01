@@ -55,6 +55,10 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+# JNI is transitive from Android path_provider and is never called on Windows.
+# Do not let a CI-only JDK create an unused dartjni.dll/JVM dependency.
+set(CMAKE_DISABLE_FIND_PACKAGE_JNI TRUE)
+set(JNI_FOUND FALSE)
 include(flutter/generated_plugins.cmake)
 
 
@@ -113,6 +117,7 @@ if(NOT EXISTS "${IOTOOLS_NATIVE_LIBRARY}")
   message(FATAL_ERROR "Build the iotools native core and set IOTOOLS_NATIVE_LIBRARY first")
 endif()
 install(FILES "${IOTOOLS_NATIVE_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+install(CODE "file(REMOVE \"${CMAKE_INSTALL_PREFIX}/dartjni.dll\")" COMPONENT Runtime)
 
 # Include CJK and emoji even when the Windows language packs omit them.
 set(IOTOOLS_FONTS "${CMAKE_CURRENT_SOURCE_DIR}/../native/fonts")

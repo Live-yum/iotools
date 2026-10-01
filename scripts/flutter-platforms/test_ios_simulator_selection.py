@@ -55,5 +55,32 @@ class SimulatorSelectionTests(unittest.TestCase):
                 verify_ios.select_simulator({}, version)
 
 
+class SimulatorTestCommandTests(unittest.TestCase):
+    def test_simulator_sdk_architecture_and_all_host_test_gates_are_explicit(self):
+        for architecture in ("arm64", "x86_64"):
+            with self.subTest(architecture=architecture):
+                result = Path("evidence/host-tests.xcresult")
+                command = verify_ios.simulator_test_command("test-device-id", result, architecture)
+                self.assertEqual(command[:2], ["xcrun", "xcodebuild"])
+                self.assertEqual(command[command.index("-sdk") + 1], "iphonesimulator")
+                self.assertEqual(command[command.index("-configuration") + 1], "Debug")
+                self.assertEqual(command[command.index("-scheme") + 1], "Runner")
+                self.assertEqual(command[command.index("-destination") + 1],
+                                 f"platform=iOS Simulator,id=test-device-id,arch={architecture}")
+                self.assertIn(f"ARCHS={architecture}", command)
+                self.assertIn("ONLY_ACTIVE_ARCH=YES", command)
+                self.assertIn("test", command)
+                self.assertIn("-only-testing:RunnerTests", command)
+                self.assertEqual(command[command.index("-parallel-testing-enabled") + 1], "NO")
+                self.assertEqual(command[command.index("-resultBundlePath") + 1], str(result))
+                for setting in ("CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY="):
+                    self.assertIn(setting, command)
+
+    def test_invalid_architecture_does_not_reach_xcodebuild(self):
+        for architecture in ("", "arm64e", "arm64 x86_64"):
+            with self.subTest(architecture=architecture), self.assertRaisesRegex(RuntimeError, "Unsupported simulator"):
+                verify_ios.simulator_test_command("test-device-id", Path("result.xcresult"), architecture)
+
+
 if __name__ == "__main__":
     unittest.main()

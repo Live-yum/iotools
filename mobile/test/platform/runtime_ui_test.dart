@@ -78,6 +78,8 @@ void main() {
           .data!;
       expect(body, contains('"number":18446744073709551615'));
       expect(body, contains('"string":"18446744073709551615"'));
+      expect(t.widget<SelectableText>(find.byKey(const ValueKey('review_json')))
+          .semanticsLabel, body, reason: 'Read-only review must expose exact values to screen readers before focus');
       life(t, AppLifecycleState.inactive);
       await t.pump();
       expect(find.text('确认执行写操作'), findsOneWidget);

@@ -17,11 +17,13 @@ if target == "linux":
     assert binary.read_bytes()[:4] == b"\x7fELF" and core.read_bytes()[:4] == b"\x7fELF"
     assert (bundle/"lib/libflutter_linux_gtk.so").is_file()
     assert (bundle/"lib/libapp.so").is_file()
+    assert not (bundle/"lib/libdartjni.so").exists(), 'Unexpected Android-only desktop JNI library'
 font_dir=bundle/('Contents/Resources/iotools-fonts' if target=='macos' else 'data/iotools-fonts')
 for name in ('NotoSansSC.ttf','NotoEmoji.ttf'):
     assert (font_dir/name).is_file(), name
 if target == "windows":
     assert binary.read_bytes()[:2] == b"MZ" and core.read_bytes()[:2] == b"MZ"
+    assert not (bundle/'dartjni.dll').exists(), 'Unexpected Android-only desktop JNI library'
 out=root/'platform-dist';out.mkdir(exist_ok=True)
 evidence=root/'platform-evidence';evidence.mkdir(exist_ok=True)
 if target=='linux':
@@ -39,6 +41,8 @@ if target=='macos':
 if target=='windows':
     for name in ('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll'):
         assert (bundle/name).is_file(),name
+    for name in ('Visual-C-Runtime-2015-2022-License-1.docx','Visual-Studio-2022-REDIST-official.html','provenance.json'):
+        assert (bundle/'licenses/Microsoft-Visual-C-Runtime'/name).is_file(), name
     result=subprocess.run(['objdump','-p',str(core)],check=True,capture_output=True,text=True)
     (evidence/'native-dll-imports.txt').write_text(result.stdout)
     imports=[line.split('DLL Name:',1)[1].strip() for line in result.stdout.splitlines() if 'DLL Name:' in line]

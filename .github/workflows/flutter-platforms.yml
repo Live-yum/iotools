@@ -59,6 +59,9 @@ jobs:
         run: |
           'C:\msys64\mingw64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
           'CC=gcc' | Out-File -FilePath $env:GITHUB_ENV -Append
+          $tokens = $null; $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'scripts/flutter-platforms/verify-windows-release.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
       - name: Install pinned official Flutter
         run: |
           git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
@@ -112,11 +115,19 @@ jobs:
           if (!$crt) { throw 'Official Visual C++ redistributable directory not found' }
           $out = 'mobile\build\windows\x64\runner\Release'
           foreach ($name in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') { Copy-Item (Join-Path $crt.FullName $name) $out }
+          python scripts/flutter-platforms/prepare-windows-notices.py $crt.FullName
       - name: Compile sandboxed macOS Flutter application
         if: matrix.target == 'macos'
         run: bash scripts/flutter-platforms/build-macos.sh '${{ matrix.arch }}'
       - name: Package real native bundle and dependency report
         run: python3 scripts/flutter-platforms/package-native.py '${{ matrix.target }}' '${{ matrix.arch }}'
+      - name: Exact packaged Windows Release GUI and JVM independence
+        if: matrix.target == 'windows'
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $zip = Get-Item "platform-dist/iotools-flutter-windows-amd64-$env:IOTOOLS_SHA.zip"
+          & scripts/flutter-platforms/verify-windows-release.ps1 -Archive $zip.FullName
       - uses: actions/upload-artifact@v4
         with:
           name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-${{ github.sha }}

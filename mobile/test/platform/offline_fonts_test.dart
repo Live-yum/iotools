@@ -35,6 +35,9 @@ void main() {
       for (final field in fields) {
         expect(field.style.fontFamilyFallback, offlineFontFallback);
       }
+      for (final text in tester.widgetList<SelectableText>(find.byType(SelectableText))) {
+        expect(text.semanticsLabel, text.data);
+      }
       expect(tester.takeException(), isNull);
     }
   }, variant: TargetPlatformVariant({TargetPlatform.linux, TargetPlatform.windows, TargetPlatform.macOS}));

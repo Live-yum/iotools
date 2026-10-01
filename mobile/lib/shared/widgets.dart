@@ -309,6 +309,7 @@ class DataView extends StatelessWidget {
     if (text.length > 16000) return PagedText(text);
     return SelectableText(
       text,
+      semanticsLabel: text,
       style: codeTextStyle(),
     );
   }
@@ -479,6 +480,7 @@ class _PagedTextState extends State<PagedText> {
         ),
         SelectableText(
           widget.text.substring(start, end),
+          semanticsLabel: widget.text.substring(start, end),
           style: codeTextStyle(),
         ),
       ],
