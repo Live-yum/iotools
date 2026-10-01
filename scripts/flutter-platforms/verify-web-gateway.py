@@ -69,8 +69,10 @@ class Target(http.server.BaseHTTPRequestHandler):
 
 
 class Gateway:
-    def __init__(self, origin):
+    def __init__(self, origin, evidence=None, process=None):
         self.origin = origin
+        self.evidence = evidence
+        self.process = process
         self.http = urllib.request.build_opener(
             urllib.request.ProxyHandler({}),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
@@ -83,6 +85,14 @@ class Gateway:
         self.csrf = data["csrf"]
         require(data["capabilities"]["native_protocols"] is True, "fake backend capability")
         require(data["capabilities"]["gateway_required"] is True, "missing gateway capability")
+
+    def record(self, value):
+        if self.evidence is not None:
+            with (self.evidence / 'events.jsonl').open('a', encoding='utf-8') as output:
+                output.write(json.dumps(value, ensure_ascii=False) + '\n')
+
+    def process_exit(self):
+        return self.process.poll() if self.process is not None else 'not_tracked'
 
     def request(self, method, path, body=None, headers=None):
         base = {"Origin": self.origin, "X-Iotools-CSRF": self.csrf}
@@ -151,10 +161,7 @@ def run_checks(gateway, target):
         require(headers.get("Access-Control-Allow-Origin") is None, "gateway enabled CORS")
         if asset == "/main.dart.js":
             require(len(body) > 100000, "not a compiled Flutter application")
-    for headers in ({"Origin": "https://evil.invalid"}, {"Host": "evil.invalid"},
-                    {"X-Iotools-CSRF": "wrong"}, {"Sec-Fetch-Site": "cross-site"}):
-        status, _, _ = gateway.request("POST", "/api/platform", b'{"method":"settings.get"}', headers)
-        require(status == 403, f"security boundary accepted {headers}")
+    check_security_boundaries(gateway)
     require(gateway.request("GET", "/private-file")[0] == 404, "unknown asset unexpectedly served")
     gateway.post("/api/open", {"path": "missing.json"}, ok=False)
     for path in ("../outside", "/etc/passwd", "C:/private", "a\\b", "CON.txt"):
@@ -242,13 +249,48 @@ def run_checks(gateway, target):
     print("PASS: packaged Flutter assets, same-origin/CSRF, real HTTP/exact JSON, confirmation/read-only/options, cancellation/lifecycle, files/ZIP/downloads and settings")
 
 
+def check_security_boundaries(gateway):
+    baseline = gateway.post('/api/platform', {'method': 'settings.get'})['data']
+    for name, headers in (('origin', {"Origin": "https://evil.invalid"}), ('host', {"Host": "evil.invalid"}),
+                          ('csrf', {"X-Iotools-CSRF": "wrong"}), ('cross-site', {"Sec-Fetch-Site": "cross-site"})):
+        # Log only the named invalid fixture override, never session/cookie/CSRF credentials.
+        event = {'stage': 'security-boundary', 'probe': name, 'override': headers,
+                 'method': 'POST', 'path': '/api/platform', 'expected_status': 403}
+        gateway.record(dict(event, state='started', process_exit=gateway.process_exit()))
+        try:
+            status, _, _ = gateway.request('POST', '/api/platform', b'{"method":"settings.get"}', headers)
+            event['status'] = status
+            require(status == 403, f'security boundary {name} returned {status}, expected403')
+            current = gateway.post('/api/platform', {'method': 'settings.get'})['data']
+            require(current == baseline, f'security boundary {name} changed settings')
+            require(Target.received.empty(), f'security boundary {name} performed protocol I/O')
+        except Exception as error:
+            event.update(state='failed', error_type=type(error).__name__, error=str(error),
+                         process_exit=gateway.process_exit(), protocol_requests=Target.received.qsize())
+            # Diagnosis is read-only and never changes the failed outcome or retries the bad request.
+            try:
+                current = gateway.post('/api/platform', {'method': 'settings.get'})['data']
+                event.update(subsequent_valid_read='passed', settings_unchanged=current == baseline)
+            except Exception as diagnostic_error:
+                event.update(subsequent_valid_read='failed', diagnostic_error=str(diagnostic_error))
+            event.update(process_exit_after_diagnostic=gateway.process_exit(),
+                         protocol_requests_after_diagnostic=Target.received.qsize())
+            gateway.record(event)
+            raise
+        gateway.record(dict(event, state='passed', process_exit=gateway.process_exit(),
+                            subsequent_valid_read='passed', settings_unchanged=True,
+                            protocol_requests=Target.received.qsize()))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable", type=Path)
     args = parser.parse_args()
     executable = args.executable.resolve(strict=True)
+    evidence = Path('platform-evidence/web-gateway')
+    evidence.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="iotools-web-smoke-") as directory:
-        log_path = Path(directory) / "gateway.log"
+        log_path = evidence / 'gateway.log'
         target = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Target)
         target.daemon_threads = True
         threading.Thread(target=target.serve_forever, daemon=True).start()
@@ -268,7 +310,15 @@ def main():
                         require(proc.poll() is None, f"gateway exited during startup: {content}")
                         time.sleep(0.05)
                     require(origin, f"gateway did not become ready: {content}")
-                    run_checks(Gateway(origin), target)
+                    gateway = Gateway(origin, evidence=evidence, process=proc)
+                    run_checks(gateway, target)
+                except Exception as error:
+                    (evidence / 'failure.json').write_text(json.dumps({
+                        'source_sha': os.environ.get('IOTOOLS_SHA'), 'error_type': type(error).__name__,
+                        'error': str(error), 'process_exit_before_cleanup': proc.poll(),
+                        'protocol_requests': Target.received.qsize(), 'gateway_log': 'gateway.log',
+                    }, indent=2), encoding='utf-8')
+                    raise
                 finally:
                     if proc.poll() is None:
                         # Windows terminate is a hard stop. POSIX SIGTERM verifies

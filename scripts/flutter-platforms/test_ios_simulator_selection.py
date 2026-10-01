@@ -125,48 +125,28 @@ class SimulatorTestCommandTests(unittest.TestCase):
         aligned = verify_ios.simulator_test_command("device-id", Path("result.xcresult"), "arm64")
         self.assertEqual(aligned, ["ONLY_ACTIVE_ARCH=NO" if part == "ONLY_ACTIVE_ARCH=YES" else part for part in baseline])
 
-    def test_preflight_records_both_targets_and_test_action_without_executing_tests(self):
+    def test_split_preflight_is_information_only_and_has_no_old_architecture_experiment(self):
         calls = []
         def command(args, **kwargs):
             calls.append(args)
             self.assertNotIn("-resultBundlePath", args)
-            self.assertTrue(set(args) & {"-help", "-showBuildSettings", "-showdestinations"})
-            self.assertLessEqual(kwargs["timeout"], 60)
-            if "-help" in args:
-                kwargs["stdout"].write("-showdestinations display a list of destinations\n")
+            self.assertTrue(set(args) & {"-showBuildSettings", "-showdestinations"})
+            self.assertLessEqual(kwargs["timeout"], 40)
+            self.assertNotIn("ONLY_ACTIVE_ARCH=YES", args)
             return subprocess.CompletedProcess(args, 0)
-        with tempfile.TemporaryDirectory() as directory, patch.object(verify_ios.subprocess, "run", side_effect=command):
+        with tempfile.TemporaryDirectory() as directory, patch.object(verify_ios.subprocess, "run", side_effect=command), \
+                patch.object(verify_ios, "remaining", return_value=40):
             evidence = Path(directory)
-            record = verify_ios.simulator_test_preflight("device-id", evidence / "result.xcresult", "arm64", evidence)
-            self.assertEqual(len(calls), 7)
-            for setting in ("ONLY_ACTIVE_ARCH=YES", "ONLY_ACTIVE_ARCH=NO"):
-                selected = [args for args in calls if setting in args]
-                self.assertEqual(len(selected), 3)
-                self.assertEqual(sum("-target" in args and "RunnerTests" in args for args in selected), 1)
-                self.assertEqual(sum("-scheme" in args and "-showBuildSettings" in args for args in selected), 1)
-                diagnostic = next(args for args in selected if "-showdestinations" in args)
-                self.assertIn("test", diagnostic)
-                self.assertIn("-only-testing:RunnerTests", diagnostic)
-                self.assertIn("ARCHS=arm64", diagnostic)
-                self.assertEqual(diagnostic[diagnostic.index("-destination") + 1], "platform=iOS Simulator,id=device-id")
+            build = verify_ios.simulator_xcode_settings("arm64") + [
+                "build-for-testing", "-destination", "generic/platform=iOS Simulator",
+                "-resultBundlePath", str(evidence / "build.xcresult")]
+            record = verify_ios.simulator_test_preflight("device-id", build, "arm64", evidence, 1200)
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(sum("-target" in args for args in calls), 1)
+            self.assertEqual(sum("build-for-testing" in args for args in calls), 2)
             self.assertEqual(record, json.loads((evidence / "xcode-test-command-comparison.json").read_text()))
-            self.assertFalse((evidence / "result.xcresult").exists())
-
-    def test_preflight_failure_cannot_claim_test_pass_or_retry_an_actual_test(self):
-        def command(args, **kwargs):
-            if "-help" in args:
-                return subprocess.CompletedProcess(args, 1)
-            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-        with tempfile.TemporaryDirectory() as directory, patch.object(verify_ios.subprocess, "run", side_effect=command) as run:
-            evidence = Path(directory)
-            record = verify_ios.simulator_test_preflight("device-id", evidence / "result.xcresult", "arm64", evidence)
-            self.assertFalse(record["showdestinations_supported_by_cli_help"])
-            self.assertEqual(run.call_count, 5)
             self.assertNotIn("host_tests", record)
-            self.assertNotIn("passed", record)
-            for call in run.call_args_list:
-                self.assertNotIn("test", call.args[0])
-            self.assertTrue(all(row["exit_code"] is None for name, row in record["diagnostics"].items() if name != "help"))
+            self.assertFalse((evidence / "build.xcresult").exists())
 
     def test_information_capture_rejects_bare_test_and_result_output(self):
         with tempfile.TemporaryDirectory() as directory:

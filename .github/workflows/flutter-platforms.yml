@@ -139,6 +139,7 @@ jobs:
           retention-days: 14
       - name: Build and verify host-native offline Web gateway
         run: |
+          python3 -B scripts/flutter-platforms/test_web_gateway_security.py
           bash scripts/flutter-platforms/build-web.sh '${{ matrix.target }}' '${{ matrix.arch }}'
           suffix=''
           if test '${{ matrix.target }}' = windows; then suffix=.exe; fi
@@ -229,7 +230,8 @@ jobs:
           python3 -B scripts/flutter-platforms/test_ios_simulator_selection.py
           python3 -B scripts/flutter-platforms/test_ios_notices.py
           python3 -B scripts/flutter-platforms/test_ios_build_scope.py
-          python3 scripts/flutter-platforms/select-ios-xcode.py
+          python3 -B scripts/flutter-platforms/test_ios_host_tests.py
+          python3 scripts/flutter-platforms/select-ios-xcode.py --freeze-xcode-16.4
       - name: Compile and statically verify the iOS simulator test/developer artifact
         run: |
           bash scripts/flutter-platforms/build-native.sh ios-simulator arm64

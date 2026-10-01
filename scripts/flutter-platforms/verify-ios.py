@@ -21,6 +21,7 @@ import time
 import zipfile
 
 from ios_release_gate import verify_production_bundle
+from ios_host_tests import run_host_tests as run_split_host_tests, remaining
 
 ROOT = Path(__file__).resolve().parents[2]
 SYMBOLS = {
@@ -124,23 +125,25 @@ def collect_notices(archive, architecture, out):
         return append_notices(archive, licenses)
 
 
-def verify_bundle(app, kind, evidence):
+def verify_bundle(app, kind, evidence, deadline=None):
+    def budget(seconds=120):
+        return seconds if deadline is None else min(seconds, remaining(deadline))
     require(app.is_dir(), f"Application missing: {app}")
     info = plistlib.loads((app / "Info.plist").read_bytes())
     exe = app / info["CFBundleExecutable"]
     require(exe.is_file() and exe.stat().st_size > 100000, "Runner executable is absent or implausibly small")
-    architectures = run("xcrun", "lipo", "-archs", str(exe)).split()
+    architectures = run("xcrun", "lipo", "-archs", str(exe), timeout=budget()).split()
     expected = "arm64" if kind == "device" else {"arm64": "arm64", "x86_64": "x86_64"}.get(platform.machine())
     require(expected and architectures == [expected], f"Expected one {expected} slice, found {architectures}")
-    symbols = set(run("xcrun", "nm", "-gUj", str(exe)).split())
+    symbols = set(run("xcrun", "nm", "-gUj", str(exe), timeout=budget()).split())
     require(SYMBOLS <= symbols, f"Process FFI symbols missing: {sorted(SYMBOLS - symbols)}")
-    build = run("xcrun", "vtool", "-show-build", str(exe))
+    build = run("xcrun", "vtool", "-show-build", str(exe), timeout=budget())
     (evidence / f"{kind}-mach-o-build.txt").write_text(build)
     sdk_platform = "IOSSIMULATOR" if kind == "simulator" else "IOS"
     require(re.search(rf"^\s*platform\s+{sdk_platform}\s*$", build, re.MULTILINE), f"Wrong Mach-O platform, expected {sdk_platform}")
     require(info.get("CFBundleIdentifier") == "io.github.liveyum.iotools", "Unexpected application bundle identifier")
     require(info.get("MinimumOSVersion") == "15.0", "App and native minimum iOS versions must agree at 15.0")
-    signature = subprocess.run(["codesign", "-dv", "--verbose=4", str(app)], text=True, capture_output=True, timeout=30)
+    signature = subprocess.run(["codesign", "-dv", "--verbose=4", str(app)], text=True, capture_output=True, timeout=budget(30))
     (evidence / f"{kind}-signature.txt").write_text(signature.stdout + signature.stderr)
     if kind == "device":
         require(signature.returncode != 0 and "not signed at all" in signature.stderr, "Device build was expected to be unsigned")
@@ -229,34 +232,52 @@ def xcode_information(command, evidence, name, timeout=60):
     return record
 
 
-def simulator_test_preflight(udid, result, architecture, evidence):
-    """Compare YES/NO discovery; execute the full XCTest gate only once later."""
+def simulator_test_preflight(udid, build_command, architecture, evidence, deadline):
+    """Information-only commands for the exact split route, sharing its budget."""
     comparison = {
-        "scope": "Controlled ONLY_ACTIVE_ARCH alignment; discovery is not XCTest acceptance or proof of root cause",
-        "architecture": architecture,
-        "baseline_command_not_executed": simulator_test_command(udid, result, architecture, only_active_arch="YES"),
-        "test_command": simulator_test_command(udid, result, architecture),
+        "scope": "Generic test compilation followed by concrete-UUID execution; discovery is not acceptance",
+        "combined_command_not_executed": simulator_test_command(udid, evidence / "host-tests.xcresult", architecture),
+        "build_for_testing_command": build_command,
         "diagnostics": {},
     }
-    # Preserve the selected Xcode's own documentation of the information option.
-    help_record = xcode_information(["xcrun", "xcodebuild", "-help"], evidence, "xcode-preflight-help.log", timeout=30)
-    comparison["diagnostics"]["help"] = help_record
-    supports_destinations = (help_record["exit_code"] == 0
-                             and "-showdestinations" in (evidence / help_record["log"]).read_text())
-    comparison["showdestinations_supported_by_cli_help"] = supports_destinations
-    for label, value in (("baseline", "YES"), ("aligned", "NO")):
-        for target, test_target in (("runner", False), ("runner-tests", True)):
-            command = simulator_xcode_settings(architecture, test_target=test_target, only_active_arch=value) + ["-showBuildSettings"]
-            name = f"xcode-preflight-{label}-{target}-settings.log"
-            comparison["diagnostics"][f"{label}-{target}"] = xcode_information(command, evidence, name)
-        if supports_destinations:
-            # The information flag suppresses execution. Omit resultBundlePath
-            # so this action-specific query cannot occupy the real test result.
-            command = simulator_test_command(udid, result, architecture, only_active_arch=value)[:-2] + ["-showdestinations"]
-            name = f"xcode-preflight-{label}-test-destinations.log"
-            comparison["diagnostics"][f"{label}-test-destinations"] = xcode_information(command, evidence, name)
+    information = build_command[:-2]  # Omit the real build resultBundlePath.
+    target = [part for part in simulator_xcode_settings(architecture, test_target=True)
+              if not part.startswith("BUILD_DIR=")]
+    target += [part for part in build_command if part.startswith(("BUILD_DIR=", "SYMROOT="))]
+    for label, command in (("runner", information + ["-showBuildSettings"]),
+                           ("runner-tests", target + ["-showBuildSettings"]),
+                           ("build-destinations", information + ["-showdestinations"])):
+        comparison["diagnostics"][label] = xcode_information(
+            command, evidence, f"xcode-preflight-{label}.log", timeout=min(60, remaining(deadline)))
     (evidence / "xcode-test-command-comparison.json").write_text(json.dumps(comparison, indent=2))
     return comparison
+
+
+def normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid, deadline=None):
+    def budget(seconds):
+        return seconds if deadline is None else min(seconds, remaining(deadline))
+    devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json", timeout=budget(120)))["devices"]
+    runtime, selected = select_simulator(devices, sdk_version, udid)
+    if selected["state"] != "Booted":
+        simulator_operation(evidence, 'simulator-boot', "xcrun", "simctl", "boot", udid, timeout=budget(120))
+    simulator_operation(evidence, 'simulator-bootstatus', "xcrun", "simctl", "bootstatus", udid, "-b", timeout=budget(300))
+    simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app), timeout=budget(120))
+    # Terminate any prior run without uninstalling or erasing simulator contents.
+    subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=budget(30))
+    launch = simulator_operation(evidence, 'simulator-launch', "xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=budget(60)).strip()
+    report["normal_launch"] = {"simulator": selected["name"], "udid": udid, "runtime": runtime, "launch": launch}
+    save()
+    try:
+        require(budget(120) >= 5, "Host gate has insufficient time for normal launch")
+        time.sleep(5)
+        services = run("xcrun", "simctl", "spawn", udid, "launchctl", "list", timeout=budget(120))
+        (evidence / "simulator-services.txt").write_text(services)
+        require(any(info["CFBundleIdentifier"] in line and line.split()[0].isdigit() for line in services.splitlines()), "App exited after launch")
+        run("xcrun", "simctl", "io", udid, "screenshot", str(evidence / "normal-launch.png"), timeout=budget(120))
+        report["normal_launch"]["still_running_after_seconds"] = 5
+    finally:
+        subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=budget(30))
+    save()
 
 
 def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
@@ -265,76 +286,48 @@ def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
     save()
     devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
     (evidence / "simulator-devices.json").write_text(json.dumps(devices, indent=2))
-    runtime, selected = select_simulator(devices, sdk_version, os.environ.get("IOTOOLS_IOS_SIMULATOR_UDID"))
+    _, selected = select_simulator(devices, sdk_version, os.environ.get("IOTOOLS_IOS_SIMULATOR_UDID"))
     udid = selected["udid"]
-    if selected["state"] != "Booted":
-        simulator_operation(evidence, 'simulator-boot', "xcrun", "simctl", "boot", udid)
-    simulator_operation(evidence, 'simulator-bootstatus', "xcrun", "simctl", "bootstatus", udid, "-b", timeout=300)
-    simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app))
-    # Terminate any prior run without uninstalling or erasing simulator contents.
-    subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=30)
-    launch = simulator_operation(evidence, 'simulator-launch', "xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=60).strip()
-    report["normal_launch"] = {"simulator": selected["name"], "udid": udid, "runtime": runtime, "launch": launch}
-    save()
-    try:
-        time.sleep(5)
-        services = run("xcrun", "simctl", "spawn", udid, "launchctl", "list")
-        (evidence / "simulator-services.txt").write_text(services)
-        require(any(info["CFBundleIdentifier"] in line and line.split()[0].isdigit() for line in services.splitlines()), "App exited after launch")
-        run("xcrun", "simctl", "io", udid, "screenshot", str(evidence / "normal-launch.png"))
-        report["normal_launch"]["still_running_after_seconds"] = 5
-    finally:
-        subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=30)
-    save()
-
     if not run_host_tests:
+        normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid)
         report['remaining_gates'] = [
             'All five native host XCTest cases: separate required CI gate',
             'Flutter full protocol interaction and document-provider save/reimport',
             'Signed physical-iPhone and real-network/device acceptance',
         ]
         save()
-        return
+        return app
 
-    # Host tests exercise dlsym of the real linked Go archive, open/command/free,
-    # pause/resume/close, private-path/size/cancellation boundaries and actual
-    # UIDocumentPicker presentation. They do not automate saving to a provider.
-    result = evidence / "host-tests.xcresult"
-    require(not result.exists(), f"Refusing to overwrite existing test evidence: {result}")
     architecture = report["architectures"][0]
-    command = simulator_test_command(udid, result, architecture)
-    simulator_test_preflight(udid, result, architecture, evidence)
-    report["xctest_preflight"] = "xcode-test-command-comparison.json"
-    save()
-    log = evidence / "host-tests.log"
-    with log.open("w") as output:
-        completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=1200)
-    if completed.returncode != 0:
-        # Preserve eligibility and resolved build settings on the actual runner;
-        # a destination error alone otherwise hides SDK/architecture filtering.
+    report["preliminary_runner_sha256"] = report["runner_sha256"]
+    def launch_host(host, deadline):
+        host_info, host_details = verify_bundle(host, "simulator", evidence, deadline)
+        report.update(host_details, actual_test_host=str(host))
+        save()
+        normal_launch_simulator(host, host_info, evidence, report, save, sdk_version, udid, deadline)
+    try:
+        host_result = run_split_host_tests(ROOT, evidence, udid, architecture,
+                                          simulator_xcode_settings(architecture), launch_host,
+                                          lambda command, deadline: simulator_test_preflight(
+                                              udid, command, architecture, evidence, deadline))
+    except Exception:
         for action, name, test_target in [("-showdestinations", "xcode-destinations.log", False),
                                           ("-showBuildSettings", "xcode-build-settings.log", False),
                                           ("-showBuildSettings", "xcode-runner-tests-build-settings.log", True)]:
-            with (evidence / name).open("w") as output:
-                try:
-                    diagnostic = subprocess.run(simulator_xcode_settings(architecture, test_target=test_target) + [action],
-                                                stdout=output, stderr=subprocess.STDOUT, timeout=120)
-                    output.write(f"\nDiagnostic exit code: {diagnostic.returncode}\n")
-                except subprocess.TimeoutExpired:
-                    output.write("\nDiagnostic timed out after 120 seconds\n")
-    require(completed.returncode == 0, f"iOS host tests failed; see {log}")
-    require(result.exists(), "Xcode did not produce a test result bundle")
-    # Xcode 16+ summary verifies tests actually ran rather than trusting exit 0.
-    summary = json.loads(run("xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)))
-    (evidence / "host-tests-summary.json").write_text(json.dumps(summary, indent=2))
-    require(summary.get("failedTests") == 0 and summary.get("passedTests", 0) >= 5, "Expected all five iOS host tests to run and pass")
+            xcode_information(simulator_xcode_settings(architecture, test_target=test_target) + [action],
+                              evidence, name, timeout=120)
+        raise
     report["host_tests"] = {
-        "passed": summary["passedTests"], "failed": summary["failedTests"],
+        "passed": host_result["passed"], "failed": host_result["failed"], "skipped": host_result["skipped"],
+        "passed_identifiers": host_result["passed_identifiers"],
         "scope": "Actual process Go C ABI and lifecycle; export private-path, size, cancellation; real system picker presentation",
-        "result_bundle": result.name,
+        "result_bundle": host_result["result_bundle"], "phase_evidence": "host-test-phases.json",
+        "products": host_result["products"],
     }
     report["remaining_gates"] = ["User-selected document-provider save and reimport", "Flutter full protocol interaction on iOS", "Signed physical-iPhone and real-network/device acceptance"]
     save()
+    # Package the same host that was normally launched and actually tested.
+    return Path(host_result["products"]["host"]["bundle"])
 
 
 def main():
@@ -363,7 +356,7 @@ def main():
             report['remaining_gates'] = ['Simulator installation and normal launch', 'All five required host XCTest cases',
                                        'User-selected document-provider save/reimport and full protocol UI acceptance']
         elif args.kind != "device":
-            test_simulator(app, info, evidence, report, save,
+            app = test_simulator(app, info, evidence, report, save,
                            run_host_tests=args.kind != 'simulator-build')
         else:
             dependency_evidence = evidence / 'device-release-dependencies.json'

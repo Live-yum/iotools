@@ -4,8 +4,11 @@
 Run after Flutter's iOS --config-only preparation. Select the current Xcode when
 eligible, otherwise the already-installed Xcode 26.2. simctl, xcdevice and
 xcodebuild must all list the same available, SDK/architecture-matched simulator.
+Pass --freeze-xcode-16.4 to require the installed 16.4/16F6 toolchain, iOS 18.5
+SDK and an arm64 iPhone SE (3rd generation), with no fallback.
 """
 
+import argparse
 from datetime import datetime, timezone
 import json
 import os
@@ -17,6 +20,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 ALTERNATE = Path("/Applications/Xcode_26.2.app/Contents/Developer")
+FROZEN_DEVELOPER_DIR = Path("/Applications/Xcode_16.4.app/Contents/Developer")
+FROZEN_MODEL_NAME = "iPhone SE (3rd generation)"
 
 
 def release(version):
@@ -103,8 +108,11 @@ def probe_commands(architecture):
     }
 
 
-def probe(developer_dir, label, evidence, architecture):
+def probe(developer_dir, label, evidence, architecture, freeze_xcode_16_4=False):
     candidate = {"developer_dir": str(developer_dir), "queries": {}, "eligible_simulators": []}
+    if freeze_xcode_16_4 and (developer_dir != FROZEN_DEVELOPER_DIR or architecture != "arm64"):
+        candidate["error"] = "Frozen selection requires the fixed installed Xcode 16.4 path and an arm64 host"
+        return candidate
     if not developer_dir.is_dir():
         candidate["error"] = "Xcode is not already installed at this path"
         return candidate
@@ -140,20 +148,36 @@ def probe(developer_dir, label, evidence, architecture):
             raise ValueError("xcodebuild did not report an Xcode version and build")
         if label == "xcode-26.2" and candidate["xcode_version"].splitlines()[:1] != ["Xcode 26.2"]:
             raise ValueError("The fixed Xcode 26.2 path did not report Xcode 26.2")
+        if freeze_xcode_16_4:
+            if candidate["xcode_version"] != "Xcode 16.4\nBuild version 16F6":
+                raise ValueError("Frozen selection requires exactly Xcode 16.4 build 16F6")
+            if candidate["simulator_sdk"] != "18.5":
+                raise ValueError("Frozen selection requires exactly the iOS simulator SDK 18.5")
         candidate["eligible_simulators"] = eligible_simulators(
             outputs["destinations"], json.loads(outputs["simctl"])["devices"],
             json.loads(outputs["xcdevice"]), candidate["simulator_sdk"], architecture)
+        if freeze_xcode_16_4:
+            candidate["eligible_simulators"] = [
+                device for device in candidate["eligible_simulators"]
+                if device["name"] == FROZEN_MODEL_NAME
+                and device["xcode_destination"].get("name") == FROZEN_MODEL_NAME
+                and device["xcdevice"].get("name") == FROZEN_MODEL_NAME
+                and device["xcdevice"].get("modelCode") == "iPhone14,6"
+            ]
         if not candidate["eligible_simulators"]:
-            candidate["error"] = "No available SDK/architecture-matched iPhone agrees across simctl, xcdevice and xcodebuild destinations"
+            model = FROZEN_MODEL_NAME if freeze_xcode_16_4 else "iPhone"
+            candidate["error"] = f"No available SDK/architecture-matched {model} agrees across simctl, xcdevice and xcodebuild destinations"
     except (ValueError, KeyError, TypeError) as error:
         candidate["error"] = f"Invalid discovery evidence: {error}"
     return candidate
 
 
-def choose_candidate(candidates):
+def choose_candidate(candidates, freeze_xcode_16_4=False):
     for candidate in candidates:
         if not candidate.get("error") and candidate.get("eligible_simulators"):
             return candidate
+    if freeze_xcode_16_4:
+        raise RuntimeError("The frozen Xcode 16.4/16F6, SDK 18.5, arm64 iPhone SE (3rd generation) selection is unavailable; no fallback is allowed; see xcode-selection.json and discovery logs")
     raise RuntimeError("Neither the current Xcode nor installed Xcode 26.2 exposes an eligible simulator; see xcode-selection.json and discovery logs")
 
 
@@ -167,26 +191,37 @@ def write_environment(path, selected):
             output.write(f"{key}={value}\n")
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--freeze-xcode-16.4", dest="freeze_xcode_16_4", action="store_true",
+                        help="Require installed Xcode 16.4/16F6, SDK 18.5 and an arm64 SE3; write the observed UUID to GITHUB_ENV without fallback")
+    args = parser.parse_args(argv)
     if platform.system() != "Darwin":
         raise RuntimeError("Installed Xcode discovery requires a macOS runner")
     if not (ROOT / "mobile/ios/Pods/Pods.xcodeproj").is_dir():
         raise RuntimeError("Prepare Flutter iOS dependencies with flutter build ios --simulator --debug --no-codesign --config-only first")
     evidence = ROOT / "platform-evidence/ios"
     evidence.mkdir(parents=True, exist_ok=True)
-    current = os.environ.get("DEVELOPER_DIR") or subprocess.check_output(["xcode-select", "-p"], text=True, timeout=30).strip()
-    candidates = [("current", Path(current)), ("xcode-26.2", ALTERNATE)]
+    if args.freeze_xcode_16_4:
+        candidates = [("xcode-16.4", FROZEN_DEVELOPER_DIR)]
+    else:
+        current = os.environ.get("DEVELOPER_DIR") or subprocess.check_output(["xcode-select", "-p"], text=True, timeout=30).strip()
+        candidates = [("current", Path(current)), ("xcode-26.2", ALTERNATE)]
     report = {"source_sha": os.environ.get("IOTOOLS_SHA", "local"),
-              "observed_at": datetime.now(timezone.utc).isoformat(), "status": "running", "candidates": []}
+              "observed_at": datetime.now(timezone.utc).isoformat(), "status": "running", "candidates": [],
+              "selection_mode": "freeze-xcode-16.4" if args.freeze_xcode_16_4 else "default"}
     try:
+        if args.freeze_xcode_16_4 and not os.environ.get("GITHUB_ENV"):
+            raise RuntimeError("Frozen selection requires GITHUB_ENV to preserve the toolchain and observed simulator UUID for this job")
         seen = set()
         for label, path in candidates:
-            path = path.resolve()
+            if not args.freeze_xcode_16_4:
+                path = path.resolve()
             if path in seen:
                 continue
             seen.add(path)
-            report["candidates"].append(probe(path, label, evidence, platform.machine()))
-        selected = choose_candidate(report["candidates"])
+            report["candidates"].append(probe(path, label, evidence, platform.machine(), args.freeze_xcode_16_4))
+        selected = choose_candidate(report["candidates"], args.freeze_xcode_16_4)
         report.update(status="selected", developer_dir=selected["developer_dir"],
                       simulator_sdk=selected["simulator_sdk"], simulator=selected["eligible_simulators"][0])
         github_env = os.environ.get("GITHUB_ENV")

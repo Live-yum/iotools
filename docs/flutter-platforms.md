@@ -14,11 +14,26 @@ CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7�
 
 `IOTOOLS_SHA` 将写入产物和 manifest。CI 包含下载包 SHA256 与平台依赖证据。不要单凭编译成功推断所有协议或物理设备已验收。
 
-iOS XCTest 命令单独使用 `ONLY_ACTIVE_ARCH=NO`，同时继续固定 `ARCHS` 为已验证应用的唯一架构。
-[Apple 构建设置说明](https://developer.apple.com/documentation/xcode/build-settings-reference)将 `ARCHS` 定义为产物架构列表；关闭 active-only 限制不会加入该列表之外的架构。
-这是针对测试目标与宿主设置差异的受控尝试，不代表已经确定模拟器目的地发现失败的原因。
-测试前记录原 `YES` 与当前 `NO` 命令、Runner/RunnerTests 设置及 `test -showdestinations` 只读诊断；后者需当前 Xcode 的 `-help` 确认该信息选项。
-只执行一次真实 XCTest，保留相同模拟器 UUID、SDK、原有超时和全部五项断言；诊断输出不能代替通过结果。
+iOS 宿主测试当前采用一次受控的两阶段流程：先以 `generic/platform=iOS Simulator` 执行
+`build-for-testing`，再用其原始、未修改的 `.xctestrun` 对当次选定的具体 UUID 执行
+`test-without-building`。[Apple 命令说明](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
+和[固定 Flutter 3.35.7 的说明](https://github.com/flutter/flutter/blob/adc901062556672b4138e18a4dc62a4be8f4b3c2/packages/integration_test/README.md#L321-L340)
+支持构建与执行分离；[Bitrise 官方构建测试说明](https://docs.bitrise.io/en/bitrise-ci/testing/testing-ios-apps/building-an-ios-app-for-testing)
+明确使用上述 generic simulator 构建目的地。编译成功不能代替 XCTest 执行成功。
+
+此轮选择器使用 `--freeze-xcode-16.4`，仅允许已安装的 Xcode 16.4 / build 16F6、SDK 18.5、arm64，
+并要求当次 simctl、xcdevice、xcodebuild 三方均列出可用的 iPhone SE（第三代）。UUID 来自当次清单，
+不会假设不同 CI 机器共享 UUID；选择后在本 job 内固定，缺失时失败，不切换工具链或模拟器。
+仍保留 Debug、`ARCHS=arm64`、`ONLY_ACTIVE_ARCH=NO` 和原来的五项 Swift 断言；先前仅调整 active-only
+设置没有解决目的地错误，本流程不宣称已确定其根因。
+
+构建目录为 `mobile/build/ios-host-tests`，不放入证据上传目录。只接受新生成且仅包含启用 RunnerTests
+目标的描述文件；记录源提交、未改动源文件/原生归档、实际宿主与测试包路径及可执行文件哈希。
+证据目录保存描述文件原始副本，执行仍用构建位置的原文件以保持 `__TESTROOT__` 正确。
+实际生成的测试宿主只进行一次普通安装/启动及五秒存活检查，然后运行全部五项 XCTest；两阶段、
+中间启动操作及结果校验共用 1200 秒预算，失败不重试、不回退、不跳过断言。
+必须验证五个原始用例各成功一次、零失败、零跳过，并确认结果中的模拟器 UUID；只有该实际宿主可进入
+verified ZIP。它与此前仅静态编译的测试开发包分别记录哈希，两者均含测试通道，不作为生产设备包。
 
 ## 安全边界
 
