@@ -172,7 +172,7 @@ def simulator_test_command(udid, result, architecture):
     ]
 
 
-def test_simulator(app, info, evidence, report, save):
+def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
     sdk_version = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version").strip()
     report["simulator_sdk"] = sdk_version
     save()
@@ -199,6 +199,15 @@ def test_simulator(app, info, evidence, report, save):
     finally:
         subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=30)
     save()
+
+    if not run_host_tests:
+        report['remaining_gates'] = [
+            'All five native host XCTest cases: separate required CI gate',
+            'Flutter full protocol interaction and document-provider save/reimport',
+            'Signed physical-iPhone and real-network/device acceptance',
+        ]
+        save()
+        return
 
     # Host tests exercise dlsym of the real linked Go archive, open/command/free,
     # pause/resume/close, private-path/size/cancellation boundaries and actual
@@ -240,12 +249,12 @@ def test_simulator(app, info, evidence, report, save):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=["simulator", "device"])
+    parser.add_argument("kind", choices=["simulator", "simulator-build", "device"])
     args = parser.parse_args()
     require(platform.system() == "Darwin", "This verifies actual Xcode products and can run only on macOS")
     revision = os.environ.get("IOTOOLS_SHA", "")
     require(re.fullmatch(r"[a-zA-Z0-9._-]+", revision), "IOTOOLS_SHA must identify the source revision")
-    app = ROOT / "mobile/build/ios" / ("iphonesimulator" if args.kind == "simulator" else "iphoneos") / "Runner.app"
+    app = ROOT / "mobile/build/ios" / ("iphoneos" if args.kind == "device" else "iphonesimulator") / "Runner.app"
     out = ROOT / "platform-dist"
     evidence = ROOT / "platform-evidence/ios"
     out.mkdir(exist_ok=True)
@@ -254,21 +263,30 @@ def main():
     def save():
         (evidence / f"{args.kind}.json").write_text(json.dumps(report, indent=2))
     try:
-        info, details = verify_bundle(app, args.kind, evidence)
+        bundle_kind = 'device' if args.kind == 'device' else 'simulator'
+        info, details = verify_bundle(app, bundle_kind, evidence)
         report.update(details, bundle_id=info["CFBundleIdentifier"])
         save()
-        if args.kind == "simulator":
-            test_simulator(app, info, evidence, report, save)
+        if args.kind != "device":
+            test_simulator(app, info, evidence, report, save,
+                           run_host_tests=args.kind != 'simulator-build')
         else:
             report["remaining_gates"] = ["Signing with user's own Apple identity", "Physical-iPhone runtime and full-protocol acceptance"]
         archive = out / f"ios-{args.kind}-{revision}.zip"
         run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive), timeout=300)
         report['licenses'] = collect_notices(archive, report['architectures'][0], out)
-        report.update(status="passed_for_stated_scope", bytes=archive.stat().st_size, sha256=sha256(archive))
+        report.update(status='compiled_and_normally_launched_only' if args.kind == 'simulator-build'
+                      else "passed_for_stated_scope", bytes=archive.stat().st_size, sha256=sha256(archive))
+        (out / f"ios-{args.kind}-{revision}-manifest.json").write_text(json.dumps(report, indent=2))
+        scope = ("此包仅验证模拟器编译、Mach-O/FFI 静态符号及普通启动；独立必需的 XCTest 门禁未由此包宣称通过。\n"
+                 if args.kind == 'simulator-build' else
+                 "模拟器完整门禁覆盖普通启动、真实 Go ABI/生命周期、导出边界和系统选择器展示；不等于全部协议交互通过。\n"
+                 if args.kind == 'simulator' else
+                 "此包仅验证 arm64 设备目标编译、Mach-O/FFI 静态符号及确实未签名；未在 iPhone 运行。\n")
         (out / f"ios-{args.kind}-README.zh-CN.txt").write_text(
             f"iOS {args.kind} 构建，架构：{', '.join(report['architectures'])}\n"
             "设备版本未签名，不是可直接安装到手机的 IPA。模拟器版本仅用于相应架构的 macOS / Xcode。\n"
-            "模拟器证据覆盖普通应用启动、真实 Go ABI/生命周期、导出边界和系统选择器展示；不等于全部协议交互通过。\n"
+            + scope +
             "选择实际目标的文件保存/重新导入及签名真机仍需独立验收。完整验证范围见随附证据。\n"
             "ZIP 中 licenses/ 含项目及精确 iOS Go 依赖许可证；Flutter 通知随 Runner.app 的资源保留。\n")
     except Exception as error:

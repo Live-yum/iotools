@@ -2,8 +2,8 @@
 """Probe installed Xcodes without building, booting, installing or global changes.
 
 Run after Flutter's iOS --config-only preparation. Select the current Xcode when
-eligible, otherwise the already-installed Xcode 26.2. A simctl device alone is
-insufficient: xcodebuild must list the same concrete, SDK-matched destination.
+eligible, otherwise the already-installed Xcode 26.2. simctl, xcdevice and
+xcodebuild must all list the same available, SDK/architecture-matched simulator.
 """
 
 from datetime import datetime, timezone
@@ -26,9 +26,27 @@ def release(version):
     return tuple(int(value) for value in match.groups())
 
 
-def eligible_simulators(destinations, devices, sdk_version, architecture):
-    """Intersect Xcode's eligible destinations with installed matching iPhones."""
+def eligible_simulators(destinations, devices, xcdevices, sdk_version, architecture):
+    """Require agreement from all three discovery sources for a concrete iPhone."""
     sdk_release = release(sdk_version)
+    if not isinstance(xcdevices, list) or any(not isinstance(row, dict) for row in xcdevices):
+        raise ValueError("xcdevice did not return a device list")
+    xcdevice_simulators = {}
+    for device in xcdevices:
+        if (device.get("simulator") is not True or device.get("available") is not True
+                or device.get("ignored", False) is not False
+                or device.get("platform") != "com.apple.platform.iphonesimulator"
+                or device.get("architecture") != architecture):
+            continue
+        version = re.fullmatch(r"(\d+\.\d+(?:\.\d+)?)(?: \([^()]+\))?",
+                               device.get("operatingSystemVersion", ""))
+        try:
+            identifier = str(uuid.UUID(device.get("identifier", "")))
+            if not version or release(version[1]) != sdk_release:
+                continue
+        except ValueError:
+            continue
+        xcdevice_simulators[identifier] = device
     listed = {}
     available_section = False
     for line in destinations.splitlines():
@@ -42,7 +60,7 @@ def eligible_simulators(destinations, devices, sdk_version, architecture):
             continue
         fields = dict(re.findall(r"(?:\{|,)\s*([A-Za-z_]+):\s*([^,}]*)", line))
         fields = {key: value.strip() for key, value in fields.items()}
-        if fields.get("platform") != "iOS Simulator" or fields.get("arch") not in (None, architecture):
+        if fields.get("platform") != "iOS Simulator" or fields.get("arch") != architecture:
             continue
         try:
             identifier = str(uuid.UUID(fields.get("id", "")))
@@ -59,9 +77,11 @@ def eligible_simulators(destinations, devices, sdk_version, architecture):
             continue
         for device in rows:
             identifier = device.get("udid", "").lower()
-            if identifier in listed and device.get("isAvailable") and device.get("name", "").startswith("iPhone"):
+            if (identifier in listed and identifier in xcdevice_simulators
+                    and device.get("isAvailable") is True and device.get("name", "").startswith("iPhone")):
                 eligible.append({"udid": identifier, "name": device["name"], "runtime": runtime,
-                                 "state": device.get("state"), "xcode_destination": listed[identifier]})
+                                 "state": device.get("state"), "xcode_destination": listed[identifier],
+                                 "xcdevice": xcdevice_simulators[identifier]})
     eligible.sort(key=lambda row: (row["state"] == "Booted", row["name"], row["udid"]), reverse=True)
     return eligible
 
@@ -120,15 +140,11 @@ def probe(developer_dir, label, evidence, architecture):
             raise ValueError("xcodebuild did not report an Xcode version and build")
         if label == "xcode-26.2" and candidate["xcode_version"].splitlines()[:1] != ["Xcode 26.2"]:
             raise ValueError("The fixed Xcode 26.2 path did not report Xcode 26.2")
-        # Parse xcdevice too, so a successful exit with malformed output cannot
-        # silently become apparently reliable discovery evidence.
-        if not isinstance(json.loads(outputs["xcdevice"]), list):
-            raise ValueError("xcdevice did not return a device list")
         candidate["eligible_simulators"] = eligible_simulators(
             outputs["destinations"], json.loads(outputs["simctl"])["devices"],
-            candidate["simulator_sdk"], architecture)
+            json.loads(outputs["xcdevice"]), candidate["simulator_sdk"], architecture)
         if not candidate["eligible_simulators"]:
-            candidate["error"] = "Xcode lists no concrete iPhone destination matching its SDK and host architecture"
+            candidate["error"] = "No available SDK/architecture-matched iPhone agrees across simctl, xcdevice and xcodebuild destinations"
     except (ValueError, KeyError, TypeError) as error:
         candidate["error"] = f"Invalid discovery evidence: {error}"
     return candidate
