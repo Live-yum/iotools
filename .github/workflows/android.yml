@@ -86,6 +86,7 @@ jobs:
       - name: Build compact AOT normal-entry APK and matching test APK
         id: build_aot
         run: |
+          mkdir -p android-evidence/aot-test
           cd mobile
           flutter build apk --release --target-platform android-arm64,android-x64 --target lib/main.dart
           cd android
