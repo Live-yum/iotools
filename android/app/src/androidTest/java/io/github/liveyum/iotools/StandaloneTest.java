@@ -20,6 +20,7 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class StandaloneTest {
+ private final ByteArrayOutputStream nativeBytes=new ByteArrayOutputStream();
  private String terminal(ActivityScenario<MainActivity> scenario)throws Exception{
   CountDownLatch latch=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>("");
   scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',rendered:document.querySelector('.xterm-rows')?document.querySelector('.xterm-rows').innerText:'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
@@ -27,7 +28,13 @@ public class StandaloneTest {
   String decoded=new org.json.JSONTokener(result.get()).nextValue().toString();
   org.json.JSONObject diagnostic=new org.json.JSONObject(decoded);
   String error=diagnostic.optString("error","");
-  if(!error.isEmpty()){screenshot("failed-renderer");fail("Offline renderer error: "+error);}
+  if(!error.isEmpty()){
+   screenshot("failed-renderer");
+   byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
+   String encoded=android.util.Base64.encodeToString(captured,android.util.Base64.NO_WRAP);
+   shell("sh -c 'echo "+encoded+" | base64 -d > /data/local/tmp/iotools-screenshots/native-fixture.ansi'");
+   fail("Offline renderer error: "+error+" captured native fixture bytes="+captured.length);
+  }
   return decoded;
  }
  private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
@@ -63,6 +70,7 @@ public class StandaloneTest {
   String yaml="version: 1\nprofiles:\n  local: {}\nrequests:\n  - id: customer\n    name: 客服验收\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n";
   try(OutputStream out=new FileOutputStream(config)){out.write(yaml.getBytes(StandardCharsets.UTF_8));}
   try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
+   scenario.onActivity(a->a.observeOutputForTest(bytes->{synchronized(nativeBytes){if(nativeBytes.size()+bytes.length<=65536)nativeBytes.write(bytes,0,bytes.length);}}));
    awaitText(scenario,"客服验收");assertEquals("startup must not connect",0,requests.get());screenshot("01-home");
    onView(withText("执行")).perform(click());awaitText(scenario,"Android真实协议成功");assertEquals(1,requests.get());screenshot("02-real-http");
    onView(withText("文件")).perform(click());awaitText(scenario,"请求配置 YAML");screenshot("03-config-editor");
