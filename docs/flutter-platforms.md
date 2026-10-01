@@ -22,12 +22,22 @@ CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7�
 - 用户主动导入/导出通过系统选择器或浏览器上传/下载；Web 的“下载已发起”不冒称保存成功
 - 不配置 Apple/Windows 发行者凭据，不关闭系统或应用安全保护，不指导绕过安全警告
 
+## 能力与交付边界
+
+每份包按其自己的 source SHA 和平台证据判断。共享测试与 HTTP 冒烟不表示全部 69 项高级路径、现场工业设备或所有操作系统环境均已验收。
+
+- 桌面原生串口需要操作系统已授予相应设备权限；Windows/Linux/macOS 不提供 Android USB 适配器接口，未支持操作会明确报错
+- iOS 未开放普通桌面串口/Android USB 能力；未签名设备包不能直接安装到 iPhone，模拟器不能替代真机外设验收
+- Web 的 MQTT/Kafka/Modbus/OPC 等网络功能由同源本机 Go 网关执行，静态前端本身不能直接访问原始 TCP 或串口；此包未启用 Web Serial/USB
+- macOS 保持 App Sandbox；网络客户/服务端与串口权限声明不等于外设访问或 OAuth 浏览器回调已经现场验证。未公证测试包不能被描述为任意 Mac 均可直接运行
+- Android 使用既有独立 JNI/USB 适配器；模拟器协议回归不证明真实 ARM64 手机的 USB 线缆、驱动、权限弹窗和具体设备均通过
+
 ## 验收分层
 
 1. Go race、实际 C ABI 和 Dart FFI：UTF-8、UInt64 数字/字符串区分、取消、独立会话、路径与资源释放
 2. Flutter 单元/控件与 Chrome 契约：布局、输入、确认、隐藏/恢复、平台能力、文件流程
 3. Linux/Windows/macOS 原生窗口：真实 Go HTTP、取消/确认、精确线上字节、隐藏后失效和无重放，截图由实际渲染获取；Linux 字体测试使用进程专用的空 fontconfig，不能借用 CI 系统中文字体，并分别保留中文/emoji 的 YAML 编辑器与 HTTP 正文截图；macOS 测试 app 的实际签名另验 App Sandbox 与网络权限
-4. Windows 最终 Release ZIP：另从实际 ZIP 解压启动原始 iotools.exe，在子进程中清除 Java 环境变量并收窄 PATH；通过系统 UIAutomation 读取可见控件，再用真实鼠标点击完成写入预览/取消/确认，校验真实 HTTP 字节、截图和无 JVM/JNI 加载的模块列表。它与 Debug Flutter 集成测试分开记录，失败不会上传最终包
+4. Windows 最终 Release ZIP：另从实际 ZIP 解压启动原始 iotools.exe，在子进程中清除 Java 环境变量并收窄 PATH；通过系统 MSAA/IAccessible（固定 Flutter 3.35 的原生可访问性接口）读取可见控件，再用真实鼠标点击完成写入预览/取消/确认，校验真实 HTTP 字节、截图和无 JVM/JNI 加载的模块列表。它与 Debug Flutter 集成测试分开记录，失败不会上传最终包
 5. Web：实际打包网关 HTTP/API/文件/安全验收；Chrome 真实界面驱动确认、精确 HTTP 字节、刷新不重放，并阻止外部资源请求
 6. iOS：Mach-O 架构/平台/全部 FFI 符号、模拟器正常启动、实际 Go ABI 与导出边界 XCTest、真实系统选择器呈现；设备包验证未签名
 

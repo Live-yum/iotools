@@ -73,10 +73,13 @@ def verify_bundle(app, kind, evidence):
     }
 
 
-def select_simulator(devices, sdk_version):
+def select_simulator(devices, sdk_version, required_udid=None):
     sdk = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", sdk_version)
     require(sdk, f"Unexpected selected iPhone simulator SDK version: {sdk_version}")
     sdk_release = tuple(int(part) for part in sdk.groups()[:2])
+    if required_udid is not None:
+        require(re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", required_udid),
+                "Invalid pinned iPhone simulator UDID")
     choices = []
     for runtime, rows in devices.items():
         version = re.fullmatch(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-(\d+))?", runtime)
@@ -86,8 +89,13 @@ def select_simulator(devices, sdk_version):
             continue
         for device in rows:
             if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                if required_udid is not None and device.get("udid", "").lower() != required_udid.lower():
+                    continue
                 choices.append((runtime, device))
-    require(choices, f"No available iPhone simulator matching selected SDK {sdk_version}; install its runtime in the selected Xcode")
+    if required_udid is not None:
+        require(choices, f"Pinned iPhone simulator {required_udid} is unavailable or does not match selected SDK {sdk_version}")
+    else:
+        require(choices, f"No available iPhone simulator matching selected SDK {sdk_version}; install its runtime in the selected Xcode")
     choices.sort(key=lambda row: (row[1].get("state") == "Booted", row[0], row[1]["name"]), reverse=True)
     return choices[0]
 
@@ -118,7 +126,7 @@ def test_simulator(app, info, evidence, report, save):
     save()
     devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
     (evidence / "simulator-devices.json").write_text(json.dumps(devices, indent=2))
-    runtime, selected = select_simulator(devices, sdk_version)
+    runtime, selected = select_simulator(devices, sdk_version, os.environ.get("IOTOOLS_IOS_SIMULATOR_UDID"))
     udid = selected["udid"]
     if selected["state"] != "Booted":
         run("xcrun", "simctl", "boot", udid)

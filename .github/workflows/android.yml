@@ -2,6 +2,25 @@ name: Flutter mobile standalone APK
 on:
   push:
     branches: ['feat/android-modern-app', 'feat/flutter-cross-platform']
+    # Keep the full Android/shared-input closure. Desktop/iOS-only CI harnesses
+    # need not rebuild identical Android runtime code; workflow changes do.
+    paths:
+      - 'mobile/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'go.*'
+      - 'scripts/android/**'
+      - 'scripts/android-fixtures/**'
+      - 'scripts/flutter/**'
+      - 'scripts/notices/**'
+      - 'scripts/verifybinary/**'
+      - 'scripts/visual/**'
+      - 'docs/android.md'
+      - 'docs/flutter-mobile.md'
+      - 'examples/**'
+      - 'README.md'
+      - 'LICENSE'
+      - '.github/workflows/android.yml'
   pull_request:
     paths: ['mobile/**', 'internal/mobileapi/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'scripts/flutter/**', 'scripts/android-fixtures/**', 'internal/engine/**', 'internal/config/**', 'internal/crypto/**', 'go.mod', 'go.sum']
   workflow_dispatch:

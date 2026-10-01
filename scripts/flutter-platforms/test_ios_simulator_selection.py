@@ -54,6 +54,28 @@ class SimulatorSelectionTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaisesRegex(RuntimeError, "Unexpected selected"):
                 verify_ios.select_simulator({}, version)
 
+    def test_pinned_eligible_device_wins_over_other_booted_phone(self):
+        identifier = "22a3039c-6a45-47f4-82d4-80c58ca94379"
+        selected = dict(device("iPhone 16"), udid=identifier.upper())
+        devices = {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [device(booted=True), selected]}
+        self.assertIs(verify_ios.select_simulator(devices, "18.5", identifier)[1], selected)
+
+    def test_pinned_wrong_sdk_or_unavailable_device_never_falls_back(self):
+        identifier = "22a3039c-6a45-47f4-82d4-80c58ca94379"
+        for runtime, available in (("iOS-26-2", True), ("iOS-18-5", False)):
+            with self.subTest(runtime=runtime, available=available):
+                devices = {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [device(booted=True)]}
+                devices.setdefault("com.apple.CoreSimulator.SimRuntime." + runtime, []).append(
+                    dict(device(available=available), udid=identifier))
+                with self.assertRaisesRegex(RuntimeError, "Pinned iPhone simulator"):
+                    verify_ios.select_simulator(devices, "18.5", identifier)
+
+    def test_malformed_pin_never_falls_back(self):
+        devices = {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [device()]}
+        for identifier in ("", "unknown", "22a3039c-6a45-47f4-82d4-80c58ca94379\n"):
+            with self.subTest(identifier=identifier), self.assertRaisesRegex(RuntimeError, "Invalid pinned"):
+                verify_ios.select_simulator(devices, "18.5", identifier)
+
 
 class SimulatorTestCommandTests(unittest.TestCase):
     def test_simulator_sdk_architecture_and_all_host_test_gates_are_explicit(self):

@@ -1,7 +1,7 @@
-param([Parameter(Mandatory=$true)][string]$Archive)
+param([string]$Archive, [switch]$ValidateHelpers)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
+Add-Type -AssemblyName Accessibility, System.Drawing, System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -14,6 +14,74 @@ public static class ReleaseWindow {
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
 }
 '@
+# PowerShell 7 replaces its default references when ReferencedAssemblies is
+# supplied. Keep its official .NET reference set as well as Windows MSAA.
+$compilerReferences = @(Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' |
+  Select-Object -ExpandProperty FullName)
+if (@($compilerReferences | Where-Object { [IO.Path]::GetFileName($_) -eq 'Accessibility.dll' }).Count -eq 0) {
+  $compilerReferences += [Accessibility.IAccessible].Assembly.Location
+}
+Add-Type -ReferencedAssemblies $compilerReferences @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using Accessibility;
+public sealed class ReleaseAccessibleNode {
+  public string Name = "", Value = "";
+  public int Role, State, X, Y, Width, Height;
+  public bool Offscreen { get { return (State & 0x18000) != 0; } }
+  public string Bounds { get { return X+","+Y+","+Width+","+Height; } }
+}
+public static class ReleaseAccessibility {
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+  static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+  [DllImport("oleacc.dll")]
+  static extern int AccessibleObjectFromWindow(IntPtr hwnd,uint id,ref Guid iid,
+    [MarshalAs(UnmanagedType.Interface)] out IAccessible accessible);
+  [DllImport("oleacc.dll")]
+  static extern int AccessibleChildren(IAccessible parent,int start,int count,
+    [Out,MarshalAs(UnmanagedType.LPArray,ArraySubType=UnmanagedType.Struct,SizeParamIndex=2)] object[] children,
+    out int obtained);
+  static void Visit(IAccessible accessible, object child, List<ReleaseAccessibleNode> rows, int depth) {
+    if (depth > 40 || rows.Count >= 5000) throw new InvalidOperationException("Unexpected MSAA tree size");
+    try {
+      var row = new ReleaseAccessibleNode();
+      try { row.Name = accessible.get_accName(child) ?? ""; } catch (COMException) { }
+      try { row.Value = accessible.get_accValue(child) ?? ""; } catch (COMException) { }
+      try { row.Role = Convert.ToInt32(accessible.get_accRole(child)); } catch (COMException) { }
+      try { row.State = Convert.ToInt32(accessible.get_accState(child)); } catch (COMException) { }
+      try { accessible.accLocation(out row.X,out row.Y,out row.Width,out row.Height,child); } catch (COMException) { }
+      rows.Add(row);
+      if (!(child is int) || (int)child != 0) return;
+      int count = accessible.accChildCount;
+      if (count == 0) return;
+      if (count > 5000) throw new InvalidOperationException("Unexpected MSAA child count");
+      var children = new object[count]; int obtained;
+      int result = AccessibleChildren(accessible,0,count,children,out obtained);
+      if (result < 0) Marshal.ThrowExceptionForHR(result);
+      for (int i=0;i<obtained;i++) {
+        var nested = children[i] as IAccessible;
+        if (nested != null) Visit(nested,0,rows,depth+1);
+        else if (children[i] is int) Visit(accessible,children[i],rows,depth+1);
+      }
+    } catch (COMException) { /* A frame can replace a node while it is read. */ }
+  }
+  public static ReleaseAccessibleNode[] Read(IntPtr topWindow) {
+    var rows = new List<ReleaseAccessibleNode>();
+    IntPtr flutter = FindWindowEx(topWindow,IntPtr.Zero,"FLUTTERVIEW",null);
+    if (flutter == IntPtr.Zero) return rows.ToArray();
+    Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+    IAccessible root;
+    // Flutter 3.35 deliberately defaults to MSAA, not native UIA. This normal
+    // assistive-technology query also asks its engine to publish semantics.
+    int result = AccessibleObjectFromWindow(flutter,0xFFFFFFFC,ref iid,out root);
+    if (result >= 0 && root != null) Visit(root,0,rows,0);
+    return rows.ToArray();
+  }
+}
+'@
+if ($ValidateHelpers) { Write-Host 'PASS Windows MSAA and screenshot helper compilation'; exit 0 }
+if (!$Archive) { throw 'An exact packaged Release ZIP is required' }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $evidence = Join-Path $repo 'platform-evidence/windows-release'
 New-Item -ItemType Directory -Force $evidence | Out-Null
@@ -23,21 +91,13 @@ $application = $null; $receiver = $null; $window = $null
 $settingsPath = $null; $settingsBytes = $null; $settingsExisted = $false; $settingsTouched = $false; $fixturePath = $null
 
 function Get-Elements {
-  if ($null -eq $script:window) { return @() }
-  return @($script:window.FindAll([Windows.Automation.TreeScope]::Descendants,
-    [Windows.Automation.Condition]::TrueCondition))
+  if ($null -eq $script:application -or $script:application.HasExited) { return @() }
+  return @([ReleaseAccessibility]::Read($script:application.MainWindowHandle))
 }
 function Save-Tree([string]$Name) {
   $rows = foreach ($element in (Get-Elements)) {
-    try {
-      $item = $element.Current
-      $value = ''; $pattern = $null
-      if ($element.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
-        $value = $pattern.Current.Value
-      }
-      [ordered]@{ name=$item.Name; value=$value; type=$item.ControlType.ProgrammaticName;
-        offscreen=$item.IsOffscreen; bounds=$item.BoundingRectangle.ToString() }
-    } catch [Windows.Automation.ElementNotAvailableException] { }
+    [ordered]@{ name=$element.Name; value=$element.Value; role=$element.Role;
+      state=$element.State; offscreen=$element.Offscreen; bounds=$element.Bounds }
   }
   $rows | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 (Join-Path $evidence "$Name-tree.json")
   return (($rows | ForEach-Object { $_.name; $_.value }) -join "`n")
@@ -55,29 +115,29 @@ function Save-Screen([string]$Name) {
 }
 function Find-Visible([string]$Text, [switch]$Contains, [int]$Seconds=30) {
   $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+  $lastBounds = $null
   do {
     if ($script:application.HasExited) { throw "Release app exited with $($script:application.ExitCode)" }
     $matches = @(foreach ($element in (Get-Elements)) {
-      try {
-        $item = $element.Current
-        $nameMatches = if ($Contains) { $item.Name.Contains($Text) } else { $item.Name -eq $Text }
-        if ($nameMatches -and !$item.IsOffscreen -and $item.BoundingRectangle.Width -gt 0 -and $item.BoundingRectangle.Height -gt 0) {
-          [pscustomobject]@{ element=$element; area=($item.BoundingRectangle.Width*$item.BoundingRectangle.Height) }
-        }
-      } catch [Windows.Automation.ElementNotAvailableException] { }
+      $nameMatches = if ($Contains) { $element.Name.Contains($Text) } else { $element.Name -eq $Text }
+      if ($nameMatches -and !$element.Offscreen -and ($element.State -band 1) -eq 0 -and $element.Width -gt 0 -and $element.Height -gt 0) {
+        [pscustomobject]@{ element=$element; area=($element.Width*$element.Height) }
+      }
     })
-    if ($matches.Count -gt 0) { return ($matches | Sort-Object area | Select-Object -First 1).element }
+    if ($matches.Count -gt 0) {
+      $candidate = ($matches | Sort-Object area | Select-Object -First 1).element
+      if ($candidate.Bounds -eq $lastBounds) { return $candidate }
+      $lastBounds = $candidate.Bounds
+    } else { $lastBounds = $null }
     Start-Sleep -Milliseconds 100
   } while ([DateTime]::UtcNow -lt $deadline)
   Save-Screen 'missing-control'; Save-Tree 'missing-control' | Out-Null
   throw "No visible Release UI control: $Text"
 }
-function Click-Visible([Windows.Automation.AutomationElement]$Element) {
-  $item = $Element.Current
-  $r = $item.BoundingRectangle
-  if ($item.IsOffscreen -or $r.Width -le 0 -or $r.Height -le 0) { throw 'Refusing to click an invisible control' }
+function Click-Visible($Element) {
+  if ($Element.Offscreen -or ($Element.State -band 1) -ne 0 -or $Element.Width -le 0 -or $Element.Height -le 0) { throw 'Refusing to click an invisible or unavailable control' }
   [ReleaseWindow]::SetForegroundWindow($script:application.MainWindowHandle) | Out-Null
-  [ReleaseWindow]::SetCursorPos([int]($r.Left+$r.Width/2),[int]($r.Top+$r.Height/2)) | Out-Null
+  [ReleaseWindow]::SetCursorPos([int]($Element.X+$Element.Width/2),[int]($Element.Y+$Element.Height/2)) | Out-Null
   [ReleaseWindow]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
   [ReleaseWindow]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
   Start-Sleep -Milliseconds 150
@@ -153,7 +213,7 @@ requests:
   [ReleaseWindow]::MoveWindow($application.MainWindowHandle,$screen.Left,$screen.Top,
     [Math]::Min(1280,$screen.Width),[Math]::Min(900,$screen.Height),$true) | Out-Null
   [ReleaseWindow]::SetForegroundWindow($application.MainWindowHandle) | Out-Null
-  $window = [Windows.Automation.AutomationElement]::FromHandle($application.MainWindowHandle)
+  Get-Elements | Out-Null
   $card = Find-Visible 'Windows Release精确写入' -Contains
   Save-Screen '01-installed-release-home'; Save-Tree '01-installed-release-home' | Out-Null
   Click-Visible $card
@@ -178,7 +238,7 @@ requests:
   if (@($modules | Where-Object { $_.name -match '^(jvm|java|dartjni)\.dll$' }).Count -ne 0) { throw 'Unexpected JVM/JNI runtime module loaded' }
   if ((Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $exeHash) { throw 'Release executable changed during test' }
   [ordered]@{status='passed';source_sha=$env:IOTOOLS_SHA;archive_sha256=$archiveHash;exe_sha256=$exeHash;
-    build='exact packaged Release binary';writes=1;cancelled_writes=0;java_environment='removed from child; restricted PATH';
+    build='exact packaged Release binary';writes=1;cancelled_writes=0;accessibility='Windows MSAA/IAccessible';java_environment='removed from child; restricted PATH';
     jvm_modules_loaded=$false;os=[Environment]::OSVersion.VersionString;scope='normal native GUI actions to actual loopback HTTP; no application-internal hooks'} |
     ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 (Join-Path $evidence 'result.json')
   Write-Host 'PASS exact packaged Windows Release GUI + Go HTTP with sanitized Java environment and no loaded JVM/JNI'
