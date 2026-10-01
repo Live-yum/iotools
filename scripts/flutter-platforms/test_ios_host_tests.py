@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import ios_host_tests as host
 
-ID = "22a3039c-6a45-47f4-82d4-80c58ca94379"
+ID = "48b2da2e-af18-4e36-bb25-b25969a4ebcf"
 
 
 def target():
@@ -67,7 +67,7 @@ class DescriptorTests(unittest.TestCase):
                                               (tests, "io.github.liveyum.iotools.RunnerTests", "RunnerTests")):
             (bundle / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": identifier, "CFBundleExecutable": executable}))
             (bundle / executable).write_bytes(b"fixture executable " + executable.encode())
-        descriptor = products / "Runner_iphonesimulator18.5-arm64.xctestrun"
+        descriptor = products / "Runner_iphonesimulator26.2-arm64.xctestrun"
         descriptor.write_bytes(plistlib.dumps({"RunnerTests": target()}))
         return products, app, tests, descriptor
 
@@ -163,15 +163,40 @@ class ResultTests(unittest.TestCase):
 
 
 class PhaseTests(unittest.TestCase):
+    def test_frozen_profile_rejects_previous_toolchain_and_mismatched_evidence(self):
+        for mismatch in ("developer", "selection-sdk", "version", "build", "sdk"):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                revision = "a" * 40
+                selection = {"source_sha": revision, "status": "selected",
+                             "developer_dir": host.PINNED_DEVELOPER,
+                             "simulator_sdk": "26.2", "simulator": {"udid": ID}}
+                environment = {"IOTOOLS_SHA": revision, "DEVELOPER_DIR": host.PINNED_DEVELOPER}
+                version, sdk = "Xcode 26.2\nBuild version 17C52", "26.2"
+                if mismatch == "developer":
+                    environment["DEVELOPER_DIR"] = "/Applications/Xcode_16.4.app/Contents/Developer"
+                if mismatch == "selection-sdk": selection["simulator_sdk"] = "18.5"
+                if mismatch == "version": version = "Xcode 16.4\nBuild version 16F6"
+                if mismatch == "build": version = "Xcode 26.2\nBuild version 17C529"
+                if mismatch == "sdk": sdk = "18.5"
+                (root / "xcode-selection.json").write_text(json.dumps(selection))
+                with patch.dict(os.environ, environment), \
+                     patch.object(host.subprocess, "check_output", side_effect=[version, sdk]) as output, \
+                     patch.object(host.subprocess, "run") as run:
+                    with self.assertRaisesRegex(RuntimeError, "frozen installed|validated same-run|Frozen Xcode/SDK"):
+                        host.run_host_tests(root, root, ID, "arm64", [], lambda *_: self.fail("must not launch"))
+                    run.assert_not_called()
+                    self.assertLessEqual(output.call_count, 2)
+
     def test_claimed_revision_cannot_replace_actual_checkout_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             revision = "a" * 40
             (root / "xcode-selection.json").write_text(json.dumps({
                 "source_sha": revision, "status": "selected", "developer_dir": host.PINNED_DEVELOPER,
-                "simulator_sdk": "18.5", "simulator": {"udid": ID}}))
+                "simulator_sdk": "26.2", "simulator": {"udid": ID}}))
             with patch.dict(os.environ, {"IOTOOLS_SHA": revision, "DEVELOPER_DIR": host.PINNED_DEVELOPER}), \
-                 patch.object(host.subprocess, "check_output", side_effect=["Xcode 16.4\nBuild version 16F6", "18.5", "b" * 40]), \
+                 patch.object(host.subprocess, "check_output", side_effect=["Xcode 26.2\nBuild version 17C52", "26.2", "b" * 40]), \
                  patch.object(host.subprocess, "run") as run:
                 with self.assertRaisesRegex(RuntimeError, "Checkout HEAD"):
                     host.run_host_tests(root, root, ID, "arm64", [], lambda *_: self.fail("must not launch"))
@@ -186,14 +211,14 @@ class PhaseTests(unittest.TestCase):
                 revision = "a" * 40
                 (evidence / "xcode-selection.json").write_text(json.dumps({
                     "source_sha": revision, "status": "selected", "developer_dir": host.PINNED_DEVELOPER,
-                    "simulator_sdk": "18.5", "simulator": {"udid": ID}}))
+                    "simulator_sdk": "26.2", "simulator": {"udid": ID}}))
                 clock = [0]
                 phases = []
                 launched = []
                 budgets = []
                 def output(command, **kwargs):
-                    if command[-1] == "-version": return "Xcode 16.4\nBuild version 16F6"
-                    if command[-1] == "--show-sdk-version": return "18.5"
+                    if command[-1] == "-version": return "Xcode 26.2\nBuild version 17C52"
+                    if command[-1] == "--show-sdk-version": return "26.2"
                     if command[-2:] == ["rev-parse", "HEAD"]: return revision
                     if "ls-files" in command: return ""
                     if "lipo" in command: return "arm64"
@@ -290,7 +315,7 @@ class PhaseTests(unittest.TestCase):
                 commands.append((args, kwargs))
                 self.assertLessEqual(kwargs["timeout"], 7)
                 if args[1:4] == ("simctl", "list", "devices"):
-                    return json.dumps({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-18-5": [{
+                    return json.dumps({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-2": [{
                         "name": "iPhone SE (3rd generation)", "udid": ID, "isAvailable": True, "state": "Shutdown"}]}})
                 if "launchctl" in args: return "123\t0\tio.github.liveyum.iotools"
                 return "started"
@@ -300,7 +325,7 @@ class PhaseTests(unittest.TestCase):
                  patch.object(verifier.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as terminate:
                 report = {}
                 verifier.normal_launch_simulator(app, {"CFBundleIdentifier": "io.github.liveyum.iotools"},
-                    Path(directory), report, lambda: None, "18.5", ID, 1200)
+                    Path(directory), report, lambda: None, "26.2", ID, 1200)
             sleep.assert_called_once_with(5)
             self.assertTrue(all(call.kwargs["timeout"] <= 7 for call in terminate.call_args_list))
             installed = [args for args, _ in commands if "install" in args]

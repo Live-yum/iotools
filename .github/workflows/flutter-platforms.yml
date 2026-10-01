@@ -231,7 +231,7 @@ jobs:
           python3 -B scripts/flutter-platforms/test_ios_notices.py
           python3 -B scripts/flutter-platforms/test_ios_build_scope.py
           python3 -B scripts/flutter-platforms/test_ios_host_tests.py
-          python3 scripts/flutter-platforms/select-ios-xcode.py --freeze-xcode-16.4
+          python3 scripts/flutter-platforms/select-ios-xcode.py --freeze-xcode-26.2
       - name: Compile and statically verify the iOS simulator test/developer artifact
         run: |
           bash scripts/flutter-platforms/build-native.sh ios-simulator arm64

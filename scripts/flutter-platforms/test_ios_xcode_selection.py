@@ -172,16 +172,20 @@ class XcodeSelectionTests(unittest.TestCase):
             self.assertEqual(len(candidate["queries"]), 5)
 
 
+FROZEN_ID = ACTUAL_622_26_XCDEVICE["identifier"].lower()
+PREVIOUS_DEVELOPER_DIR = Path("/Applications/Xcode_16.4.app/Contents/Developer")
+
+
 class FrozenXcodeSelectionTests(unittest.TestCase):
-    def inventory(self, identifier=ID):
+    def inventory(self, identifier=FROZEN_ID):
         return {
-            "version": "Xcode 16.4\nBuild version 16F6\n",
-            "sdk": "18.5\n",
-            "xcdevice": json.dumps([dict(XCDEVICES[0], identifier=identifier, modelCode="iPhone14,6")]),
+            "version": "Xcode 26.2\nBuild version 17C52\n",
+            "sdk": "26.2\n",
+            "xcdevice": json.dumps([dict(ACTUAL_622_26_XCDEVICE, identifier=identifier)]),
             "simctl": json.dumps({"devices": {
                 runtime: [dict(device, udid=identifier) for device in rows]
-                for runtime, rows in DEVICES.items()}}),
-            "destinations": HEADER + DESTINATION.replace(ID.upper(), identifier),
+                for runtime, rows in ACTUAL_622_26_DEVICES.items()}}),
+            "destinations": HEADER + ACTUAL_622_26_DESTINATION.replace(FROZEN_ID.upper(), identifier),
         }
 
     def response(self, outputs):
@@ -202,12 +206,12 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(Path, "is_dir", return_value=True), \
                 patch.object(selector.subprocess, "run", side_effect=self.response(outputs)) as run:
-            candidate = selector.probe(developer_dir, "xcode-16.4", Path(directory), architecture,
-                                       freeze_xcode_16_4=True)
+            candidate = selector.probe(developer_dir, "xcode-26.2", Path(directory), architecture,
+                                       freeze_xcode_26_2=True)
             return candidate, run.call_args_list
 
     def test_exact_toolchain_model_and_observed_uuid_are_accepted(self):
-        for identifier in (ID, "f107b59b-9864-4ae7-a12a-9104c143c89d"):
+        for identifier in (FROZEN_ID, "f107b59b-9864-4ae7-a12a-9104c143c89d"):
             with self.subTest(identifier=identifier):
                 candidate, calls = self.frozen_probe(self.inventory(identifier))
                 self.assertNotIn("error", candidate)
@@ -216,11 +220,34 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                 for call in calls:
                     self.assertEqual(call.kwargs["env"]["DEVELOPER_DIR"], str(selector.FROZEN_DEVELOPER_DIR))
 
+    def test_actual_622_xcode26_inventory_satisfies_frozen_profile(self):
+        outputs = dict(self.inventory(), xcdevice=json.dumps([ACTUAL_622_26_XCDEVICE]),
+                       simctl=json.dumps({"devices": ACTUAL_622_26_DEVICES}),
+                       destinations=HEADER + ACTUAL_622_26_DESTINATION)
+        candidate, calls = self.frozen_probe(outputs)
+        self.assertNotIn("error", candidate)
+        self.assertEqual(candidate["xcode_version"], "Xcode 26.2\nBuild version 17C52")
+        self.assertEqual(candidate["simulator_sdk"], "26.2")
+        self.assertEqual(candidate["eligible_simulators"][0]["udid"], FROZEN_ID)
+        self.assertEqual(candidate["eligible_simulators"][0]["xcdevice"], ACTUAL_622_26_XCDEVICE)
+        self.assertEqual(list(candidate["queries"]), ["version", "sdk", "xcdevice", "simctl", "destinations"])
+        self.assertEqual([call.args[0] for call in calls], list(selector.probe_commands("arm64").values()))
+        self.assertEqual([call.kwargs["timeout"] for call in calls], [30, 30, 30, 30, 90])
+        self.assertEqual(calls[2].args[0], ["xcrun", "xcdevice", "list", "--timeout", "10"])
+
+    def test_prior_164_inventory_cannot_satisfy_frozen_262_profile(self):
+        outputs = dict(self.inventory(), xcdevice=json.dumps(XCDEVICES),
+                       simctl=json.dumps({"devices": DEVICES}), destinations=HEADER + DESTINATION)
+        candidate, _ = self.frozen_probe(outputs)
+        self.assertEqual(candidate["eligible_simulators"], [])
+        self.assertIn("No available", candidate["error"])
+
     def test_wrong_version_build_or_sdk_is_rejected(self):
-        for field, value in (("version", "Xcode 26.2\nBuild version 17C52\n"),
-                             ("version", "Xcode 16.4.1\nBuild version 16F6\n"),
-                             ("version", "Xcode 16.4\nBuild version 16F7\n"),
-                             ("sdk", "26.2\n"), ("sdk", "18.5.1\n")):
+        for field, value in (("version", "Xcode 16.4\nBuild version 16F6\n"),
+                             ("version", "Xcode 26.2.1\nBuild version 17C52\n"),
+                             ("version", "Xcode 26.2\nBuild version 17C53\n"),
+                             ("version", "Xcode 26.2\nBuild version 16F6\n"),
+                             ("sdk", "18.5\n"), ("sdk", "26.2.1\n")):
             with self.subTest(field=field, value=value):
                 candidate, _ = self.frozen_probe(dict(self.inventory(), **{field: value}))
                 self.assertIn("Frozen selection requires exactly", candidate["error"])
@@ -229,18 +256,18 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
     def test_other_host_architecture_or_developer_path_is_not_probed(self):
         for architecture, path in (("x86_64", selector.FROZEN_DEVELOPER_DIR),
                                    ("arm64e", selector.FROZEN_DEVELOPER_DIR),
-                                   ("arm64", selector.ALTERNATE)):
+                                   ("arm64", PREVIOUS_DEVELOPER_DIR)):
             with self.subTest(architecture=architecture, path=path):
                 candidate, calls = self.frozen_probe(self.inventory(), architecture, path)
-                self.assertIn("fixed installed Xcode 16.4 path and an arm64 host", candidate["error"])
+                self.assertIn("fixed installed Xcode 26.2 path and an arm64 host", candidate["error"])
                 self.assertEqual(calls, [])
 
     def test_missing_installed_toolchain_does_not_probe_or_install(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(Path, "is_dir", return_value=False), \
                 patch.object(selector.subprocess, "run") as run:
-            candidate = selector.probe(selector.FROZEN_DEVELOPER_DIR, "xcode-16.4", Path(directory),
-                                       "arm64", freeze_xcode_16_4=True)
+            candidate = selector.probe(selector.FROZEN_DEVELOPER_DIR, "xcode-26.2", Path(directory),
+                                       "arm64", freeze_xcode_26_2=True)
             self.assertIn("not already installed", candidate["error"])
             run.assert_not_called()
 
@@ -265,7 +292,7 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                     dict(self.inventory(), destinations=PLACEHOLDERS)]
         for name in ("simctl", "xcdevice", "destinations"):
             outputs = self.inventory()
-            outputs[name] = outputs[name].replace(ID, "00000000-0000-0000-0000-000000000001")
+            outputs[name] = outputs[name].replace(FROZEN_ID, "00000000-0000-0000-0000-000000000001")
             variants.append(outputs)
         for name, field in (("simctl", "isAvailable"), ("xcdevice", "available")):
             outputs = self.inventory()
@@ -278,7 +305,7 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                 self.assertEqual(candidate["eligible_simulators"], [])
 
     def test_frozen_cli_only_probes_fixed_path_and_exports_current_observed_uuid(self):
-        for identifier in (ID, "f107b59b-9864-4ae7-a12a-9104c143c89d"):
+        for identifier in (FROZEN_ID, "f107b59b-9864-4ae7-a12a-9104c143c89d"):
             with self.subTest(identifier=identifier), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "mobile/ios/Pods/Pods.xcodeproj").mkdir(parents=True)
@@ -290,12 +317,12 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                                      path == selector.FROZEN_DEVELOPER_DIR or original_is_dir(path)), \
                         patch.object(selector.platform, "system", return_value="Darwin"), \
                         patch.object(selector.platform, "machine", return_value="arm64"), \
-                        patch.dict(os.environ, {"GITHUB_ENV": str(github_env), "DEVELOPER_DIR": str(selector.ALTERNATE)}), \
+                        patch.dict(os.environ, {"GITHUB_ENV": str(github_env), "DEVELOPER_DIR": str(PREVIOUS_DEVELOPER_DIR)}), \
                         patch.object(selector.subprocess, "check_output") as current_xcode, \
                         patch.object(selector.subprocess, "run", side_effect=self.response(self.inventory(identifier))) as run, \
                         redirect_stdout(io.StringIO()):
-                    selector.main(["--freeze-xcode-16.4"])
-                    self.assertEqual(os.environ["DEVELOPER_DIR"], str(selector.ALTERNATE))
+                    selector.main(["--freeze-xcode-26.2"])
+                    self.assertEqual(os.environ["DEVELOPER_DIR"], str(PREVIOUS_DEVELOPER_DIR))
                 current_xcode.assert_not_called()
                 self.assertEqual(run.call_count, 5)
                 for call in run.call_args_list:
@@ -303,7 +330,7 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                 self.assertEqual(github_env.read_text(), "EXISTING=value\n" +
                                  f"DEVELOPER_DIR={selector.FROZEN_DEVELOPER_DIR}\nIOTOOLS_IOS_SIMULATOR_UDID={identifier}\n")
                 report = json.loads((root / "platform-evidence/ios/xcode-selection.json").read_text())
-                self.assertEqual(report["selection_mode"], "freeze-xcode-16.4")
+                self.assertEqual(report["selection_mode"], "freeze-xcode-26.2")
                 self.assertEqual(len(report["candidates"]), 1)
                 self.assertEqual(report["simulator"]["udid"], identifier)
                 self.assertTrue(report["github_environment_written"])
@@ -318,7 +345,7 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
                     patch.object(selector.subprocess, "check_output") as current_xcode, \
                     patch.object(selector.subprocess, "run") as run, redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(RuntimeError, "requires GITHUB_ENV"):
-                    selector.main(["--freeze-xcode-16.4"])
+                    selector.main(["--freeze-xcode-26.2"])
             current_xcode.assert_not_called()
             run.assert_not_called()
             report = json.loads((root / "platform-evidence/ios/xcode-selection.json").read_text())
@@ -326,7 +353,7 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
             self.assertEqual(report["candidates"], [])
         candidate, _ = self.frozen_probe(dict(self.inventory(), xcdevice="[]"))
         with self.assertRaisesRegex(RuntimeError, "no fallback is allowed"):
-            selector.choose_candidate([candidate], freeze_xcode_16_4=True)
+            selector.choose_candidate([candidate], freeze_xcode_26_2=True)
 
     def test_failed_frozen_cli_probe_never_tries_another_xcode_or_exports_selection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -334,17 +361,17 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
             (root / "mobile/ios/Pods/Pods.xcodeproj").mkdir(parents=True)
             github_env = root / "github-env"
             github_env.write_text("EXISTING=value\n")
-            outputs = dict(self.inventory(), version="Xcode 26.2\nBuild version 17C52\n")
+            outputs = dict(self.inventory(), version="Xcode 16.4\nBuild version 16F6\n")
             with patch.object(selector, "ROOT", root), \
                     patch.object(Path, "is_dir", return_value=True), \
                     patch.object(selector.platform, "system", return_value="Darwin"), \
                     patch.object(selector.platform, "machine", return_value="arm64"), \
-                    patch.dict(os.environ, {"GITHUB_ENV": str(github_env), "DEVELOPER_DIR": str(selector.ALTERNATE)}), \
+                    patch.dict(os.environ, {"GITHUB_ENV": str(github_env), "DEVELOPER_DIR": str(PREVIOUS_DEVELOPER_DIR)}), \
                     patch.object(selector.subprocess, "check_output") as current_xcode, \
                     patch.object(selector.subprocess, "run", side_effect=self.response(outputs)) as run, \
                     redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(RuntimeError, "no fallback is allowed"):
-                    selector.main(["--freeze-xcode-16.4"])
+                    selector.main(["--freeze-xcode-26.2"])
             current_xcode.assert_not_called()
             self.assertEqual(run.call_count, 5)
             for call in run.call_args_list:

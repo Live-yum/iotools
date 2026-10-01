@@ -19,7 +19,7 @@ EXPECTED_METHODS = frozenset({
     "testCancelledExportCleansStaging", "testRealExportPickerCancelBusyAndStaleDelegate",
     "testActualProcessGoABIAndLifecycle",
 })
-PINNED_DEVELOPER = "/Applications/Xcode_16.4.app/Contents/Developer"
+PINNED_DEVELOPER = "/Applications/Xcode_26.2.app/Contents/Developer"
 COMMITTED_INPUTS = (
     "go.mod", "go.sum", "cmd/iotools-native", "internal", "mobile/lib", "mobile/assets",
     "mobile/pubspec.yaml", "mobile/pubspec.lock", "mobile/ios/RunnerTests",
@@ -198,16 +198,16 @@ def run_host_tests(root, evidence, udid, architecture, settings, launch_host, pr
     revision = os.environ.get("IOTOOLS_SHA", "")
     require(re.fullmatch(r"[0-9a-f]{40}", revision), "Expected exact host-test source SHA")
     require(architecture == "arm64" and os.environ.get("DEVELOPER_DIR") == PINNED_DEVELOPER,
-            "Split host-test experiment requires the frozen installed Xcode 16.4 and arm64")
+            "Split host-test experiment requires the frozen installed Xcode 26.2 and arm64")
     selection = json.loads((evidence / "xcode-selection.json").read_text())
     require(selection.get("source_sha") == revision and selection.get("status") == "selected"
             and selection.get("developer_dir") == PINNED_DEVELOPER
-            and selection.get("simulator_sdk") == "18.5"
+            and selection.get("simulator_sdk") == "26.2"
             and selection.get("simulator", {}).get("udid", "").lower() == udid.lower(),
             "Host tests do not match the validated same-run toolchain/simulator")
     version = subprocess.check_output(["xcrun", "xcodebuild", "-version"], text=True, timeout=min(30, remaining(deadline))).strip()
     sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"], text=True, timeout=min(30, remaining(deadline))).strip()
-    require(version == "Xcode 16.4\nBuild version 16F6" and sdk == "18.5", "Frozen Xcode/SDK changed")
+    require(version == "Xcode 26.2\nBuild version 17C52" and sdk == "26.2", "Frozen Xcode/SDK changed")
     head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True,
                                    timeout=min(30, remaining(deadline))).strip()
     require(head == revision, "Checkout HEAD does not match host-test source SHA")

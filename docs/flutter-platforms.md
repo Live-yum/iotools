@@ -21,11 +21,25 @@ iOS 宿主测试当前采用一次受控的两阶段流程：先以 `generic/pla
 支持构建与执行分离；[Bitrise 官方构建测试说明](https://docs.bitrise.io/en/bitrise-ci/testing/testing-ios-apps/building-an-ios-app-for-testing)
 明确使用上述 generic simulator 构建目的地。编译成功不能代替 XCTest 执行成功。
 
-此轮选择器使用 `--freeze-xcode-16.4`，仅允许已安装的 Xcode 16.4 / build 16F6、SDK 18.5、arm64，
+此轮选择器使用 `--freeze-xcode-26.2`，仅允许已安装的 Xcode 26.2 / build 17C52、SDK 26.2、arm64，
 并要求当次 simctl、xcdevice、xcodebuild 三方均列出可用的 iPhone SE（第三代）。UUID 来自当次清单，
 不会假设不同 CI 机器共享 UUID；选择后在本 job 内固定，缺失时失败，不切换工具链或模拟器。
+工具链路径固定为 `/Applications/Xcode_26.2.app/Contents/Developer`，只通过当前进程和本 job 的
+`DEVELOPER_DIR` 使用；这是 [Apple 支持的临时选择方式](https://developer.apple.com/documentation/xcode/configuring-command-line-tools-settings)，
+不修改全局 xcode-select，不安装工具链，不修改服务或安全设置。
 仍保留 Debug、`ARCHS=arm64`、`ONLY_ACTIVE_ARCH=NO` 和原来的五项 Swift 断言；先前仅调整 active-only
 设置没有解决目的地错误，本流程不宣称已确定其根因。
+
+此次受控变更依据同一 macos-15-arm64 镜像 `20260907.0337.1` 的实测记录：
+[728912c](https://github.com/Live-yum/iotools/actions/runs/36938209974) 于 2026-10-01 23:00:30–23:01:14 UTC
+检查固定 16.4/16F6、SDK 18.5，xcdevice 只有 My Mac、零模拟器，simctl 30 秒超时，尽管目的地清单列出 SE3，
+仍因三方不一致而失败；两阶段宿主测试尚未开始。
+[53bb05c](https://github.com/Live-yum/iotools/actions/runs/36927769971) 和
+[3222e89](https://github.com/Live-yum/iotools/actions/runs/36930826564) 的 26.2/17C52、SDK 26.2
+均实际得到 10 台三方一致的可用 iPhone，包含 SE3；53bb05c 随后安装超时，只有 3222e89 记录了真实普通启动及五秒存活。
+3222e89 的旧合并 XCTest 命令仍失败。因此这些证据仅支持使用已观察到可用的工具链继续验证，
+不证明切换版本能修复 XCTest，也不能把先前按 xcdevice、simctl 顺序查询的差异归因为服务冷启动。
+本次仍须重新检查当次三方清单；后续成功与否以原始两阶段结果为准。
 
 构建目录为 `mobile/build/ios-host-tests`，不放入证据上传目录。只接受新生成且仅包含启用 RunnerTests
 目标的描述文件；记录源提交、未改动源文件/原生归档、实际宿主与测试包路径及可执行文件哈希。
