@@ -9,6 +9,7 @@ import (
 	server "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
+	"github.com/mochi-mqtt/server/v2/packets"
 	"io"
 	"log/slog"
 	"net"
@@ -18,9 +19,42 @@ import (
 	"time"
 )
 
+// Mochi sends PUBACK before subscriber dispatch. The test must not introduce
+// a later subscription until that publication's dispatch has actually finished.
+type mqttPublishedBarrier struct {
+	server.HookBase
+	published chan string
+}
+
+func (h *mqttPublishedBarrier) ID() string               { return "test-published-barrier" }
+func (h *mqttPublishedBarrier) Provides(event byte) bool { return event == server.OnPublished }
+func (h *mqttPublishedBarrier) OnPublished(_ *server.Client, packet packets.Packet) {
+	if packet.TopicName == "test/value" {
+		select {
+		case h.published <- string(packet.Payload):
+		default:
+		}
+	}
+}
+func (h *mqttPublishedBarrier) wait(t *testing.T, expected string) {
+	t.Helper()
+	select {
+	case payload := <-h.published:
+		if payload != expected {
+			t.Fatalf("publication completion payload %q, want %q", payload, expected)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("broker did not complete publication dispatch")
+	}
+}
+
 func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 	s := server.New(&server.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if e := s.AddHook(new(auth.AllowHook), nil); e != nil {
+		t.Fatal(e)
+	}
+	barrier := &mqttPublishedBarrier{published: make(chan string, 8)}
+	if e := s.AddHook(barrier, nil); e != nil {
 		t.Fatal(e)
 	}
 	l := listeners.NewTCP(listeners.Config{ID: "test", Address: "127.0.0.1:0"})
@@ -47,6 +81,7 @@ func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 	if e := Run(context.Background(), r, true, nil); e != nil {
 		t.Fatal(e)
 	}
+	barrier.wait(t, "42")
 	r.Action = "read-one"
 	seen := false
 	if e := Run(context.Background(), r, false, func(e Event) {
@@ -64,11 +99,11 @@ func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 	if e := Run(context.Background(), r, true, nil); e != nil {
 		t.Fatal(e)
 	}
+	barrier.wait(t, "")
 	r.Action = "read-one"
 	r.Timeout = "100ms"
-	// PUBACK confirms the retained store update; this fixture may broadcast
-	// the empty live cleanup publication after the new subscriber joins.
-	// A live empty notification is legal and is not a retained old value.
+	// The store update AND dispatch have completed before this new subscriber.
+	// No initial publication or cleanup publication can join it retroactively.
 	if _, exists := s.Topics.Retained.Get("test/value"); exists {
 		t.Fatal("broker retained store still contains cleaned topic")
 	}
@@ -79,14 +114,9 @@ func TestMQTTRealBrokerPublishReadAndClean(t *testing.T) {
 		}
 	})
 	if observed != nil {
-		if observed["retained"] != false || observed["payload"] != "" {
-			t.Fatalf("unexpected value after retained cleanup: %#v", observed)
-		}
-		t.Log("received valid non-retained empty cleanup notification")
-	} else if err == nil {
-		t.Fatal("read-one succeeded without a message")
+		t.Fatalf("message arrived after completed retained cleanup: %#v", observed)
 	}
-	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unexpected cleanup observation error: %v", err)
 	}
 
