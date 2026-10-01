@@ -14,6 +14,12 @@ CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7�
 
 `IOTOOLS_SHA` 将写入产物和 manifest。CI 包含下载包 SHA256 与平台依赖证据。不要单凭编译成功推断所有协议或物理设备已验收。
 
+iOS XCTest 命令单独使用 `ONLY_ACTIVE_ARCH=NO`，同时继续固定 `ARCHS` 为已验证应用的唯一架构。
+[Apple 构建设置说明](https://developer.apple.com/documentation/xcode/build-settings-reference)将 `ARCHS` 定义为产物架构列表；关闭 active-only 限制不会加入该列表之外的架构。
+这是针对测试目标与宿主设置差异的受控尝试，不代表已经确定模拟器目的地发现失败的原因。
+测试前记录原 `YES` 与当前 `NO` 命令、Runner/RunnerTests 设置及 `test -showdestinations` 只读诊断；后者需当前 Xcode 的 `-help` 确认该信息选项。
+只执行一次真实 XCTest，保留相同模拟器 UUID、SDK、原有超时和全部五项断言；诊断输出不能代替通过结果。
+
 ## 安全边界
 
 - 不采用浏览器 URL 传入的任意网关地址；Web 要求同源、精确 Host/Origin、CSRF、HttpOnly SameSite cookie 和独立会话

@@ -2,8 +2,12 @@
 """Lightweight regression tests; no Xcode, simulator or native build required."""
 
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("verify_ios", Path(__file__).with_name("verify-ios.py"))
 verify_ios = importlib.util.module_from_spec(spec)
@@ -92,7 +96,8 @@ class SimulatorTestCommandTests(unittest.TestCase):
                 destination_keys = {part.split("=", 1)[0] for part in command[command.index("-destination") + 1].split(",")}
                 self.assertEqual(destination_keys, {"platform", "id"})
                 self.assertIn(f"ARCHS={architecture}", command)
-                self.assertIn("ONLY_ACTIVE_ARCH=YES", command)
+                self.assertIn("ONLY_ACTIVE_ARCH=NO", command)
+                self.assertNotIn("ONLY_ACTIVE_ARCH=YES", command)
                 self.assertIn("test", command)
                 self.assertIn("-only-testing:RunnerTests", command)
                 self.assertEqual(command[command.index("-parallel-testing-enabled") + 1], "NO")
@@ -114,6 +119,61 @@ class SimulatorTestCommandTests(unittest.TestCase):
         self.assertIn("ARCHS=arm64", command)
         self.assertIn("CODE_SIGNING_ALLOWED=NO", command)
         self.assertEqual(command[command.index("-sdk") + 1], "iphonesimulator")
+
+    def test_only_active_arch_alignment_is_the_only_test_command_change(self):
+        baseline = verify_ios.simulator_test_command("device-id", Path("result.xcresult"), "arm64", only_active_arch="YES")
+        aligned = verify_ios.simulator_test_command("device-id", Path("result.xcresult"), "arm64")
+        self.assertEqual(aligned, ["ONLY_ACTIVE_ARCH=NO" if part == "ONLY_ACTIVE_ARCH=YES" else part for part in baseline])
+
+    def test_preflight_records_both_targets_and_test_action_without_executing_tests(self):
+        calls = []
+        def command(args, **kwargs):
+            calls.append(args)
+            self.assertNotIn("-resultBundlePath", args)
+            self.assertTrue(set(args) & {"-help", "-showBuildSettings", "-showdestinations"})
+            self.assertLessEqual(kwargs["timeout"], 60)
+            if "-help" in args:
+                kwargs["stdout"].write("-showdestinations display a list of destinations\n")
+            return subprocess.CompletedProcess(args, 0)
+        with tempfile.TemporaryDirectory() as directory, patch.object(verify_ios.subprocess, "run", side_effect=command):
+            evidence = Path(directory)
+            record = verify_ios.simulator_test_preflight("device-id", evidence / "result.xcresult", "arm64", evidence)
+            self.assertEqual(len(calls), 7)
+            for setting in ("ONLY_ACTIVE_ARCH=YES", "ONLY_ACTIVE_ARCH=NO"):
+                selected = [args for args in calls if setting in args]
+                self.assertEqual(len(selected), 3)
+                self.assertEqual(sum("-target" in args and "RunnerTests" in args for args in selected), 1)
+                self.assertEqual(sum("-scheme" in args and "-showBuildSettings" in args for args in selected), 1)
+                diagnostic = next(args for args in selected if "-showdestinations" in args)
+                self.assertIn("test", diagnostic)
+                self.assertIn("-only-testing:RunnerTests", diagnostic)
+                self.assertIn("ARCHS=arm64", diagnostic)
+                self.assertEqual(diagnostic[diagnostic.index("-destination") + 1], "platform=iOS Simulator,id=device-id")
+            self.assertEqual(record, json.loads((evidence / "xcode-test-command-comparison.json").read_text()))
+            self.assertFalse((evidence / "result.xcresult").exists())
+
+    def test_preflight_failure_cannot_claim_test_pass_or_retry_an_actual_test(self):
+        def command(args, **kwargs):
+            if "-help" in args:
+                return subprocess.CompletedProcess(args, 1)
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+        with tempfile.TemporaryDirectory() as directory, patch.object(verify_ios.subprocess, "run", side_effect=command) as run:
+            evidence = Path(directory)
+            record = verify_ios.simulator_test_preflight("device-id", evidence / "result.xcresult", "arm64", evidence)
+            self.assertFalse(record["showdestinations_supported_by_cli_help"])
+            self.assertEqual(run.call_count, 5)
+            self.assertNotIn("host_tests", record)
+            self.assertNotIn("passed", record)
+            for call in run.call_args_list:
+                self.assertNotIn("test", call.args[0])
+            self.assertTrue(all(row["exit_code"] is None for name, row in record["diagnostics"].items() if name != "help"))
+
+    def test_information_capture_rejects_bare_test_and_result_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for command in (["xcrun", "xcodebuild", "test"],
+                            ["xcrun", "xcodebuild", "test", "-showdestinations", "-resultBundlePath", "result.xcresult"]):
+                with self.assertRaisesRegex(RuntimeError, "information-only"):
+                    verify_ios.xcode_information(command, Path(directory), "diagnostic.log")
 
 
 if __name__ == "__main__":

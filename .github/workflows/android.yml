@@ -154,7 +154,6 @@ jobs:
             echo 'baseline_backend=gfxstream'
             echo 'baseline_requested_gpu=swiftshader_indirect'
             echo 'requested_gpu=software'
-            "$ANDROID_HOME/emulator/emulator" -version
           } > android-evidence/emulator-graphics.txt 2>&1
           if test -r /dev/kvm && test -w /dev/kvm; then
             echo "Existing KVM access is available; no permissions changed"

@@ -6,9 +6,11 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 RUNNER = Path(__file__).with_name('run-emulator-tests.sh')
+WORKFLOW = RUNNER.parents[2]/'.github/workflows/android.yml'
 
 class RunnerTests(unittest.TestCase):
     def run_case(self, *, drive=0, opcua=0, stop=0, plugin=0, instrument=0, verification=0, cleanup=0, renderer=0,
@@ -16,7 +18,7 @@ class RunnerTests(unittest.TestCase):
                  opcua_log='I/flutter ( 456): 07:20 +2: All tests passed!'):
         with tempfile.TemporaryDirectory(prefix='iotools-runner-') as directory:
             root = Path(directory)
-            for name in ('scripts/flutter', 'mobile/android', 'android-dist', 'android-evidence/aot-test', 'bin'):
+            for name in ('scripts/flutter', 'mobile/android', 'android-dist', 'android-evidence/aot-test', 'bin', 'android-sdk/emulator'):
                 (root/name).mkdir(parents=True, exist_ok=True)
             shutil.copyfile(RUNNER, root/'scripts/flutter/run-emulator-tests.sh')
             apk = root/'android-dist/iotools-flutter-universal-fixture-aot-test-signed.apk'
@@ -26,6 +28,7 @@ class RunnerTests(unittest.TestCase):
                 path.write_text('#!/usr/bin/env bash\nset -eu\n'+text+'\n')
                 path.chmod(0o700)
             script(root/'mobile/android/gradlew', 'exit 0')
+            script(root/'android-sdk/emulator/emulator', 'printf "emulator %s\\n" "$*" >> "$TRACE"; printf "Android emulator version hermetic\\n"')
             script(root/'bin/flutter', 'printf "drive %s\\n" "$*" >> "$TRACE"; case "$*" in *opcua_workflow_test.dart*) printf "%s\\n" "$OPCUA_LOG"; exit "$OPCUA_RESULT";; *) printf "%s\\n" "$DRIVE_LOG"; exit "$DRIVE_RESULT";; esac')
             script(root/'bin/curl', 'printf "{}\\n"')
             script(root/'bin/go', '''while test "$1" != -o; do shift; done
@@ -54,9 +57,12 @@ if test "$1" = scripts/flutter/verify-mobile.py; then exit "$PLUGIN_RESULT"; fi
 if test "$1" = scripts/flutter/verify-aot-device.py; then exit "$VERIFY_RESULT"; fi
 exit 99''')
             trace = root/'trace.txt'
-            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer)}
+            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'ANDROID_HOME':str(root/'android-sdk'), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer)}
             result = subprocess.run(['bash',str(root/'scripts/flutter/run-emulator-tests.sh')], env=env, cwd=root, capture_output=True, timeout=15)
             recorded=trace.read_text()
+            self.assertEqual(recorded.count('emulator -version'),1)
+            self.assertLess(recorded.index('adb features'),recorded.index('emulator -version'))
+            self.assertEqual((root/'android-evidence/emulator-boot-version.txt').read_text(),'Android emulator version hermetic\n')
             self.assertEqual(recorded.count('adb shell dumpsys SurfaceFlinger'),1)
             self.assertLess(recorded.index('adb features'),recorded.index('adb shell dumpsys SurfaceFlinger'))
             renderer_evidence=(root/'android-evidence/emulator-surfaceflinger.txt').read_text()
@@ -92,6 +98,24 @@ exit 99''')
         for renderer in (0,13):
             with self.subTest(renderer_exit=renderer):
                 self.assertEqual(self.run_case(renderer=renderer)[0],0)
+    def test_pre_action_metadata_does_not_require_uninstalled_emulator(self):
+        workflow=WORKFLOW.read_text()
+        before,marker,remaining=workflow.partition('      - name: Detect already granted emulator acceleration\n        run: |\n')
+        self.assertTrue(marker)
+        step,marker,after=remaining.partition('      - name: Real emulator UI, protocol, editing and lifecycle tests\n')
+        self.assertTrue(marker)
+        self.assertIn('uses: reactivecircus/android-emulator-runner@v2',after)
+        with tempfile.TemporaryDirectory(prefix='iotools-pre-emulator-') as directory:
+            root=Path(directory)
+            env=os.environ | {'ANDROID_HOME':str(root/'sdk-not-installed'), 'GITHUB_ENV':str(root/'github-env')}
+            result=subprocess.run(['bash','-e','-c',textwrap.dedent(step)],env=env,cwd=root,capture_output=True,timeout=5)
+            self.assertEqual(result.returncode,0,result.stderr.decode())
+            evidence=(root/'android-evidence/emulator-graphics.txt').read_text()
+            self.assertIn('baseline_emulator=37.2.12.0 (build_id 16428233)\n',evidence)
+            self.assertIn('requested_gpu=software\n',evidence)
+            self.assertNotIn('emulator -version',step)
+            self.assertNotIn('/emulator/emulator',step)
+            self.assertIn('ANDROID_EMULATOR_ACCEL=',(root/'github-env').read_text())
     def test_drive_failure_still_runs_aot_and_remains_failed(self):
         code,trace=self.run_case(drive=41)
         self.assertEqual(code,41)

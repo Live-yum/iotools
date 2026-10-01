@@ -183,8 +183,9 @@ def select_simulator(devices, sdk_version, required_udid=None):
     return choices[0]
 
 
-def simulator_xcode_settings(architecture, test_target=False):
+def simulator_xcode_settings(architecture, test_target=False, *, only_active_arch="NO"):
     require(architecture in ("arm64", "x86_64"), f"Unsupported simulator architecture: {architecture}")
+    require(only_active_arch in ("YES", "NO"), "Invalid ONLY_ACTIVE_ARCH value")
     # Match Flutter's explicit simulator SDK selection. The project defaults to
     # iphoneos, and host-architecture substitutions must not change this bundle's
     # already-verified single architecture when XCTest rebuilds the host.
@@ -193,18 +194,69 @@ def simulator_xcode_settings(architecture, test_target=False):
     return [
         "xcrun", "xcodebuild", *target,
         "-configuration", "Debug", "-sdk", "iphonesimulator",
-        f"ARCHS={architecture}", "ONLY_ACTIVE_ARCH=YES",
+        # NO uses the explicit single ARCHS value instead of applying another
+        # active-destination architecture filter. It does not add an Intel slice.
+        f"ARCHS={architecture}", f"ONLY_ACTIVE_ARCH={only_active_arch}",
         f"BUILD_DIR={ROOT / 'mobile/build/ios'}", "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY=",
     ]
 
 
-def simulator_test_command(udid, result, architecture):
-    return simulator_xcode_settings(architecture) + [
+def simulator_test_command(udid, result, architecture, *, only_active_arch="NO"):
+    return simulator_xcode_settings(architecture, only_active_arch=only_active_arch) + [
         # Apple's iOS Simulator destination keys are platform/name/id/OS.
         # Architecture remains pinned in ARCHS, independently of device lookup.
         "test", "-destination", f"platform=iOS Simulator,id={udid}",
         "-parallel-testing-enabled", "NO", "-only-testing:RunnerTests", "-resultBundlePath", str(result),
     ]
+
+
+def xcode_information(command, evidence, name, timeout=60):
+    """Capture one bounded information query, never a test/build retry."""
+    require(any(flag in command for flag in ("-help", "-showBuildSettings", "-showdestinations"))
+            and "-resultBundlePath" not in command, "Expected an Xcode information-only query")
+    path = evidence / name
+    record = {"command": command, "log": name, "timeout_seconds": timeout}
+    with path.open("w") as output:
+        output.write("Diagnostic command: " + json.dumps(command) + "\n")
+        output.flush()
+        try:
+            result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+            record["exit_code"] = result.returncode
+            output.write(f"\nDiagnostic exit code: {result.returncode}\n")
+        except (subprocess.TimeoutExpired, OSError) as error:
+            record.update(exit_code=None, error=str(error))
+            output.write("\nDiagnostic unavailable: " + str(error) + "\n")
+    return record
+
+
+def simulator_test_preflight(udid, result, architecture, evidence):
+    """Compare YES/NO discovery; execute the full XCTest gate only once later."""
+    comparison = {
+        "scope": "Controlled ONLY_ACTIVE_ARCH alignment; discovery is not XCTest acceptance or proof of root cause",
+        "architecture": architecture,
+        "baseline_command_not_executed": simulator_test_command(udid, result, architecture, only_active_arch="YES"),
+        "test_command": simulator_test_command(udid, result, architecture),
+        "diagnostics": {},
+    }
+    # Preserve the selected Xcode's own documentation of the information option.
+    help_record = xcode_information(["xcrun", "xcodebuild", "-help"], evidence, "xcode-preflight-help.log", timeout=30)
+    comparison["diagnostics"]["help"] = help_record
+    supports_destinations = (help_record["exit_code"] == 0
+                             and "-showdestinations" in (evidence / help_record["log"]).read_text())
+    comparison["showdestinations_supported_by_cli_help"] = supports_destinations
+    for label, value in (("baseline", "YES"), ("aligned", "NO")):
+        for target, test_target in (("runner", False), ("runner-tests", True)):
+            command = simulator_xcode_settings(architecture, test_target=test_target, only_active_arch=value) + ["-showBuildSettings"]
+            name = f"xcode-preflight-{label}-{target}-settings.log"
+            comparison["diagnostics"][f"{label}-{target}"] = xcode_information(command, evidence, name)
+        if supports_destinations:
+            # The information flag suppresses execution. Omit resultBundlePath
+            # so this action-specific query cannot occupy the real test result.
+            command = simulator_test_command(udid, result, architecture, only_active_arch=value)[:-2] + ["-showdestinations"]
+            name = f"xcode-preflight-{label}-test-destinations.log"
+            comparison["diagnostics"][f"{label}-test-destinations"] = xcode_information(command, evidence, name)
+    (evidence / "xcode-test-command-comparison.json").write_text(json.dumps(comparison, indent=2))
+    return comparison
 
 
 def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
@@ -251,6 +303,9 @@ def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
     require(not result.exists(), f"Refusing to overwrite existing test evidence: {result}")
     architecture = report["architectures"][0]
     command = simulator_test_command(udid, result, architecture)
+    simulator_test_preflight(udid, result, architecture, evidence)
+    report["xctest_preflight"] = "xcode-test-command-comparison.json"
+    save()
     log = evidence / "host-tests.log"
     with log.open("w") as output:
         completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, timeout=1200)
