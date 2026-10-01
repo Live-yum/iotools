@@ -1,7 +1,7 @@
 name: Flutter mobile standalone APK
 on:
   push:
-    branches: ['feat/android-modern-app']
+    branches: ['feat/android-modern-app', 'feat/flutter-cross-platform']
   pull_request:
     paths: ['mobile/**', 'internal/mobileapi/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'scripts/flutter/**', 'scripts/android-fixtures/**', 'internal/engine/**', 'internal/config/**', 'internal/crypto/**', 'go.mod', 'go.sum']
   workflow_dispatch:

@@ -27,7 +27,7 @@ subprocess.run(['go','run','./scripts/notices','-goos','darwin' if target=='maco
 notices=root/'mobile/build/web/assets/NOTICES'
 assert notices.is_file()
 shutil.copyfile(notices,licenses/'Flutter-NOTICES')
-for notice in (root/'mobile/build/web/fonts').glob('*OFL.txt'):
+for notice in (root/'mobile/build/web/fonts').glob('*.txt'):
     shutil.copyfile(notice,licenses/notice.name)
 archive=root/f'platform-dist/iotools-flutter-web-{target}-{arch}-{sha}.zip'
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:

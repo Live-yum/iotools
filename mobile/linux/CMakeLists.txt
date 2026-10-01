@@ -135,3 +135,11 @@ endif()
 install(FILES "${IOTOOLS_NATIVE_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/iotools.png" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+
+# Pin fonts in the application bundle instead of depending on distribution
+# fallback-font discovery (which differs on ARM64 Flutter engines).
+set(IOTOOLS_FONTS "${CMAKE_CURRENT_SOURCE_DIR}/../native/fonts")
+if(NOT EXISTS "${IOTOOLS_FONTS}/NotoSansSC.ttf" OR NOT EXISTS "${IOTOOLS_FONTS}/NotoEmoji.ttf")
+  message(FATAL_ERROR "Run scripts/flutter-platforms/prepare-native-fonts.py first")
+endif()
+install(DIRECTORY "${IOTOOLS_FONTS}/" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/iotools-fonts" COMPONENT Runtime)

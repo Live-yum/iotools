@@ -25,11 +25,10 @@ case "$target" in
   export GOOS=darwin
   export CGO_CFLAGS="-mmacosx-version-min=13.0"
   export CGO_LDFLAGS="-mmacosx-version-min=13.0"
-  for apple_arch in arm64 amd64; do
-   GOARCH="$apple_arch" go build -trimpath -ldflags "-s -w -X main.version=$build_sha" -buildmode=c-shared -o "$out/$apple_arch.dylib" ./cmd/iotools-native
-  done
+  case "$arch" in arm64) apple_arch=arm64;; amd64) apple_arch=x86_64;; *) echo 'Unsupported macOS architecture' >&2; exit 2;; esac
   native_library="$out/libiotools_native.dylib"
-  lipo -create "$out/arm64.dylib" "$out/amd64.dylib" -output "$native_library"
+  GOARCH="$arch" go build -trimpath -ldflags "-s -w -X main.version=$build_sha" -buildmode=c-shared -o "$native_library" ./cmd/iotools-native
+  xcrun lipo "$native_library" -verify_arch "$apple_arch"
   install_name_tool -id '@rpath/libiotools_native.dylib' "$native_library"
   codesign --force --sign - --timestamp=none "$native_library"
   ;;
@@ -47,7 +46,7 @@ case "$target" in
   go build -trimpath -ldflags "-X main.version=$build_sha" -buildmode=c-archive -o "$native_library" ./cmd/iotools-native
   apple_arch=arm64
   if test "$arch" = amd64; then apple_arch=x86_64; fi
-  xcrun lipo -verify_arch "$apple_arch" "$native_library"
+  xcrun lipo "$native_library" -verify_arch "$apple_arch"
   symbols="$(xcrun nm -g "$native_library")"
   for symbol in IotoolsNativeABIVersion IotoolsNativeOpen IotoolsNativeCommand IotoolsNativeLifecycle IotoolsNativeFree; do
    printf '%s\n' "$symbols" | grep -E " [Tt] _$symbol$" >/dev/null

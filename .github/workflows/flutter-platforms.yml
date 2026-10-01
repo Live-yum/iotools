@@ -75,9 +75,18 @@ jobs:
           flutter analyze
           flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+      - name: Prepare pinned Linux CJK and emoji fonts
+        if: matrix.target == 'linux'
+        run: python3 scripts/flutter-platforms/prepare-native-fonts.py
       - name: Real Linux desktop UI and Go engine acceptance
         if: matrix.target == 'linux'
         run: |
+          mkdir -p "$RUNNER_TEMP/iotools-fontconfig/empty" "$RUNNER_TEMP/iotools-fontconfig/cache"
+          printf '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><reset-dirs/><dir>%s/empty</dir><cachedir>%s/cache</cachedir></fontconfig>' "$RUNNER_TEMP/iotools-fontconfig" "$RUNNER_TEMP/iotools-fontconfig" > "$RUNNER_TEMP/iotools-fontconfig/fonts.conf"
+          export FONTCONFIG_FILE="$RUNNER_TEMP/iotools-fontconfig/fonts.conf" FONTCONFIG_PATH="$RUNNER_TEMP/iotools-fontconfig"
+          test -z "$(fc-list)"
+          mkdir -p platform-evidence
+          printf 'Fontconfig exposed zero system fonts during native UI acceptance.\n' > platform-evidence/linux-font-isolation.txt
           cd mobile
           xvfb-run -a flutter test integration_test/native_smoke_test.dart -d linux --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
       - name: Real Windows desktop UI and Go engine acceptance
@@ -102,7 +111,7 @@ jobs:
           foreach ($name in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') { Copy-Item (Join-Path $crt.FullName $name) $out }
       - name: Compile sandboxed macOS Flutter application
         if: matrix.target == 'macos'
-        run: bash scripts/flutter-platforms/build-macos.sh
+        run: bash scripts/flutter-platforms/build-macos.sh '${{ matrix.arch }}'
       - name: Package real native bundle and dependency report
         run: python3 scripts/flutter-platforms/package-native.py '${{ matrix.target }}' '${{ matrix.arch }}'
       - uses: actions/upload-artifact@v4

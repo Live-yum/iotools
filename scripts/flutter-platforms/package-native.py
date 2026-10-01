@@ -17,6 +17,8 @@ if target == "linux":
     assert binary.read_bytes()[:4] == b"\x7fELF" and core.read_bytes()[:4] == b"\x7fELF"
     assert (bundle/"lib/libflutter_linux_gtk.so").is_file()
     assert (bundle/"lib/libapp.so").is_file()
+    for name in ('NotoSansSC.ttf','NotoEmoji.ttf'):
+        assert (bundle/'data/iotools-fonts'/name).is_file(), name
 if target == "windows":
     assert binary.read_bytes()[:2] == b"MZ" and core.read_bytes()[:2] == b"MZ"
 out=root/'platform-dist';out.mkdir(exist_ok=True)
@@ -26,6 +28,13 @@ if target=='linux':
         result=subprocess.run(['ldd',str(file)],check=True,capture_output=True,text=True)
         assert 'not found' not in result.stdout,result.stdout
         (evidence/(file.name+'-ldd.txt')).write_text(result.stdout)
+if target=='macos':
+    expected={'arm64':'arm64','amd64':'x86_64'}[arch]
+    apple_binaries=[binary,core,bundle/'Contents/Frameworks/FlutterMacOS.framework/FlutterMacOS',bundle/'Contents/Frameworks/App.framework/App']
+    for file in apple_binaries:
+        actual=subprocess.check_output(['xcrun','lipo','-archs',str(file)],text=True).split()
+        assert actual==[expected],f'{file}: expected one {expected} architecture, got {actual}'
+    (evidence/'macho-architectures.json').write_text(json.dumps({'expected':expected,'verified':[str(file.relative_to(bundle)) for file in apple_binaries]},indent=2)+'\n')
 if target=='windows':
     for name in ('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll'):
         assert (bundle/name).is_file(),name
@@ -40,7 +49,7 @@ if target=='windows':
         assert source.is_file(),f'Unbundled native dependency {name}'
         shutil.copyfile(source,bundle/name)
 instructions={
- 'linux': '解压完整 bundle 目录，保留 lib 和 data 子目录；运行 ./iotools。需要带图形会话的 Linux、GTK 3 及其系统依赖。本包基于 Ubuntu 22.04 构建，不是无系统依赖的单文件程序。',
+ 'linux': '解压完整 bundle 目录，保留 lib 和 data 子目录；运行 ./iotools。需要带图形会话的 Linux、GTK 3 及其系统依赖。界面中文/表情字体随 data/iotools-fonts 提供。本包基于 Ubuntu 22.04 构建，不是无系统依赖的单文件程序。',
  'windows': '解压完整 Release 目录后运行 iotools.exe。保留同目录 DLL 和 data 子目录；随包包含程序所需 Visual C++ 运行库。此开发构建没有发行者 Authenticode 签名。',
  'macos': '解压并使用完整 iotools.app。最低 macOS 13；保留应用包内资源。本包保持 App Sandbox，使用开发测试 ad-hoc 签名，未经 Apple Developer ID 公证。系统如阻止运行，请使用自己的受信签名构建流程；不要绕过安全警告。',
 }[target]
@@ -49,9 +58,12 @@ readme.write_text('iotools Flutter 原生界面\n\n'+instructions+'\n\nWindows�
 license_dir=bundle/('Contents/Resources/licenses' if target=='macos' else 'licenses')
 license_dir.mkdir(parents=True,exist_ok=True)
 import shutil
+if target=='linux':
+    for notice in (bundle/'data/iotools-fonts').glob('*.txt'):
+        shutil.copyfile(notice,license_dir/notice.name)
 shutil.copyfile(root/'LICENSE',license_dir/'iotools-LICENSE')
 go_target='darwin' if target=='macos' else target
-go_arch='arm64,amd64' if target=='macos' else arch
+go_arch=arch
 subprocess.run(['go','run','./scripts/notices','-goos',go_target,'-goarch',go_arch,'-cgo','1',str(license_dir/'Go'),'./cmd/iotools-native'],cwd=root,check=True)
 if target=='macos':
     # Added license resources are covered by the final ad-hoc test signature.

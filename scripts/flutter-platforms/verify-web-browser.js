@@ -44,7 +44,9 @@ const { chromium } = require('playwright');
     page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin);
-    await page.locator('flt-semantics-placeholder').click({ force: true, timeout: 30000 });
+    // Flutter intentionally places this accessible control at (-1,-1).
+    // A focused keyboard activation is the supported assistive-technology path.
+    await page.locator('flt-semantics-placeholder').press('Enter', { timeout: 30000 });
     await page.getByText('浏览器精确写入', { exact: true }).click({ timeout: 30000 });
     await page.getByRole('button', { name: '执行', exact: true }).click();
     await page.getByText('确认执行写操作', { exact: true }).waitFor();
@@ -63,7 +65,9 @@ const { chromium } = require('playwright');
     await page.getByText('浏览器真实响应😀', { exact: false }).first().waitFor();
     await page.screenshot({ path: path.join(output, '02-real-response.png'), fullPage: true });
     await page.reload();
-    await page.locator('flt-semantics-placeholder').click({ force: true, timeout: 30000 });
+    // Flutter intentionally places this accessible control at (-1,-1).
+    // A focused keyboard activation is the supported assistive-technology path.
+    await page.locator('flt-semantics-placeholder').press('Enter', { timeout: 30000 });
     await page.getByText('浏览器精确写入', { exact: true }).waitFor({ timeout: 30000 });
     assert.equal(received.length, 1, 'reload must not replay a confirmed write');
     assert.deepEqual(errors, []);

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:iotools_mobile/core/json.dart';
+import 'package:iotools_mobile/core/offline_fonts.dart';
 import 'action_interaction.dart';
 import 'app_test.dart' show waitFor, tapKey, tapText, openRequest;
 import 'runtime_adapter.dart';
@@ -12,6 +13,7 @@ void main() {
   WidgetController.hitTestWarningShouldBeFatal = true;
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('actual native desktop UI: exact HTTP write, cancel, hidden and no replay', (tester) async {
+    await loadOfflineFonts();
     final runtime = protocolTestRuntime();
     final engine = runtime.engine, platform = runtime.platform;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

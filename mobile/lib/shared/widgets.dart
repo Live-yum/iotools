@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/services.dart';
 import '../core/json.dart';
 
@@ -60,10 +60,11 @@ class ActionWrap extends StatelessWidget {
 
 ThemeData appTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
+  final bundledFont = kIsWeb || defaultTargetPlatform == TargetPlatform.linux;
   return ThemeData(
     useMaterial3: true,
-    fontFamily: kIsWeb ? 'NotoSansSC' : null,
-    fontFamilyFallback: kIsWeb ? const ['NotoEmoji'] : null,
+    fontFamily: bundledFont ? 'NotoSansSC' : null,
+    fontFamilyFallback: bundledFont ? const ['NotoEmoji'] : null,
     brightness: brightness,
     colorScheme:
         ColorScheme.fromSeed(

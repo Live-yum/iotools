@@ -1,22 +1,31 @@
 """Pin and verify official OFL fonts for entirely same-origin Web rendering."""
 from pathlib import Path
-import hashlib,json,urllib.request
+import hashlib,json,os,shutil,urllib.request
 root=Path(__file__).resolve().parents[2]
 out=root/'mobile/build/web/fonts';out.mkdir(parents=True,exist_ok=True)
-base='https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/'
-files=[
-('NotoSansSC.ttf','notosanssc/NotoSansSC%5Bwght%5D.ttf','a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da'),
-('NotoSansSC-OFL.txt','notosanssc/OFL.txt','1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9'),
-('NotoEmoji.ttf','notoemoji/NotoEmoji%5Bwght%5D.ttf','de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551'),
-('NotoEmoji-OFL.txt','notoemoji/OFL.txt','500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b'),
-]
-records=[]
-for name,path,expected in files:
-    target=out/name
-    if not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest()!=expected:
-        with urllib.request.urlopen(base+path,timeout=120) as response: data=response.read(24*1024*1024)
-        assert hashlib.sha256(data).hexdigest()==expected, f'Unexpected official font bytes: {name}'
-        target.write_bytes(data)
-    records.append({'file':name,'sha256':expected,'source':base+path})
+from font_assets import prepare_fonts
+records=prepare_fonts(out)
+# CanvasKit 3.35.7 downloads Roboto before main() unless FontManifest declares
+# it. Use the official pinned Flutter SDK's unchanged font and license bytes.
+flutter=os.environ.get('FLUTTER_ROOT')
+if not flutter:
+    executable=shutil.which('flutter')
+    assert executable, 'Set FLUTTER_ROOT or put the pinned Flutter on PATH'
+    flutter=str(Path(executable).resolve().parents[1])
+sdk_fonts=Path(flutter)/'bin/cache/artifacts/material_fonts'
+roboto=sdk_fonts/'Roboto-Regular.ttf'
+expected='79e851404657dac2106b3d22ad256d47824a9a5765458edb72c9102a45816d95'
+assert hashlib.sha256(roboto.read_bytes()).hexdigest()==expected, 'Unexpected pinned Flutter Roboto font'
+font_assets=out.parent/'assets/fonts';font_assets.mkdir(parents=True,exist_ok=True)
+shutil.copyfile(roboto,font_assets/'Roboto-Regular.ttf')
+roboto_license=sdk_fonts/'Roboto_LICENSE.txt'
+assert hashlib.sha256(roboto_license.read_bytes()).hexdigest()=='cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30', 'Unexpected pinned Roboto license'
+shutil.copyfile(roboto_license,out/'Roboto-LICENSE.txt')
+manifest_path=out.parent/'assets/FontManifest.json'
+manifest=json.loads(manifest_path.read_text())
+manifest=[family for family in manifest if family.get('family')!='Roboto']
+manifest.append({'family':'Roboto','fonts':[{'asset':'fonts/Roboto-Regular.ttf'}]})
+manifest_path.write_text(json.dumps(manifest,separators=(',',':')))
+records.append({'file':'../assets/fonts/Roboto-Regular.ttf','sha256':expected,'source':'Pinned official Flutter 3.35.7 material_fonts/Roboto-Regular.ttf'})
 (out/'manifest.json').write_text(json.dumps(records,indent=2)+'\n')
 print('Verified same-origin Noto fonts and complete OFL notices')
