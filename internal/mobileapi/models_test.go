@@ -175,3 +175,60 @@ func TestSandboxHooksCoverCurlAndDynamicFile(t *testing.T) {
 		t.Fatal("external reference read accepted")
 	}
 }
+
+func TestApprovedWritesFreezeNonHTTPAndReconfirmChangedHTTP(t *testing.T) {
+	t.Setenv("IOTOOLS_MOBILE_TEST_TARGET", "mock://local")
+	s := testSession(t, config.Request{ID: "write", Protocol: "modbus", Action: "write-register", Endpoint: "${env:IOTOOLS_MOBILE_TEST_TARGET}", Params: map[string]any{"unit": 240, "address": 2, "value": 7}})
+	token := previewToken(t, s, "write")
+	t.Setenv("IOTOOLS_MOBILE_TEST_TARGET", "tcp://127.0.0.1:1")
+	mustOK(t, s, map[string]any{"op": "run", "token": token, "confirmed": true})
+	events := awaitDone(t, s)
+	if events[len(events)-1]["data"].(map[string]any)["status"] != "completed" {
+		t.Fatalf("approved write was retargeted: %v", events)
+	}
+	t.Setenv("IOTOOLS_MOBILE_TEST_HTTP", "http://127.0.0.1:1/approved")
+	h := testSession(t, config.Request{ID: "write", Protocol: "http", Action: "POST", Endpoint: "${env:IOTOOLS_MOBILE_TEST_HTTP}", Timeout: "3s", Params: map[string]any{"headers": map[string]any{"Authorization": "PRIVATE_RUNTIME_HEADER"}, "body": "synthetic"}})
+	token = previewToken(t, h, "write")
+	t.Setenv("IOTOOLS_MOBILE_TEST_HTTP", "http://127.0.0.1:1/changed?token=PRIVATE_QUERY")
+	mustOK(t, h, map[string]any{"op": "run", "token": token, "confirmed": true})
+	deadline := time.Now().Add(time.Second)
+	answered := false
+	for time.Now().Before(deadline) {
+		data := mustOK(t, h, map[string]any{"op": "events"}).(map[string]any)
+		for _, item := range data["events"].([]any) {
+			event := item.(map[string]any)
+			if event["kind"] == "interaction" {
+				payload := event["data"].(map[string]any)
+				b, _ := json.Marshal(payload)
+				if strings.Contains(string(b), "PRIVATE_RUNTIME_HEADER") || strings.Contains(string(b), "PRIVATE_QUERY") {
+					t.Fatal("runtime confirmation exposed secrets")
+				}
+				mustOK(t, h, map[string]any{"op": "respond", "interaction_id": payload["interaction_id"], "confirmed": false})
+				answered = true
+			}
+		}
+		if answered {
+			break
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
+	if !answered {
+		t.Fatal("changed HTTP write was not separately confirmed")
+	}
+	events = awaitDone(t, h)
+	if events[len(events)-1]["data"].(map[string]any)["status"] != "failed" {
+		t.Fatal("declined HTTP write did not stop")
+	}
+}
+func TestUnknownDuplicateAndDepthFailBeforeRun(t *testing.T) {
+	s := testSession(t)
+	for _, input := range []string{`{"op":"state","op":"run"}`, `{"op":"preview","request":{"id":"a","protocol":"http","action":"GET","endpoint":"http://127.0.0.1","unexpected":true}}`, `{"op":"state","value":` + strings.Repeat("[", 65) + "0" + strings.Repeat("]", 65) + "}"} {
+		if strings.Contains(s.Command(input), `"ok":true`) {
+			t.Fatalf("invalid structure accepted: %s", input)
+		}
+	}
+	source := "requests:\n  r:\n    $ref: ~/private.yaml#/r\n"
+	if cmd(t, s, map[string]any{"op": "config.validate", "source": source})["ok"] != false {
+		t.Fatal("tilde reference bypass accepted")
+	}
+}

@@ -19,9 +19,6 @@ import (
 )
 
 func (s *Session) prepare(c command) (any, error) {
-	if e := s.idle(); e != nil {
-		return nil, e
-	}
 	s.mu.Lock()
 	paused := s.paused
 	s.mu.Unlock()
@@ -31,6 +28,11 @@ func (s *Session) prepare(c command) (any, error) {
 	collection, r, profile, e := s.selected(c)
 	if e != nil {
 		return nil, e
+	}
+	if !(r.Protocol == "opcua" && r.Action == "subscribe") {
+		if e := s.idle(); e != nil {
+			return nil, e
+		}
 	}
 	if !knownAction(r.Protocol, r.Action) {
 		return nil, errors.New("choose a supported protocol and operation")
@@ -45,7 +47,7 @@ func (s *Session) prepare(c command) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	if e = s.prepareRequest(&resolved); e != nil {
+	if e = s.preparePreviewRequest(&resolved); e != nil {
 		return nil, e
 	}
 	if r.Mutates() && s.options.ReadOnly {
@@ -69,7 +71,7 @@ func (s *Session) prepare(c command) (any, error) {
 	if len(s.previews) >= 16 {
 		s.previews = map[string]preview{}
 	}
-	s.previews[token] = preview{Token: token, Request: r, Collection: collection, Profile: profile, Revision: s.revision, Expires: time.Now().Add(5 * time.Minute)}
+	s.previews[token] = preview{Token: token, Request: r, Resolved: resolved, Collection: collection, Profile: profile, Revision: s.revision, Expires: time.Now().Add(5 * time.Minute)}
 	return map[string]any{"token": token, "request": displayRequest(resolved), "mutates": r.Mutates(), "confirmation_required": r.Mutates(), "summary": fmt.Sprintf("%s %s · %s", strings.ToUpper(r.Protocol), r.Action, displayRequest(resolved).Endpoint), "warnings": warnings}, nil
 }
 
@@ -90,7 +92,7 @@ func (s *Session) run(c command) (any, error) {
 		return nil, errors.New("an operation is already running")
 	}
 	p, ok = s.previews[c.Token]
-	if !ok || p.Revision != s.revision || time.Now().After(p.Expires) {
+	if !ok || p.Utility != nil || p.Revision != s.revision || time.Now().After(p.Expires) {
 		s.mu.Unlock()
 		return nil, errors.New("preview expired or configuration changed; preview again")
 	}
@@ -141,12 +143,8 @@ func (s *Session) run(c command) (any, error) {
 		options := s.workflowOptions(runID, true)
 		// Confirm a changed runtime target separately, even after the source preview
 		// was approved. Chain writes always receive their own dialog.
-		expected, e := p.Collection.Resolve(p.Request, p.Profile)
-		if e != nil {
-			runErr = e
-			return
-		}
-		if e = s.prepareRequest(&expected); e != nil {
+		expected := p.Resolved
+		if e := s.preparePreviewRequest(&expected); e != nil {
 			runErr = e
 			return
 		}
@@ -236,6 +234,10 @@ func (s *Session) confirm(ctx context.Context, runID, title string, r config.Req
 	return v.Confirmed, e
 }
 func (s *Session) interact(ctx context.Context, runID string, data map[string]any) (interactionReply, error) {
+	encoded, e := wireMarshal(data)
+	if e != nil || len(encoded) > maxEventBytes-1024 {
+		return interactionReply{}, errors.New("交互预览超过64KiB，请缩小请求或选择列表后重试")
+	}
 	id, e := newToken()
 	if e != nil {
 		return interactionReply{}, e

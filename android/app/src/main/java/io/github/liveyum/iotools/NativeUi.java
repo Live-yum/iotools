@@ -38,6 +38,7 @@ final class NativeUi {
     ScrollView scroll(View child){ScrollView s=new ScrollView(context);s.setFillViewport(true);s.setClipToPadding(false);s.addView(child);return s;}
     HorizontalScrollView chips(View row){HorizontalScrollView s=new HorizontalScrollView(context);s.setHorizontalScrollBarEnabled(false);s.addView(row);return s;}
     void pair(LinearLayout p,String label,String value){LinearLayout r=row();TextView k=text(label,12,MUTED);TextView v=text(value,13,INK);v.setTextIsSelectable(true);r.addView(k,new LinearLayout.LayoutParams(dp(98),-2));r.addView(v,new LinearLayout.LayoutParams(0,-2,1));r.setPadding(0,dp(5),0,dp(5));p.addView(r);}
+    static String safeEndpoint(String value){return value.replaceAll("(://)[^/@\\s]+@","$1[已隐藏]@").replaceAll("(?i)([?&](?:token|access_token|refresh_token|id_token|api_key|apikey|key|secret|client_secret|password|pwd|signature|sig|authorization)=)[^&#\\s]*","$1[已隐藏]");}
     static JSONObject object(Object value){return value instanceof JSONObject?(JSONObject)value:new JSONObject();}
     static JSONArray array(Object value){return value instanceof JSONArray?(JSONArray)value:new JSONArray();}
     static String pretty(Object value){try{if(value instanceof JSONObject)return ((JSONObject)value).toString(2);if(value instanceof JSONArray)return ((JSONArray)value).toString(2);}catch(JSONException ignored){}return value==null||value==JSONObject.NULL?"null":String.valueOf(value);}

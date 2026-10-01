@@ -59,7 +59,7 @@ func Catalog() map[string]any {
 		names := map[string]string{"http": "HTTP", "mqtt": "MQTT", "kafka": "Kafka", "modbus": "Modbus", "opcua": "OPC UA"}
 		p := Protocol{ID: id, Name: names[id], Actions: []Action{}, Fields: []Field{}}
 		for _, action := range strings.Fields(protocolActions[id]) {
-			p.Actions = append(p.Actions, Action{ID: action, Name: strings.ReplaceAll(action, "-", " "), Mutates: (config.Request{Protocol: id, Action: action}).Mutates(), Defaults: actionDefaults(id, action)})
+			p.Actions = append(p.Actions, Action{ID: action, Name: actionLabels[action] + " · " + action, Mutates: (config.Request{Protocol: id, Action: action}).Mutates(), Defaults: actionDefaults(id, action)})
 		}
 		for _, key := range strings.Fields(protocolFields[id]) {
 			kind := "text"
@@ -81,23 +81,30 @@ func Catalog() map[string]any {
 			}
 			hint := ""
 			if strings.HasSuffix(key, "_file") || key == "next_config" {
-				hint = "App-private relative path; import files using the Android document picker"
+				hint = "应用私有目录中的相对路径；请使用 Android 文件选择器导入附件"
 			}
 			if key == "value" {
-				hint = "JSON scalar or text; quote 64-bit integers to preserve precision"
+				hint = "JSON 标量或文本；64位整数使用字符串以保留精度"
 				kind = "json"
 			}
 			if key == "word_order" {
 				hint = "ABCD, CDAB, BADC or DCBA"
 			}
 			if key == "value_type" {
-				hint = "Choose the protocol's exact value type (for example u16 / f32 or UInt16 / Double)"
+				hint = "使用协议的确切类型名称，例如 u16 / f32 或 UInt16 / Double"
 			}
-			p.Fields = append(p.Fields, Field{Key: key, Label: strings.ReplaceAll(key, "_", " "), Type: kind, Hint: hint})
+			if key == "keymap" {
+				hint = "仅保留桌面配置兼容性，Android 不提供桌面功能键操作"
+			}
+			label := fieldLabels[key]
+			if label == "" {
+				label = strings.ReplaceAll(key, "_", " ")
+			}
+			p.Fields = append(p.Fields, Field{Key: key, Label: label + " · " + key, Type: kind, Hint: hint})
 		}
 		protocols = append(protocols, p)
 	}
-	return map[string]any{"protocols": protocols, "utilities": []string{"config.get", "config.save", "config.validate", "config.import", "request.save", "request.delete", "profile.set", "options.set", "http.curl", "http.filter", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "crypto.convert", "crypto.transform", "modbus.encode", "modbus.rules", "modbus.import", "modbus.registers.import", "modbus.registers.export", "modbus.write-log", "file.read", "file.write", "files.list", "config.switch", "subscriptions.list", "subscriptions.stop", "subscriptions.stop-all", "opcua.connections", "opcua.connections.clear", "opcua.identity", "modbus.discovery.preview", "modbus.discovery.run", "modbus.controller.start", "modbus.snapshot.save", "modbus.snapshot.load", "modbus.snapshot.diff", "modbus.csv.diff", "modbus.interpret", "modbus.pause", "modbus.resume", "modbus.stats"}, "limits": map[string]int{"command_bytes": maxCommandBytes, "reply_bytes": maxReplyBytes, "event_bytes": maxEventBytes, "event_queue_bytes": maxQueueBytes, "event_count": maxQueueEvents}}
+	return map[string]any{"protocols": protocols, "utilities": []string{"config.get", "config.save", "config.validate", "config.import", "request.save", "request.delete", "profile.set", "options.set", "http.curl", "http.filter", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection-script", "history.collection.preview", "crypto.convert", "crypto.transform", "modbus.encode", "modbus.rules", "modbus.import", "modbus.registers.import", "modbus.registers.export", "modbus.write-log", "file.read", "file.write", "files.list", "config.switch", "subscriptions.list", "subscriptions.stop", "subscriptions.stop-all", "opcua.connections", "opcua.connections.clear", "opcua.identity", "modbus.discovery.preview", "modbus.discovery.run", "modbus.controller.start", "modbus.snapshot.save", "modbus.snapshot.load", "modbus.snapshot.diff", "modbus.csv.diff", "modbus.interpret", "modbus.pause", "modbus.resume", "modbus.stats", "result.get"}, "limits": map[string]int{"command_bytes": maxCommandBytes, "reply_bytes": maxReplyBytes, "event_bytes": maxEventBytes, "event_queue_bytes": maxQueueBytes, "event_count": maxQueueEvents}}
 }
 func actionDefaults(protocol, action string) map[string]any {
 	p := map[string]any{}

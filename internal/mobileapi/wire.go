@@ -3,6 +3,8 @@ package mobileapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math/big"
 	"net/url"
 	"strings"
@@ -101,4 +103,63 @@ func displayRequest(r config.Request) config.Request {
 		out.Endpoint = parsed.String()
 	}
 	return out
+}
+
+// Reject duplicate keys and excessive nesting before unmarshalling DTOs. A
+// duplicated action/token/endpoint must never acquire last-value-wins meaning.
+func validateJSONStructure(input string) error {
+	d := json.NewDecoder(strings.NewReader(input))
+	d.UseNumber()
+	var value func(int) error
+	value = func(depth int) error {
+		if depth > 64 {
+			return fmt.Errorf("JSON nesting exceeds 64 levels")
+		}
+		token, e := d.Token()
+		if e != nil {
+			return e
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for d.More() {
+				k, e := d.Token()
+				if e != nil {
+					return e
+				}
+				key, ok := k.(string)
+				if !ok {
+					return fmt.Errorf("JSON object key must be text")
+				}
+				if seen[key] {
+					return fmt.Errorf("duplicate JSON field %q", key)
+				}
+				seen[key] = true
+				if e = value(depth + 1); e != nil {
+					return e
+				}
+			}
+		case '[':
+			for d.More() {
+				if e = value(depth + 1); e != nil {
+					return e
+				}
+			}
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+		_, e = d.Token()
+		return e
+	}
+	if e := value(0); e != nil {
+		return e
+	}
+	if _, e := d.Token(); e != io.EOF {
+		return fmt.Errorf("expected exactly one JSON command")
+	}
+	return nil
 }

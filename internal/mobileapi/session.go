@@ -46,6 +46,8 @@ type queuedEvent struct {
 }
 
 type preview struct {
+	Digest     string
+	Resolved   config.Request
 	Utility    *command
 	Token      string
 	Request    config.Request
@@ -61,6 +63,11 @@ type interactionReply struct {
 }
 
 type Session struct {
+	results                      map[string]cachedResult
+	resultOrder                  []string
+	resultBytes                  int
+	evictedResults               []string
+	evictedResultCount           uint64
 	modbusPause                  *engine.ModbusPauseController
 	modbusStats                  map[string]any
 	subscriptions                map[string]*subscription
@@ -100,7 +107,7 @@ func Open(path, version string, options Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{path: filepath.Join(real, filepath.Base(path)), root: real, version: version, options: options, previews: map[string]preview{}, subscriptions: map[string]*subscription{}, interactions: map[string]chan interactionReply{}, events: []json.RawMessage{}}
+	s := &Session{path: filepath.Join(real, filepath.Base(path)), root: real, version: version, options: options, previews: map[string]preview{}, subscriptions: map[string]*subscription{}, results: map[string]cachedResult{}, interactions: map[string]chan interactionReply{}, events: []json.RawMessage{}}
 	if err = s.privatePath(s.path); err != nil {
 		return nil, err
 	}
@@ -164,7 +171,7 @@ func (s *Session) stateLocked() map[string]any {
 		profiles = append(profiles, name)
 	}
 	sort.Strings(profiles)
-	return map[string]any{"version": s.version, "profile": s.profile, "profiles": profiles, "requests": s.collection.Requests, "options": s.options, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "closed": s.closed, "revision": s.revision}
+	return map[string]any{"path": s.path, "version": s.version, "profile": s.profile, "profiles": profiles, "requests": s.collection.Requests, "options": s.options, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "closed": s.closed, "revision": s.revision}
 }
 
 func reply(data any, err error) string {
@@ -199,6 +206,9 @@ func (s *Session) Command(input string) (output string) {
 	if len(input) > maxCommandBytes {
 		return reply(nil, errors.New("command exceeds 8 MiB"))
 	}
+	if err := validateJSONStructure(input); err != nil {
+		return reply(nil, err)
+	}
 	var c command
 	dec := json.NewDecoder(strings.NewReader(input))
 	dec.DisallowUnknownFields()
@@ -219,7 +229,18 @@ func (s *Session) Command(input string) (output string) {
 		return s.Poll()
 	}
 	if c.Op == "cancel" {
-		s.cancelRun()
+		s.mu.Lock()
+		current := s.runID
+		cancel := s.cancel
+		if c.RunID != "" && c.RunID != current {
+			s.mu.Unlock()
+			return reply(nil, errors.New("operation no longer matches run_id"))
+		}
+		s.previews = map[string]preview{}
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		return reply(map[string]any{"cancelled": true}, nil)
 	}
 	if c.Op == "pause" {
@@ -254,8 +275,10 @@ func (s *Session) Poll() string {
 	}
 	s.events = nil
 	s.eventBytes = 0
-	data := map[string]any{"events": events, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "dropped": s.dropped}
+	data := map[string]any{"events": events, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "dropped": s.dropped, "evicted_result_ids": s.evictedResults, "evicted_result_count": s.evictedResultCount}
 	s.dropped = 0
+	s.evictedResults = nil
+	s.evictedResultCount = 0
 	return reply(data, nil)
 }
 
@@ -275,17 +298,31 @@ func (s *Session) emit(runID, kind string, data any) {
 	}
 	if len(b) > maxEventBytes {
 		// Keep a truthful, bounded preview, while explicitly identifying omitted data.
-		raw, _ := json.Marshal(data)
+		raw, _ := wireMarshal(data)
 		n := maxEventBytes / 4
 		if len(raw) < n {
 			n = len(raw)
 		}
-		ev.Data = map[string]any{"truncated": true, "original_bytes": len(raw), "preview": string(bytes.ToValidUTF8(raw[:n], []byte("�")))}
+		detail := map[string]any{"truncated": true, "original_bytes": len(raw), "preview": string(bytes.ToValidUTF8(raw[:n], []byte("�")))}
+		if len(raw) <= maxCachedResultBytes {
+			resultID := fmt.Sprintf("%s:%d", runID, s.sequence)
+			s.cacheResultLocked(resultID, runID, kind, raw)
+			detail["result_id"] = resultID
+		} else {
+			detail["result_unavailable_reason"] = "结果超过单份16MiB内存上限，请缩小查询范围"
+		}
+		ev.Data = detail
 		b, _ = wireMarshal(ev)
 	}
 	for len(s.events) > 0 && (len(s.events) >= maxQueueEvents || s.eventBytes+len(b) > maxQueueBytes) {
-		s.eventBytes -= len(s.events[0])
-		s.events = s.events[1:]
+		index := 0
+		for index < len(s.events)-1 && bytes.Contains(s.events[index], []byte(`"kind":"interaction"`)) {
+			index++
+		}
+		s.eventBytes -= len(s.events[index])
+		copy(s.events[index:], s.events[index+1:])
+		s.events[len(s.events)-1] = nil
+		s.events = s.events[:len(s.events)-1]
 		s.dropped++
 	}
 	s.events = append(s.events, b)
@@ -338,6 +375,9 @@ func (s *Session) Close() {
 	s.previews = nil
 	s.events = nil
 	s.eventBytes = 0
+	s.results = nil
+	s.resultOrder = nil
+	s.resultBytes = 0
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()

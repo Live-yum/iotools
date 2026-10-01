@@ -51,7 +51,11 @@ func (s *Session) privatePath(name string) error {
 	}
 	return nil
 }
-func (s *Session) prepareRequest(r *config.Request) error {
+func (s *Session) prepareRequest(r *config.Request) error { return s.scopeRequest(r, false) }
+func (s *Session) preparePreviewRequest(r *config.Request) error {
+	return s.scopeRequest(r, r.Protocol == "http")
+}
+func (s *Session) scopeRequest(r *config.Request, templates bool) error {
 	if r.Protocol == "modbus" && strings.HasPrefix(r.Endpoint, "rtu://") {
 		return errors.New("Android cannot open desktop serial paths; select an attached USB device or RTU-over-TCP")
 	}
@@ -64,6 +68,9 @@ func (s *Session) prepareRequest(r *config.Request) error {
 			// HTTP workflow resolves templates before this final check. A source preview
 			// cannot authorize a path whose value is still dynamic.
 			if strings.Contains(text, "{{") {
+				if templates {
+					continue
+				}
 				return fmt.Errorf("%s requires a concrete app-private path", key)
 			}
 			name, e := s.resolvePrivate(text)
@@ -106,6 +113,9 @@ func (s *Session) parseCollection(data []byte) (*config.Collection, error) {
 						value := n.Content[i+1].Value
 						base, _, found := strings.Cut(value, "#")
 						if found && base != "" {
+							if strings.HasPrefix(base, "~/") {
+								return errors.New("集合引用必须使用应用私有目录路径，不能使用主目录缩写")
+							}
 							if !filepath.IsAbs(base) {
 								base = filepath.Join(filepath.Dir(path), base)
 							}

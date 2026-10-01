@@ -32,32 +32,38 @@ public class StandaloneTest {
  @Test public void modernNativeHTTPWriteConfirmationEditingAndLifecycle()throws Exception {
   Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();NativeRuntime.close();
   AtomicInteger reads=new AtomicInteger(),writes=new AtomicInteger();
+  java.util.concurrent.CountDownLatch slowRelease=new java.util.concurrent.CountDownLatch(1);
   ServerSocket server=new ServerSocket(0,10,InetAddress.getByName("127.0.0.1"));
   Thread serving=new Thread(()->{try{while(!server.isClosed())try(Socket socket=server.accept()){
    BufferedReader reader=new BufferedReader(new InputStreamReader(socket.getInputStream(),StandardCharsets.UTF_8));String first=reader.readLine();if(first==null)continue;String line;while((line=reader.readLine())!=null&&!line.isEmpty()){}if(first.startsWith("POST"))writes.incrementAndGet();else reads.incrementAndGet();
+   if(first.contains("/slow")){try{slowRelease.await(30,java.util.concurrent.TimeUnit.SECONDS);}catch(InterruptedException ignored){Thread.currentThread().interrupt();}}
    byte[] body="{\"客服\":\"原生移动界面请求成功\",\"状态\":200}".getBytes(StandardCharsets.UTF_8);socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));socket.getOutputStream().write(body);
   }}catch(IOException expected){}},"modern-loopback-http");serving.start();
   File config=new File(context.getFilesDir(),"iotools.yaml");
   String base="version: 1\nprofiles:\n  local: {}\nrequests:\n  - id: customer\n    name: 客服验收\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n  - id: customer-write\n    name: 客服写入验收\n    protocol: http\n    action: POST\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n";
+  base+="  - id: slow\n    name: 慢请求取消\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/slow\n    timeout: 30s\n";
   Files.write(config.toPath(),base.getBytes(StandardCharsets.UTF_8));
   try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
    awaitText(scenario,"客服验收");assertEquals("startup does not connect",0,reads.get()+writes.get());screenshot("01-modern-requests");
    onView(withText("客服验收")).perform(click());awaitText(scenario,"连接地址");
    onView(withId(R.id.request_endpoint)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isAssignableFrom(EditText.class)));screenshot("02-modern-form");
-   onView(withId(R.id.run_request)).perform(scrollTo(),click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,reads.get());screenshot("03-modern-http-result");
+   onView(withId(R.id.run_request)).perform(click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,reads.get());awaitText(scenario,"已完成");assertFalse("completed toolbar must not remain running",screen(scenario).contains("执行中"));onView(withId(R.id.cancel_request)).check(androidx.test.espresso.assertion.ViewAssertions.matches(withEffectiveVisibility(Visibility.GONE)));screenshot("03-modern-http-result");
    onView(withId(R.id.nav_requests)).perform(click());awaitText(scenario,"客服写入验收");onView(withText("客服写入验收")).perform(scrollTo(),click());
-   onView(withId(R.id.run_request)).perform(scrollTo(),click());onView(withText("确认执行写入操作")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));screenshot("04-write-review");onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());assertEquals("cancelled write never sent",0,writes.get());
-   onView(withId(R.id.run_request)).perform(scrollTo(),click());onView(withText("确认执行")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,writes.get());
+   onView(withId(R.id.run_request)).perform(click());onView(withText("确认执行写入操作")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));screenshot("04-write-review");onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());assertEquals("cancelled write never sent",0,writes.get());
+   onView(withId(R.id.run_request)).perform(click());onView(withText("确认执行")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,writes.get());
+   onView(withId(R.id.nav_requests)).perform(click());awaitText(scenario,"慢请求取消");onView(withText("慢请求取消")).perform(scrollTo(),click());onView(withId(R.id.run_request)).perform(click());
+   long waitSlow=System.currentTimeMillis()+5000;while(reads.get()<2&&System.currentTimeMillis()<waitSlow)Thread.sleep(20);assertEquals("slow request reached loopback",2,reads.get());
+   onView(withId(R.id.cancel_request)).perform(click());awaitText(scenario,"已取消");assertFalse("cancelled toolbar must not remain running",screen(scenario).contains("执行中"));slowRelease.countDown();
    onView(withText("YAML")).perform(click());awaitText(scenario,"请求配置 YAML");
    String draft=base+"# 中文草稿 😀\n";onView(withId(R.id.yaml_editor)).perform(scrollTo(),replaceText(draft),closeSoftKeyboard());
    scenario.onActivity(a->{EditText editor=a.findViewById(R.id.yaml_editor);editor.setSelection(editor.length());android.view.inputmethod.InputConnection input=editor.onCreateInputConnection(new android.view.inputmethod.EditorInfo());input.setComposingText("# 输入",1);input.setComposingText("# 输入法验收",1);input.commitText("# 输入法验收\n",1);input.finishComposingText();});
-   scenario.moveToState(Lifecycle.State.CREATED);Thread.sleep(200);scenario.moveToState(Lifecycle.State.RESUMED);awaitText(scenario,"中文草稿 😀");awaitText(scenario,"输入法验收");assertEquals("resume does not replay",2,reads.get()+writes.get());screenshot("05-native-yaml-draft");
-   onView(withId(R.id.save_yaml)).perform(scrollTo(),click());
+   scenario.moveToState(Lifecycle.State.CREATED);Thread.sleep(200);scenario.moveToState(Lifecycle.State.RESUMED);awaitText(scenario,"中文草稿 😀");awaitText(scenario,"输入法验收");assertEquals("resume does not replay",3,reads.get()+writes.get());screenshot("05-native-yaml-draft");
+   onView(withId(R.id.save_yaml)).perform(click());
    onView(withText("保存并替换")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());
    awaitSaved(config,"中文草稿 😀");String saved=new String(Files.readAllBytes(config.toPath()),StandardCharsets.UTF_8);assertEquals("IME commit exactly once",1,saved.split("输入法验收",-1).length-1);
    scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));Thread.sleep(600);awaitText(scenario,"请求配置 YAML");screenshot("06-modern-landscape");
    onView(withId(R.id.nav_settings)).perform(click());awaitText(scenario,"设置");screenshot("07-modern-settings");
-   assertEquals("navigation never replays",2,reads.get()+writes.get());
-  }finally{NativeRuntime.close();server.close();serving.join(2000);}
+   assertEquals("navigation never replays",3,reads.get()+writes.get());
+  }finally{slowRelease.countDown();NativeRuntime.close();server.close();serving.join(2000);}
  }
 }

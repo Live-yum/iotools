@@ -22,11 +22,8 @@ type subscription struct {
 }
 
 func (s *Session) startSubscription(c command, p preview) (any, error) {
-	r, e := p.Collection.Resolve(p.Request, p.Profile)
-	if e != nil {
-		return nil, e
-	}
-	if e = s.prepareRequest(&r); e != nil {
+	r := p.Resolved
+	if e := s.prepareRequest(&r); e != nil {
 		return nil, e
 	}
 	s.mu.Lock()

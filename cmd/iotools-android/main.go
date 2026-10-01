@@ -48,28 +48,33 @@ func IotoolsCommand(data *C.char, n C.int) *C.char {
 		return resultError("命令长度无效")
 	}
 	sessionMu.Lock()
-	defer sessionMu.Unlock()
-	if current == nil {
+	s := current
+	sessionMu.Unlock()
+	if s == nil {
 		return resultError("请先打开工作区")
 	}
-	return C.CString(current.Command(string(C.GoBytes(unsafe.Pointer(data), n))))
+	// Do not block lifecycle cancellation behind a local query or file command.
+	return C.CString(s.Command(string(C.GoBytes(unsafe.Pointer(data), n))))
 }
 
 //export IotoolsLifecycle
 func IotoolsLifecycle(action C.int) {
 	sessionMu.Lock()
-	defer sessionMu.Unlock()
-	if current == nil {
+	s := current
+	if action == 2 {
+		current = nil
+	}
+	sessionMu.Unlock()
+	if s == nil {
 		return
 	}
 	switch action {
 	case 0:
-		current.Pause()
+		s.Pause()
 	case 1:
-		current.Resume()
+		s.Resume()
 	case 2:
-		current.Close()
-		current = nil
+		s.Close()
 	}
 }
 func main() {}

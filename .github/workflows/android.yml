@@ -28,6 +28,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Compile native Android UI and instrumentation first
+        run: gradle -p android --no-daemon compileDebugJavaWithJavac compileDebugAndroidTestJavaWithJavac
       - name: Native bridge unit and desktop regression
         run: go test -race -count=1 -timeout 5m ./...
       - name: Select installed Android NDK

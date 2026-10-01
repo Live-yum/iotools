@@ -2,11 +2,12 @@ package mobileapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Live-yum/iotools/internal/engine"
@@ -99,10 +100,12 @@ func (s *Session) extra(c command) (any, error) {
 		if c.Scope != nil && s.options.ReadOnly {
 			return nil, errors.New("只读模式不允许控制接口提供写入功能")
 		}
-		if strings.HasPrefix(r.Endpoint, "usb://") {
-			return nil, errors.New("USB 设备当前通过前台协议操作使用，控制接口请选择 TCP 或 RTU-over-TCP")
-		}
-		return s.startTask("modbus.controller", func(ctx context.Context, id string) error { return engine.ServeModbusAPI(ctx, c.Listen, r, c.Scope) })
+		return s.startTask("modbus.controller", func(ctx context.Context, id string) error {
+			if s.options.RTUTransport != nil {
+				ctx = engine.WithModbusRTUTransport(ctx, s.options.RTUTransport)
+			}
+			return engine.ServeModbusAPI(ctx, c.Listen, r, c.Scope)
+		})
 	case "modbus.snapshot.save":
 		if c.Snapshot == nil {
 			return nil, errors.New("snapshot is required")
@@ -166,8 +169,35 @@ func (s *Session) extra(c command) (any, error) {
 		if e != nil {
 			return nil, e
 		}
+		encoded, e := json.Marshal(parsed)
+		if e != nil {
+			return nil, e
+		}
+		digest := fmt.Sprintf("%x", sha256.Sum256(append(append([]byte{}, b...), encoded...)))
 		if !c.Confirmed {
-			return map[string]any{"path": path, "collection": parsed, "confirmation_required": true}, nil
+			token, e := newToken()
+			if e != nil {
+				return nil, e
+			}
+			copyCommand := c
+			copyCommand.Path = path
+			s.mu.Lock()
+			if len(s.previews) >= 16 {
+				s.previews = map[string]preview{}
+			}
+			s.previews[token] = preview{Token: token, Utility: &copyCommand, Digest: digest, Revision: s.revision, Expires: time.Now().Add(5 * time.Minute)}
+			s.mu.Unlock()
+			return map[string]any{"path": path, "collection": parsed, "confirmation_required": true, "token": token}, nil
+		}
+		s.mu.Lock()
+		p, ok := s.previews[c.Token]
+		if ok {
+			delete(s.previews, c.Token)
+		}
+		revision := s.revision
+		s.mu.Unlock()
+		if !ok || p.Utility == nil || p.Utility.Op != "config.switch" || p.Utility.Path != path || p.Digest != digest || p.Revision != revision || time.Now().After(p.Expires) {
+			return nil, errors.New("切换预览已失效或目标内容已更改，请重新预览")
 		}
 		s.stopSubscriptions("")
 		s.mu.Lock()
