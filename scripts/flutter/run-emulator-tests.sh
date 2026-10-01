@@ -31,11 +31,30 @@ for port in 48410 48411 48412 48413 48414 48415 48416; do adb reverse "tcp:$port
 # Release builds remove dev plugins from the generated registrant. Let drive run
 # its official debug tooling regeneration; --no-pub would retain that release registrant.
 set +e
-(cd mobile && timeout --kill-after=30s 30m flutter drive --driver=test_driver/integration_test.dart --target=integration_test/app_test.dart --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true)
-flutter_result=$?
-python3 scripts/flutter/verify-mobile.py mobile/build/app/outputs/flutter-apk/app-debug.apk --integration-test
-plugin_result=$?
-if test "$flutter_result" -ne 0; then first_failure=$flutter_result; elif test "$plugin_result" -ne 0; then first_failure=$plugin_result; fi
+# Keep independent app processes: a timed-out test cannot leak a late pump or
+# cleanup into another protocol suite. Both exits remain authoritative failures.
+for suite in main opcua; do
+ target=integration_test/app_test.dart
+ budget=25m
+ if test "$suite" = opcua; then target=integration_test/opcua_workflow_test.dart; budget=10m; fi
+ adb shell am force-stop io.github.liveyum.iotools
+ stop_result=$?
+ if test "$stop_result" -ne 0; then
+  if test "$first_failure" -eq 0; then first_failure=$stop_result; fi
+  printf '%s\n' "$stop_result" > "android-evidence/flutter-$suite-stop-failure.txt"
+  break
+ fi
+ (cd mobile && timeout --kill-after=30s "$budget" flutter drive --driver=test_driver/integration_test.dart --target="$target" --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true) 2>&1 | tee "android-evidence/flutter-$suite.log"
+ pipeline_results=("${PIPESTATUS[@]}")
+ flutter_result=${pipeline_results[0]}
+ log_result=${pipeline_results[1]}
+ python3 scripts/flutter/verify-mobile.py mobile/build/app/outputs/flutter-apk/app-debug.apk --integration-test
+ plugin_result=$?
+ if test "$first_failure" -eq 0; then
+  if test "$flutter_result" -ne 0; then first_failure=$flutter_result; elif test "$log_result" -ne 0; then first_failure=$log_result; elif test "$plugin_result" -ne 0; then first_failure=$plugin_result; fi
+ fi
+ printf '%s %s\n' "$flutter_result" "$plugin_result" > "android-evidence/flutter-$suite-exit.txt"
+done
 set -e
 # Verify the exact normal-entry AOT delivery file, independently of the debug test entrypoint.
 aot="$(find android-dist -maxdepth 1 -name '*universal*-aot-test-signed.apk' -print -quit)"

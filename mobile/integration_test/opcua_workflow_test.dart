@@ -8,14 +8,21 @@ import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/features/opcua/opcua_models.dart';
 
-/// Called by the single Actions app_test.dart target. Uses the real platform
+/// Called by the isolated Actions opcua_workflow_test.dart target. Uses the real platform
 /// channel/JNI/Go engine and disposable OPC fixture, never a fake engine.
 bool _surfaceConverted = false;
+final _progressClock = Stopwatch();
+void _stage(String name) =>
+    debugPrint('OPC_STAGE ${_progressClock.elapsedMilliseconds}ms $name');
 void registerOpcuaIntegrationTests() {
   testWidgets(
     'Flutter OPC whole app: discovery, typed writes, methods, subscriptions and lifecycle',
     (tester) async {
       _surfaceConverted = false;
+      _progressClock
+        ..reset()
+        ..start();
+      _stage('start');
       const engine = MethodChannelEngine();
       const platform = MethodChannelPlatform();
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -96,9 +103,9 @@ requests:
           '明确允许 None 无加密（仅可信测试环境）',
         );
         await tester.ensureVisible(allow);
-        await tester.pump();
+        await _pump(tester);
         await tester.tap(allow);
-        await tester.pump();
+        await _pump(tester);
         await _tap(tester, 'ua-apply-connection');
         _sameCounters(
           'endpoint selection only changes draft',
@@ -195,7 +202,7 @@ requests:
         await tester.ensureVisible(
           find.byKey(const ValueKey('ua-attribute-Value-value')),
         );
-        await tester.pump();
+        await _pump(tester);
         await _screenshot(tester, binding, 'flutter-opc-05-write-readback-99');
         await _tap(tester, 'ua-back');
         await _tap(tester, 'ua-tab-browse');
@@ -265,23 +272,33 @@ requests:
         await tester.ensureVisible(
           find.byKey(const ValueKey('ua-method-outputs')),
         );
-        await tester.pump();
+        await _pump(tester);
         await _screenshot(tester, binding, 'flutter-opc-06-method-double-6-12');
         await _tapText(tester, '关闭');
         await _jump(tester, temperature);
         await _tap(tester, 'ua-tab-subscriptions');
+        _stage('first-subscription-review');
         await _addSubscription(tester);
+        _stage('first-subscription-confirmed');
         await _subscriptions(tester, engine, 1);
+        _stage('first-subscription-notified');
         await _jump(tester, pressure);
+        _stage('second-subscription-review');
         await _addSubscription(tester);
+        _stage('second-subscription-confirmed');
         await _subscriptions(tester, engine, 2);
+        _stage('second-subscription-notified');
         await _tap(tester, 'ua-refresh-subscriptions');
         await _screenshot(tester, binding, 'flutter-opc-07-two-subscriptions');
         await _tap(tester, 'ua-tab-attributes');
         await _tap(tester, 'ua-refresh');
         await _idle(tester, engine);
         await _subscriptions(tester, engine, 2);
-        final subs = await engine.command({'op': 'subscriptions.list'}) as List;
+        final subs =
+            await engine
+                    .command({'op': 'subscriptions.list'})
+                    .timeout(const Duration(seconds: 10))
+                as List;
         final target = subs
             .map(uaMap)
             .firstWhere(
@@ -294,7 +311,10 @@ requests:
         await _tap(tester, 'ua-stop-${target['id']}');
         await _subscriptions(tester, engine, 1);
         final remaining =
-            (await engine.command({'op': 'subscriptions.list'}) as List)
+            (await engine
+                        .command({'op': 'subscriptions.list'})
+                        .timeout(const Duration(seconds: 10))
+                    as List)
                 .map(uaMap)
                 .where((s) => s['status'] == 'running')
                 .single;
@@ -305,7 +325,7 @@ requests:
         await _tap(tester, 'ua-tab-browse');
         final beforeResize = await _fixture('/metrics');
         await binding.setSurfaceSize(const Size(1000, 700));
-        await tester.pump(const Duration(milliseconds: 500));
+        await _pump(tester, const Duration(milliseconds: 500));
         _sameCounters(
           'responsive resize does not replay requests',
           beforeResize,
@@ -315,11 +335,16 @@ requests:
         await binding.setSurfaceSize(null);
         // Drive Flutter's lifecycle callback through the real platform pause API.
         // The separate runner may also exercise actual OS background/resume.
+        _stage('background-stop-begin');
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
         await waitForBackgroundCondition(tester, () async {
-          final state = uaMap(await engine.command({'op': 'state'}));
+          final state = uaMap(
+            await engine
+                .command({'op': 'state'})
+                .timeout(const Duration(seconds: 10)),
+          );
           final subscriptions = await engine.command({
             'op': 'subscriptions.list',
           });
@@ -328,11 +353,12 @@ requests:
                   .map(uaMap)
                   .every((row) => row['status'] != 'running');
         });
+        _stage('background-stop-acknowledged');
         final stopped = await _fixture('/metrics');
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-        await tester.pump(const Duration(milliseconds: 600));
+        await _pump(tester, const Duration(milliseconds: 600));
         await _subscriptions(tester, engine, 0);
         _sameCounters(
           'resume does not restart subscriptions or replay mutations',
@@ -353,6 +379,7 @@ requests:
           'flutter-opc-09-background-no-replay',
         );
       } finally {
+        _stage('cleanup-begin');
         if (binding.lifecycleState == AppLifecycleState.paused)
           binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         if (binding.lifecycleState == AppLifecycleState.hidden)
@@ -367,9 +394,13 @@ requests:
           'source': original['source'],
         });
         await engine.close();
+        _stage('cleanup-complete');
       }
     },
-    timeout: const Timeout(Duration(minutes: 5)),
+    // API29 software emulation took >5 minutes before subscriptions in the
+    // recorded run, while every protocol operation retained its short limit.
+    // Keep a finite whole-flow budget without interrupting its bounded cleanup.
+    timeout: const Timeout(Duration(minutes: 8)),
   );
 }
 
@@ -385,7 +416,14 @@ Future<UaMap> _fixture(String path) async {
     final req = await client.getUrl(Uri.parse('http://127.0.0.1:48411$path'));
     final reply = await req.close().timeout(const Duration(seconds: 3));
     expect(reply.statusCode, 200);
-    return uaMap(jsonDecode(await utf8.decoder.bind(reply).join()));
+    return uaMap(
+      jsonDecode(
+        await utf8.decoder
+            .bind(reply)
+            .join()
+            .timeout(const Duration(seconds: 3)),
+      ),
+    );
   } finally {
     client.close(force: true);
   }
@@ -404,28 +442,30 @@ Future<void> _wait(WidgetTester tester, bool Function() predicate) async {
       throw TestFailure(
         'Timed out waiting for Flutter OPC UI; visible=${find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().join(" | ")}',
       );
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pump(tester, const Duration(milliseconds: 100));
   }
 }
 
 Future<void> _tap(WidgetTester tester, String key) async {
   final f = find.byKey(ValueKey(key));
   await _wait(tester, () => f.evaluate().isNotEmpty);
-  await tapReadyControl(tester, f);
-  await tester.pump(const Duration(milliseconds: 100));
+  await tapReadyControl(tester, f).timeout(const Duration(seconds: 25));
+  await _pump(tester, const Duration(milliseconds: 100));
 }
 
 Future<void> _tapText(WidgetTester tester, String text) async {
   final f = find.text(text);
   await _wait(tester, () => f.evaluate().isNotEmpty);
-  await tester.ensureVisible(f.last);
-  await tester.pump();
-  await tester.tap(f.last);
-  await tester.pump(const Duration(milliseconds: 300));
+  await tapReadyControl(tester, f.last).timeout(const Duration(seconds: 25));
+  await _pump(tester, const Duration(milliseconds: 300));
 }
 
 Future<void> _enter(WidgetTester tester, String key, String value) async {
-  await enterReadyText(tester, find.byKey(ValueKey(key)), value);
+  await enterReadyText(
+    tester,
+    find.byKey(ValueKey(key)),
+    value,
+  ).timeout(const Duration(seconds: 30));
 }
 
 String _selectable(WidgetTester tester, String key) {
@@ -444,8 +484,12 @@ Future<void> _jump(WidgetTester tester, String node) async {
 Future<void> _idle(WidgetTester tester, Engine engine) async {
   final end = DateTime.now().add(const Duration(seconds: 35));
   while (true) {
-    await tester.pump(const Duration(milliseconds: 150));
-    final state = uaMap(await engine.command({'op': 'state'}));
+    await _pump(tester, const Duration(milliseconds: 150));
+    final state = uaMap(
+      await engine
+          .command({'op': 'state'})
+          .timeout(const Duration(seconds: 10)),
+    );
     final status = find.byKey(const ValueKey('ua-status'));
     final text = status.evaluate().isEmpty
         ? ''
@@ -454,7 +498,7 @@ Future<void> _idle(WidgetTester tester, Engine engine) async {
         (text.startsWith('任务完成') ||
             text.startsWith('任务失败') ||
             text.startsWith('任务已取消'))) {
-      await tester.pump(const Duration(milliseconds: 400));
+      await _pump(tester, const Duration(milliseconds: 400));
       return;
     }
     if (DateTime.now().isAfter(end))
@@ -480,16 +524,20 @@ Future<void> _subscriptions(
 ) async {
   final end = DateTime.now().add(const Duration(seconds: 25));
   while (true) {
-    final all = (await engine.command({'op': 'subscriptions.list'}) as List)
-        .map(uaMap)
-        .where((r) => r['status'] == 'running')
-        .toList();
+    final all =
+        (await engine
+                    .command({'op': 'subscriptions.list'})
+                    .timeout(const Duration(seconds: 10))
+                as List)
+            .map(uaMap)
+            .where((r) => r['status'] == 'running')
+            .toList();
     if (all.length == count &&
         (count == 0 || all.every((r) => r['last_event'] != null)))
       return;
     if (DateTime.now().isAfter(end))
       throw TestFailure('Expected $count notified subscriptions, got $all');
-    await tester.pump(const Duration(milliseconds: 150));
+    await _pump(tester, const Duration(milliseconds: 150));
   }
 }
 
@@ -502,6 +550,18 @@ Future<void> _screenshot(
     await binding.convertFlutterSurfaceToImage();
     _surfaceConverted = true;
   }
-  await tester.pump();
-  await binding.takeScreenshot(name);
+  _stage('capture-begin:$name');
+  await _pump(tester);
+  await binding.takeScreenshot(name).timeout(const Duration(seconds: 30));
+  _stage('capture-complete:$name');
+  debugPrint('OPC_METRICS $name ${jsonEncode(await _fixture('/metrics'))}');
 }
+
+Future<void> _pump(WidgetTester tester, [Duration? duration]) => tester
+    .pump(duration)
+    .timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => throw TestFailure(
+        'OPC frame did not complete within 15 seconds at ${_progressClock.elapsedMilliseconds}ms',
+      ),
+    );

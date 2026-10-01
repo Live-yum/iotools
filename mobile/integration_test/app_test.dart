@@ -7,7 +7,6 @@ import 'package:integration_test/integration_test.dart';
 import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
-import 'opcua_workflow_test.dart';
 import 'modbus_workflow_test.dart';
 import 'kafka_management_test.dart';
 
@@ -319,7 +318,6 @@ void main() {
     },
   );
   registerKafkaManagementTests();
-  registerOpcuaIntegrationTests();
   registerModbusIntegrationTests();
 }
 
