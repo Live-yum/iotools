@@ -133,7 +133,7 @@ void main() {
         expect(find.textContaining('AES 解密成功中文'), findsWidgets);
         await shot(tester, binding, 'flutter-http-04-decrypted-result');
         for (final name in ['literal', 'chinese', 'binary']) {
-          await tester.pageBack();
+          await back(tester);
           await tester.pump(const Duration(milliseconds: 350));
           await openRequest(tester, 'HTTP $name');
           await tapKey(tester, 'run_request');
@@ -264,9 +264,9 @@ void main() {
         await tapText(tester, '主题树、消息历史与图表');
         await shot(tester, binding, 'flutter-mqtt-01-exact-topic-history');
         expect(find.textContaining('全部主题'), findsWidgets);
-        await tester.pageBack();
+        await back(tester);
         await tester.pump(const Duration(milliseconds: 350));
-        await tester.pageBack();
+        await back(tester);
         await tester.pump(const Duration(milliseconds: 350));
         await openRequest(tester, 'Flutter Kafka 记录验收');
         await tapKey(tester, 'run_request');

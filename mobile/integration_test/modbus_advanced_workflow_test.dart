@@ -157,7 +157,7 @@ requests:
           reason: 'bounded two-address sweep',
         );
         await _tap(tester, '会话');
-        await _reveal(tester, find.text('sweep-progress').first);
+        await _reveal(tester, find.text('sweep-progress'));
         expect(find.text('failed_batches'), findsWidgets);
         expect(find.text('skipped_positions'), findsWidgets);
         await _tap(tester, '操作');
@@ -177,9 +177,10 @@ requests:
         );
         await _reveal(tester, find.text('协议异常响应'));
         expect(find.text('有响应'), findsOneWidget);
-        final successful = find
-            .ancestor(of: find.text('单元 1'), matching: find.byType(Card))
-            .first;
+        final successful = find.ancestor(
+          of: find.text('单元 1'),
+          matching: find.byType(Card),
+        );
         final select = find.descendant(
           of: successful,
           matching: find.text('仅选择此连接与单元到草稿'),
@@ -529,12 +530,13 @@ Future<void> _wait(WidgetTester t, bool Function() ready) async {
 }
 
 Future<void> _tap(WidgetTester t, String label) =>
-    _tapFinder(t, find.text(label).last);
+    _tapFinder(t, find.text(label));
 Future<void> _tapFinder(WidgetTester t, Finder finder) async {
   await _reveal(t, finder);
-  await Scrollable.ensureVisible(t.element(finder), alignment: 0.5);
-  await waitForModbusInteraction(t, finder);
-  await t.tap(finder);
+  final target = finder.last;
+  await Scrollable.ensureVisible(t.element(target), alignment: 0.5);
+  await waitForModbusInteraction(t, target);
+  await t.tap(target);
   await t.pump(const Duration(milliseconds: 400));
 }
 
@@ -562,23 +564,5 @@ Future<void> _idle(WidgetTester t, Engine engine) async {
   }
 }
 
-Future<void> _reveal(WidgetTester t, Finder finder) async {
-  if (finder.evaluate().isNotEmpty) return;
-  final scrollable = find
-      .byWidgetPredicate(
-        (widget) =>
-            widget is Scrollable && widget.axisDirection == AxisDirection.down,
-      )
-      .last;
-  if (scrollable.evaluate().isEmpty) {
-    await _wait(t, () => finder.evaluate().isNotEmpty);
-    return;
-  }
-  await t.drag(scrollable, const Offset(0, 3000));
-  await t.pump(const Duration(milliseconds: 300));
-  for (var step = 0; step < 28 && finder.evaluate().isEmpty; step++) {
-    await t.drag(scrollable, const Offset(0, -320));
-    await t.pump(const Duration(milliseconds: 120));
-  }
-  await _wait(t, () => finder.evaluate().isNotEmpty);
-}
+Future<void> _reveal(WidgetTester t, Finder finder) =>
+    revealModbusFinder(t, finder);

@@ -188,6 +188,51 @@ Future<void> tapText(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets('lazy offscreen device identification action opens without IO', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(480, 752);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final host = FakeModbusHost();
+    await mount(tester, host);
+    await tapText(tester, '操作');
+    final action = find.text('读取设备标识');
+    expect(action, findsNothing, reason: '设备卡片尚未由 ListView 构建');
+    await revealModbusFinder(tester, action);
+    final target = action.last;
+    await Scrollable.ensureVisible(tester.element(target), alignment: .5);
+    await waitForModbusInteraction(tester, target);
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('读取代码（1–4）')), findsOneWidget);
+    expect(host.runs, isEmpty);
+    expect(host.commands, isEmpty);
+    await tapText(tester, '取消');
+    await tester.pumpWidget(const SizedBox());
+    host.dispose();
+  });
+  testWidgets('reveal waits for a delayed target without a scrollable', (
+    tester,
+  ) async {
+    final ready = ValueNotifier(false);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: ready,
+          builder: (_, value, child) =>
+              Text(value ? '延迟出现的目标' : '正在加载'),
+        ),
+      ),
+    );
+    expect(find.byType(Scrollable), findsNothing);
+    Timer(const Duration(milliseconds: 100), () => ready.value = true);
+    await revealModbusFinder(tester, find.text('延迟出现的目标'));
+    expect(find.text('延迟出现的目标'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    ready.dispose();
+  });
   testWidgets('nested write review cancel can reopen both write forms', (
     tester,
   ) async {

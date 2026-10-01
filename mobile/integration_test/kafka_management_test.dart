@@ -227,8 +227,13 @@ Future<void> enter(WidgetTester t, String key, String value) async {
 }
 
 Future<void> back(WidgetTester t) async {
-  await t.pageBack();
-  await t.pump(const Duration(milliseconds: 400));
+  final routeBack = find.byType(BackButton).hitTestable();
+  final requestBack = find.byTooltip('返回请求列表').hitTestable();
+  await wait(
+    t,
+    () => routeBack.evaluate().isNotEmpty || requestBack.evaluate().isNotEmpty,
+  );
+  await tap(t, routeBack.evaluate().isNotEmpty ? routeBack : requestBack);
 }
 
 Future<void> run(

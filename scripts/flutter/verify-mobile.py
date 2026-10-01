@@ -37,10 +37,14 @@ if len(sys.argv)>1:
      for index in range(phnum):
       kind,flags,offset,vaddr,paddr,filesz,memsz,align=struct.unpack_from(endian+'IIQQQQQQ',data,phoff+index*phsize)
       if kind==1:assert align>=16384 and offset%16384==vaddr%16384,f'{abi}/{library} is not 16KiB load-page compatible'
+  integration_plugin_present=False
   for name in names:
    if name.endswith('.dex'):
     data=apk.read(name)
+    integration_plugin_present |= b'Ldev/flutter/plugins/integration_test/IntegrationTestPlugin;' in data
     for banned in (b'TerminalCanvas',b'Lio/github/liveyum/iotools/NativeUi;',b'Lio/github/liveyum/iotools/AdvancedWorkflows;',b'Lio/github/liveyum/iotools/OpcuaWorkspace;',b'Lio/github/liveyum/iotools/FileFixtureProvider;',b'Lio/github/liveyum/iotools/FixtureGrantReceiver;'):
      assert banned not in data,f'Removed UI class in APK: {banned}'
+  if '--aot' in sys.argv:assert not integration_plugin_present,'Development integration_test plugin must not enter normal AOT APK'
+  if '--integration-test' in sys.argv:assert integration_plugin_present,'Debug integration APK must contain the actual screenshot/test plugin'
  print('APK contains actual Flutter engine and shared Go engine; legacy mobile UI absent')
 print('Flutter source isolation passed')

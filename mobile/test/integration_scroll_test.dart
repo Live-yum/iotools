@@ -81,4 +81,47 @@ void main() {
       expect(opened, isTrue);
     },
   );
+  testWidgets(
+    'back taps the real route control then the request-list control',
+    (tester) async {
+      var returned = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              appBar: AppBar(
+                leading: IconButton(
+                  tooltip: '返回请求列表',
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: () {
+                    returned++;
+                  },
+                ),
+              ),
+              body: FilledButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) =>
+                          Scaffold(appBar: AppBar(title: const Text('实体浏览'))),
+                    ),
+                  );
+                },
+                child: const Text('打开实体'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开实体'));
+      await tester.pumpAndSettle();
+      await kafka.back(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('实体浏览'), findsNothing);
+      expect(returned, 0);
+      await kafka.back(tester);
+      expect(returned, 1);
+    },
+  );
 }
