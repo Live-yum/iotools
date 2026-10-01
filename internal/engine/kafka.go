@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -361,7 +362,7 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 				if filter != "" && !strings.Contains(string(rendered), filter) && !strings.Contains(fmt.Sprint(value), filter) {
 					continue
 				}
-				send(emit, "record", map[string]any{"topic": v.Topic, "partition": v.Partition, "offset": v.Offset, "key": key, "value": value, "timestamp": v.Timestamp, "headers": v.Headers})
+				send(emit, "record", map[string]any{"topic": v.Topic, "partition": v.Partition, "offset": v.Offset, "key": key, "value": value, "timestamp": v.Timestamp, "headers": v.Headers, "raw_key_base64": base64.StdEncoding.EncodeToString(v.Key), "raw_value_base64": base64.StdEncoding.EncodeToString(v.Value), "key_is_null": v.Key == nil, "value_is_null": v.Value == nil})
 				n++
 			}
 			if recentEnds != nil && len(recentEnds) == 0 {

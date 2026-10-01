@@ -362,12 +362,21 @@ func mtuiImportColumns(raw []byte) (map[string]any, error) {
 // AppendMTUIRequests keeps existing YAML comments and recipes intact. It neither
 // writes a file nor changes a session; callers explicitly review and save.
 func AppendMTUIRequests(source []byte, requests []config.Request) ([]byte, error) {
+	if len(requests) != 4 {
+		return nil, fmt.Errorf("MTUI导入需四个只读空间")
+	}
+	return AppendSelectedMTUIRequests(source, requests)
+}
+
+// AppendSelectedMTUIRequests appends an explicitly selected subset of a reviewed
+// conversion without overwriting existing requests or enabling writes.
+func AppendSelectedMTUIRequests(source []byte, requests []config.Request) ([]byte, error) {
 	c, err := config.Parse(source)
 	if err != nil {
 		return nil, err
 	}
-	if len(requests) != 4 {
-		return nil, fmt.Errorf("MTUI导入需四个只读空间")
+	if len(requests) < 1 || len(requests) > 4 {
+		return nil, fmt.Errorf("请选择1..4个导入请求")
 	}
 	seen := map[string]bool{}
 	for _, r := range c.Requests {

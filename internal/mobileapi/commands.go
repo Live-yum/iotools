@@ -18,6 +18,8 @@ import (
 )
 
 type command struct {
+	RequestIDs      []string                 `json:"request_ids,omitempty"`
+	SelectionIndex  *int                     `json:"selection_index,omitempty"`
 	ExecuteTriggers bool                     `json:"execute_triggers,omitempty"`
 	ResultID        string                   `json:"result_id,omitempty"`
 	RunID           string                   `json:"run_id,omitempty"`
@@ -87,6 +89,7 @@ func (s *Session) command(c command) (any, error) {
 		for k, v := range s.modbusStats {
 			copy[k] = v
 		}
+		copy["session"] = s.modbusTotals
 		return copy, nil
 	case "subscriptions.list":
 		return s.listSubscriptions(), nil
@@ -227,6 +230,20 @@ func (s *Session) command(c command) (any, error) {
 		ctx = engine.WithHTTPWorkflowOptions(ctx, s.workflowOptions("", false))
 		value, e := engine.GenerateCurl(ctx, collection, r, profile, false, false)
 		return map[string]any{"curl": value}, e
+	case "http.filter.start":
+		if len(c.Data) > 4<<20 || len(c.Query) > 65536 {
+			return nil, errors.New("JSON 筛选输入或表达式超过限制")
+		}
+		return s.startTask("http.filter", func(ctx context.Context, id string) error {
+			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			result, err := engine.FilterJSON(ctx, c.Query, []byte(c.Data))
+			if err != nil {
+				return err
+			}
+			s.emit(id, "query", result)
+			return nil
+		})
 	case "http.filter":
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -266,12 +283,8 @@ func (s *Session) command(c command) (any, error) {
 			return nil, e
 		}
 		return engine.ModbusRules(r)
-	case "modbus.import":
-		plan, e := engine.ImportMTUIConfig([]byte(c.Source), c.Prefix)
-		if e != nil {
-			return nil, e
-		}
-		return plan, nil
+	case "modbus.import", "modbus.import.apply":
+		return s.importMTUI(c)
 	case "modbus.registers.import":
 		return engine.ImportMTUIRegisters([]byte(c.Source), c.Kind)
 	case "modbus.registers.export":
@@ -329,7 +342,7 @@ func (s *Session) loadSource(b []byte) (any, error) {
 	s.revision++
 	s.previews = map[string]preview{}
 	if _, ok := c.Profiles[s.profile]; !ok {
-		s.profile = c.DefaultProfile
+		s.profile = defaultProfile(c)
 	}
 	return s.stateLocked(), nil
 }

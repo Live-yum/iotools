@@ -58,6 +58,14 @@ func (s *Session) prepare(c command) (any, error) {
 			return nil, e
 		}
 	}
+	var protocolPreview map[string]any
+	if resolved.Protocol == "modbus" {
+		protocolPreview, e = engine.PreviewModbusOperation(resolved)
+		if e != nil {
+			return nil, e
+		}
+		protocolPreview["endpoint"] = displayRequest(resolved).Endpoint
+	}
 	token, e := newToken()
 	if e != nil {
 		return nil, e
@@ -72,7 +80,7 @@ func (s *Session) prepare(c command) (any, error) {
 		s.previews = map[string]preview{}
 	}
 	s.previews[token] = preview{Token: token, Request: r, Resolved: resolved, Collection: collection, Profile: profile, Revision: s.revision, Expires: time.Now().Add(5 * time.Minute)}
-	return map[string]any{"token": token, "request": displayRequest(resolved), "mutates": r.Mutates(), "confirmation_required": r.Mutates(), "summary": fmt.Sprintf("%s %s · %s", strings.ToUpper(r.Protocol), r.Action, displayRequest(resolved).Endpoint), "warnings": warnings}, nil
+	return map[string]any{"token": token, "request": displayRequest(resolved), "mutates": r.Mutates(), "confirmation_required": r.Mutates(), "summary": fmt.Sprintf("%s %s · %s", strings.ToUpper(r.Protocol), r.Action, displayRequest(resolved).Endpoint), "warnings": warnings, "protocol_preview": protocolPreview}, nil
 }
 
 func (s *Session) run(c command) (any, error) {
@@ -113,9 +121,15 @@ func (s *Session) run(c command) (any, error) {
 	if p.Request.Protocol == "modbus" && !p.Request.Mutates() {
 		s.modbusPause = controller
 	}
-	s.modbusStats = map[string]any{"operations": 0, "success": 0, "failure": 0, "duration_ms": float64(0)}
+	if p.Request.Protocol == "modbus" {
+		s.modbusStats = map[string]any{"operations": 0, "success": 0, "failure": 0, "duration_ms": float64(0)}
+	}
 	s.mu.Unlock()
-	s.emit(runID, "started", map[string]any{"request_id": p.Request.ID, "protocol": p.Request.Protocol, "action": p.Request.Action})
+	started := map[string]any{"request_id": p.Request.ID, "protocol": p.Request.Protocol, "action": p.Request.Action}
+	if p.Resolved.Protocol == "modbus" {
+		started["source"] = map[string]any{"request_id": p.Resolved.ID, "endpoint": p.Resolved.Endpoint, "unit": p.Resolved.Int("unit", 1), "action": p.Resolved.Action}
+	}
+	s.emit(runID, "started", started)
 	go func() {
 		var runErr error
 		defer func() {
@@ -131,6 +145,9 @@ func (s *Session) run(c command) (any, error) {
 				if errors.Is(runErr, context.Canceled) {
 					status = "cancelled"
 				}
+			}
+			if p.Request.Protocol == "modbus" && status == "cancelled" {
+				s.recordModbusCancellation()
 			}
 			s.emit(runID, "done", map[string]any{"status": status, "error": message, "request_id": p.Request.ID})
 			s.mu.Lock()
@@ -218,6 +235,12 @@ func (s *Session) workflowOptions(runID string, interactive bool) engine.HTTPWor
 		if !v.Confirmed {
 			return nil, errors.New("selection cancelled")
 		}
+		if v.SelectionIndex != nil {
+			if *v.SelectionIndex < 0 || *v.SelectionIndex >= len(choices) {
+				return nil, errors.New("选择索引超出当前选项范围")
+			}
+			return choices[*v.SelectionIndex], nil
+		}
 		a, _ := json.Marshal(v.Value)
 		for _, choice := range choices {
 			b, _ := json.Marshal(choice)
@@ -270,7 +293,7 @@ func (s *Session) respond(c command) string {
 	if !ok {
 		return reply(nil, errors.New("interaction expired or already answered"))
 	}
-	ch <- interactionReply{Confirmed: c.Confirmed, Value: c.Value}
+	ch <- interactionReply{Confirmed: c.Confirmed, Value: c.Value, SelectionIndex: c.SelectionIndex}
 	return reply(map[string]any{"accepted": true}, nil)
 }
 func binaryResult(b []byte) map[string]any {

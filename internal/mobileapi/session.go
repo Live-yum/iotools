@@ -58,11 +58,21 @@ type preview struct {
 }
 
 type interactionReply struct {
-	Confirmed bool
-	Value     any
+	SelectionIndex *int
+	Confirmed      bool
+	Value          any
 }
 
+type modbusTotals struct {
+	Reads      int     `json:"reads"`
+	Writes     int     `json:"writes"`
+	Errors     int     `json:"errors"`
+	Cancelled  int     `json:"cancelled"`
+	Success    int     `json:"success"`
+	DurationMS float64 `json:"duration_ms"`
+}
 type Session struct {
+	modbusTotals                 modbusTotals
 	results                      map[string]cachedResult
 	resultOrder                  []string
 	resultBytes                  int
@@ -135,12 +145,7 @@ func Open(path, version string, options Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.collection, s.source, s.profile, s.revision = c, data, c.DefaultProfile, 1
-	if s.profile == "" {
-		if _, ok := c.Profiles["local"]; ok {
-			s.profile = "local"
-		}
-	}
+	s.collection, s.source, s.profile, s.revision = c, data, defaultProfile(c), 1
 	s.loadConnections()
 	return s, nil
 }
@@ -444,4 +449,14 @@ func normalizeJSON(v any, depth int) (any, error) {
 		return x, nil
 	}
 	return v, nil
+}
+
+func defaultProfile(c *config.Collection) string {
+	if c.DefaultProfile != "" {
+		return c.DefaultProfile
+	}
+	if _, ok := c.Profiles["local"]; ok {
+		return "local"
+	}
+	return ""
 }

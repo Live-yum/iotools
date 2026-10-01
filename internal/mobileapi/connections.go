@@ -3,6 +3,7 @@ package mobileapi
 import (
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,7 +40,28 @@ func (s *Session) loadConnections() {
 	if dec.Decode(&rows) != nil || len(rows) > 100 {
 		return
 	}
-	s.connections = rows
+	clean := []connectionRecord{}
+	seen := map[string]bool{}
+	for _, row := range rows {
+		endpoint, e := url.Parse(row.Endpoint)
+		if e != nil || endpoint.Scheme != "opc.tcp" || endpoint.Host == "" {
+			continue
+		}
+		endpoint.User = nil
+		endpoint.RawQuery = ""
+		endpoint.ForceQuery = false
+		endpoint.Fragment = ""
+		row.Endpoint = endpoint.String()
+		if !seen[row.Endpoint] {
+			clean = append(clean, row)
+			seen[row.Endpoint] = true
+		}
+	}
+	s.connections = clean
+	encoded, e := json.Marshal(clean)
+	if e == nil && string(encoded) != string(b) {
+		_ = config.SaveChecked(path, encoded, func([]byte) error { return nil })
+	}
 }
 func (s *Session) listConnections() []connectionRecord {
 	s.metadataMu.Lock()
@@ -52,7 +74,15 @@ func (s *Session) recordConnection(r config.Request, ev engine.Event) {
 	}
 	s.metadataMu.Lock()
 	defer s.metadataMu.Unlock()
-	row := connectionRecord{Endpoint: r.Endpoint, NodeID: r.String("node_id", ""), Policy: r.String("security_policy", ""), Mode: r.String("security_mode", ""), Fingerprint: r.String("server_cert_sha256", ""), LastConnected: time.Now().UTC()}
+	endpoint, err := url.Parse(r.Endpoint)
+	if err != nil || endpoint.Scheme != "opc.tcp" || endpoint.Host == "" {
+		return
+	}
+	endpoint.User = nil
+	endpoint.RawQuery = ""
+	endpoint.ForceQuery = false
+	endpoint.Fragment = ""
+	row := connectionRecord{Endpoint: endpoint.String(), NodeID: r.String("node_id", ""), Policy: r.String("security_policy", ""), Mode: r.String("security_mode", ""), Fingerprint: r.String("server_cert_sha256", ""), LastConnected: time.Now().UTC()}
 	if data, ok := ev.Data.(map[string]any); ok {
 		if value, ok := data["security_policy"].(string); ok {
 			row.Policy = value

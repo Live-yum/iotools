@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Live-yum/iotools/internal/engine"
@@ -30,7 +32,16 @@ func (s *Session) extra(c command) (any, error) {
 		return s.startTask("opcua.identity", func(ctx context.Context, id string) error {
 			e := engine.GenerateOPCUAClientIdentityContext(ctx, cert, key, c.ApplicationURI)
 			if e == nil {
-				s.emit(id, "identity", map[string]any{"cert_path": cert, "key_path": key, "application_uri": c.ApplicationURI})
+				certificate, readErr := os.ReadFile(cert)
+				if readErr != nil {
+					return readErr
+				}
+				block, _ := pem.Decode(certificate)
+				if block == nil || block.Type != "CERTIFICATE" {
+					return errors.New("生成的证书编码无效")
+				}
+				fingerprint := fmt.Sprintf("%x", sha256.Sum256(block.Bytes))
+				s.emit(id, "identity", map[string]any{"cert_path": cert, "key_path": key, "application_uri": c.ApplicationURI, "sha256_fingerprint": fingerprint})
 			}
 			return e
 		})
@@ -104,6 +115,7 @@ func (s *Session) extra(c command) (any, error) {
 			if s.options.RTUTransport != nil {
 				ctx = engine.WithModbusRTUTransport(ctx, s.options.RTUTransport)
 			}
+			ctx = engine.WithModbusObserver(ctx, func(op engine.ModbusOperation) { s.observeModbus(id, op) })
 			return engine.ServeModbusAPI(ctx, c.Listen, r, c.Scope)
 		})
 	case "modbus.snapshot.save":
@@ -187,7 +199,7 @@ func (s *Session) extra(c command) (any, error) {
 			}
 			s.previews[token] = preview{Token: token, Utility: &copyCommand, Digest: digest, Revision: s.revision, Expires: time.Now().Add(5 * time.Minute)}
 			s.mu.Unlock()
-			return map[string]any{"path": path, "collection": parsed, "confirmation_required": true, "token": token}, nil
+			return map[string]any{"path": path, "collection": parsed, "confirmation_required": true, "token": token, "digest": digest}, nil
 		}
 		s.mu.Lock()
 		p, ok := s.previews[c.Token]
@@ -204,7 +216,7 @@ func (s *Session) extra(c command) (any, error) {
 		s.path = path
 		s.source = b
 		s.collection = parsed
-		s.profile = parsed.DefaultProfile
+		s.profile = defaultProfile(parsed)
 		s.revision++
 		s.previews = map[string]preview{}
 		data := s.stateLocked()
@@ -246,6 +258,9 @@ func (s *Session) startTask(kind string, work func(context.Context, string) erro
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.runID, s.runDone = cancel, id, done
+	if strings.HasPrefix(kind, "modbus.") {
+		s.modbusStats = map[string]any{}
+	}
 	s.mu.Unlock()
 	s.emit(id, "started", map[string]any{"operation": kind})
 	go func() {
@@ -264,6 +279,9 @@ func (s *Session) startTask(kind string, work func(context.Context, string) erro
 					status = "cancelled"
 				}
 			}
+			if strings.HasPrefix(kind, "modbus.") && status == "cancelled" {
+				s.recordModbusCancellation()
+			}
 			s.emit(id, "done", map[string]any{"operation": kind, "status": status, "error": message})
 			s.mu.Lock()
 			s.cancel = nil
@@ -278,15 +296,51 @@ func (s *Session) startTask(kind string, work func(context.Context, string) erro
 func (s *Session) observeModbus(id string, op engine.ModbusOperation) {
 	data := map[string]any{"time": op.Time, "action": op.Action, "unit": op.Unit, "address": op.Address, "count": op.Count, "duration_ms": float64(op.Duration) / float64(time.Millisecond), "write": op.Write, "success": op.Success, "cancelled": op.Cancelled, "error_class": op.ErrorClass}
 	s.mu.Lock()
-	stats := s.modbusStats
-	stats["operations"] = stats["operations"].(int) + 1
-	key := "failure"
-	if op.Success {
-		key = "success"
+	if s.modbusStats == nil {
+		s.modbusStats = map[string]any{}
 	}
-	stats[key] = stats[key].(int) + 1
-	stats["duration_ms"] = stats["duration_ms"].(float64) + float64(op.Duration)/float64(time.Millisecond)
+	stats := s.modbusStats
+	inc := func(key string) { n, _ := stats[key].(int); stats[key] = n + 1 }
+	inc("operations")
+	if op.Write {
+		inc("writes")
+		s.modbusTotals.Writes++
+	} else {
+		inc("reads")
+		s.modbusTotals.Reads++
+	}
+	if op.Success {
+		inc("success")
+		s.modbusTotals.Success++
+	} else {
+		inc("failure")
+	}
+	if op.Cancelled {
+		inc("cancelled")
+		s.modbusTotals.Cancelled++
+	} else if !op.Success {
+		inc("errors")
+		s.modbusTotals.Errors++
+	}
+	duration, _ := stats["duration_ms"].(float64)
+	stats["duration_ms"] = duration + float64(op.Duration)/float64(time.Millisecond)
+	s.modbusTotals.DurationMS += float64(op.Duration) / float64(time.Millisecond)
 	stats["last"] = data
 	s.mu.Unlock()
 	s.emit(id, "modbus.metrics", data)
+}
+
+// Cancellation while awaiting the next sample has no I/O observation, but is
+// still one cancelled user operation. Do not count a cancelled exchange twice.
+func (s *Session) recordModbusCancellation() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modbusStats == nil {
+		s.modbusStats = map[string]any{}
+	}
+	n, _ := s.modbusStats["cancelled"].(int)
+	if n == 0 {
+		s.modbusStats["cancelled"] = 1
+		s.modbusTotals.Cancelled++
+	}
 }
