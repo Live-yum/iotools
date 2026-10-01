@@ -20,24 +20,18 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class StandaloneTest {
- private final ByteArrayOutputStream nativeBytes=new ByteArrayOutputStream();
- private String terminal(ActivityScenario<MainActivity> scenario)throws Exception{
-  CountDownLatch latch=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>("");
-  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',rendered:document.querySelector('.xterm-rows')?document.querySelector('.xterm-rows').innerText:'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',model:window.terminalFaultState||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
-  assertTrue("terminal callback",latch.await(30,TimeUnit.SECONDS));
-  String decoded=new org.json.JSONTokener(result.get()).nextValue().toString();
-  org.json.JSONObject diagnostic=new org.json.JSONObject(decoded);
-  String error=diagnostic.optString("error","");
-  if(!error.isEmpty()){
-   screenshot("failed-renderer");
-   byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
-   fail("Offline renderer error: "+error+" model="+diagnostic.optString("model")+" captured native fixture bytes="+captured.length);
-  }
-  return decoded;
+ private String terminal(ActivityScenario<MainActivity> scenario){AtomicReference<String> result=new AtomicReference<>("");scenario.onActivity(a->result.set(a.terminalView().renderedText()));return result.get();}
+ private long generation(ActivityScenario<MainActivity> scenario){AtomicLong value=new AtomicLong();scenario.onActivity(a->value.set(a.terminalView().renderedGeneration()));return value.get();}
+ private void awaitGeneration(ActivityScenario<MainActivity> scenario,long previous)throws Exception{long end=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<end){if(generation(scenario)>previous)return;Thread.sleep(100);}fail("native screen did not draw a new frame");}
+ private void assertVisibleGlyphPixels(ActivityScenario<MainActivity> scenario){
+  int[] bounds=new int[4];scenario.onActivity(a->{int[] location=new int[2];a.terminalView().getLocationOnScreen(location);bounds[0]=location[0];bounds[1]=location[1];bounds[2]=a.terminalView().getWidth();bounds[3]=a.terminalView().getHeight();});
+  Bitmap screenshot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull("native screenshot",screenshot);int bright=0;
+  for(int y=Math.max(0,bounds[1]);y<Math.min(screenshot.getHeight(),bounds[1]+bounds[3]);y+=2)for(int x=Math.max(0,bounds[0]);x<Math.min(screenshot.getWidth(),bounds[0]+bounds[2]);x+=2){int color=screenshot.getPixel(x,y);if(android.graphics.Color.red(color)>160&&android.graphics.Color.green(color)>160&&android.graphics.Color.blue(color)>160)bright++;}
+  screenshot.recycle();assertTrue("actual canvas must contain visible foreground glyph pixels",bright>30);
  }
  private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
   long end=System.currentTimeMillis()+60000;String actual="";
-  while(System.currentTimeMillis()<end){actual=terminal(scenario);if(new org.json.JSONObject(actual).optString("rendered","").contains(text))return;Thread.sleep(100);}
+  while(System.currentTimeMillis()<end){actual=terminal(scenario);if(actual.contains(text))return;Thread.sleep(100);}
   screenshot("failed-screen");fail("Missing "+text+" in "+actual+" native="+NativeRuntime.error());
  }
  private String shell(String command)throws Exception{
@@ -54,7 +48,7 @@ public class StandaloneTest {
  }
  @Test public void standaloneRealHTTPChineseEditingPersistenceAndBackgroundStop()throws Exception{
   Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-  System.out.println("WebView: "+android.webkit.WebView.getCurrentWebViewPackage().versionName);
+  System.out.println("Renderer: native Android Canvas; API="+android.os.Build.VERSION.SDK_INT);
   NativeRuntime.stop();long stop=System.currentTimeMillis()+5000;while(NativeRuntime.state()!=0&&System.currentTimeMillis()<stop)Thread.sleep(50);
   AtomicInteger requests=new AtomicInteger();
   ServerSocket server=new ServerSocket(0,10,InetAddress.getByName("127.0.0.1"));
@@ -68,24 +62,32 @@ public class StandaloneTest {
   String yaml="version: 1\nprofiles:\n  local: {}\nrequests:\n  - id: customer\n    name: 客服验收\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n";
   try(OutputStream out=new FileOutputStream(config)){out.write(yaml.getBytes(StandardCharsets.UTF_8));}
   try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
-   scenario.onActivity(a->a.observeOutputForTest(bytes->{synchronized(nativeBytes){if(nativeBytes.size()+bytes.length<=65536)nativeBytes.write(bytes,0,bytes.length);}}));
-   awaitText(scenario,"客服验收");assertEquals("startup must not connect",0,requests.get());screenshot("01-home");
+   awaitText(scenario,"客服验收");assertEquals("startup must not connect",0,requests.get());assertVisibleGlyphPixels(scenario);screenshot("01-home");
    onView(withText("执行")).perform(click());awaitText(scenario,"Android真实协议成功");assertEquals(1,requests.get());screenshot("02-real-http");
    onView(withText("文件")).perform(click());awaitText(scenario,"请求配置 YAML");screenshot("03-config-editor");
-   // Bracketed paste goes through the same terminal input path as IME/multiline input.
-   scenario.onActivity(a->a.terminalView().evaluateJavascript("terminalPaste('# 中文备注 😀\\n')",null));
+   onView(withText("输入")).perform(click());
+   onView(androidx.test.espresso.matcher.ViewMatchers.withHint("中文/多行文本；发送到当前输入位置")).perform(androidx.test.espresso.action.ViewActions.replaceText("# 中文备注 😀\n"));
+   screenshot("03a-native-input-dialog");
+   onView(withText("输入")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());
+   awaitText(scenario,"中文备注");
+   scenario.onActivity(a->{android.view.inputmethod.InputConnection input=a.terminalView().onCreateInputConnection(new android.view.inputmethod.EditorInfo());input.setComposingText("# 输入",1);input.setComposingText("# 输入法验收",1);input.commitText("# 输入法验收",1);input.finishComposingText();input.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);});
+   awaitText(scenario,"输入法验收");
    // Switching apps before saving must preserve the exact editor draft.
    Thread.sleep(300);
+   long beforePause=generation(scenario);
    scenario.moveToState(Lifecycle.State.CREATED);
    Thread.sleep(300);
    assertEquals("background retains TUI memory",1,NativeRuntime.state());
    scenario.moveToState(Lifecycle.State.RESUMED);
+   awaitGeneration(scenario,beforePause);
    awaitText(scenario,"中文备注");
    assertEquals("background must not replay HTTP",1,requests.get());
    screenshot("03b-editor-resumed");
    onView(withText("保存")).perform(click());awaitText(scenario,"配置已保存");
    String saved=new String(java.nio.file.Files.readAllBytes(config.toPath()),StandardCharsets.UTF_8);
    assertTrue("Chinese/emoji bytes saved",saved.contains("中文备注 😀"));
+   assertEquals("IME composition committed exactly once",1,saved.split("输入法验收",-1).length-1);
+   assertTrue("IME Enter inserted one newline",saved.contains("# 输入法验收\nversion:"));
    onView(withText("Esc")).perform(click());
    scenario.moveToState(Lifecycle.State.CREATED);
    Thread.sleep(400);
@@ -94,12 +96,6 @@ public class StandaloneTest {
    onView(withText("启动")).perform(click());awaitText(scenario,"客服验收");assertEquals(1,requests.get());screenshot("04-reopened");
    scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
    Thread.sleep(1000);awaitText(scenario,"客服验收");screenshot("05-landscape");
-  }finally{
-   byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
-   String encoded=android.util.Base64.encodeToString(captured,android.util.Base64.NO_WRAP);
-   for(int offset=0;offset<encoded.length();offset+=768)System.out.println("NATIVE_FIXTURE_BASE64 "+offset+" "+encoded.substring(offset,Math.min(encoded.length(),offset+768)));
-   System.out.println("NATIVE_FIXTURE_BYTES "+captured.length);
-   NativeRuntime.stop();server.close();serving.join(2000);
-  }
+  }finally{NativeRuntime.stop();server.close();serving.join(2000);}
  }
 }

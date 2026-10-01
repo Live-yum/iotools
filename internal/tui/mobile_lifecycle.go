@@ -18,3 +18,6 @@ func (u *UI) ApplyMobileOptions(readonly bool, historyPath string) {
 	u.HTTPHistoryPath = historyPath
 	u.setStatus("手机设置已生效 · 未保存编辑保留 · F1帮助")
 }
+
+// QuitMobile runs on the UI event loop and drains cancelled protocol workers.
+func (u *UI) QuitMobile() { u.quit() }

@@ -2,11 +2,9 @@
 
 本分支在已验证桌面633a021f上增加Android包装。Go协议引擎和tview/tcell界面直接编译成
 APK里的共享库，JNI加载，不启动外部shell，不要求Termux，不在应用可写目录执行二进制。
-终端采用MIT许可xterm.js 5.5.0和addon-fit 0.10.0，npm完整性锁定；所有JS/CSS随APK离线打包。
-构建用锁定esbuild 0.25.9转译到Chrome61，带globalThis/queueMicrotask/replaceChildren兼容层；
-xterm唯一的Unicode Control正则等价改写为U+0000–001F/U+007F–009F，保留MIT许可。
-不要求用户升级系统WebView来绕过可选链/空值合并解析错误。
-WebView禁止外部导航、网络加载、文件和content访问；协议网络由内置Go引擎处理。
+屏幕由原生Android Canvas绘制同一个tcell/tview实时屏幕，保留Unicode字簇、宽字符续格、
+颜色、反显、下划线和光标。JNI只传递有大小边界和格式校验的完整屏幕帧；没有WebView、
+JavaScript、HTML解析、外部终端或远程页面依赖。协议网络由内置Go引擎处理。
 
 ## 安装与平台
 
@@ -47,8 +45,8 @@ TLS验证默认不放宽；明文HTTP/MQTT等协议只能通过用户明确配�
 
 ## 构建与证据
 
-scripts/android/build-native.sh构建两个ABI；prepare-assets.sh按lockfile打包离线终端。
-Android工作流构建debug APK、验证签名/权限/16KiB对齐，随后运行x86_64模拟器：当前主验收使用Android35；有现成KVM权限时加速，否则低分辨率软件模拟，不更改KVM权限。Android29/旧WebView兼容性单独记录，不能由最低SDK推断通过。
+scripts/android/build-native.sh构建两个ABI；prepare-assets.sh打包中文说明和许可证。
+Android工作流构建debug APK、验证签名/权限/16KiB对齐，随后运行x86_64模拟器：已有KVM权限时使用Android35；否则使用低分辨率AOSP Android29软件模拟，不更改KVM权限。WebView版本不再参与运行，最低SDK仍不能代替所有Android版本的实测。
 模拟器测试真实启动Go TUI、明确点击触发本机HTTP回包、中文/emoji文件编辑持久化、
 未保存中文草稿跨前后台保留、任务取消与不重放、恢复及横屏，并保存原生截图。
 最终通过与否及下载文件以精确提交SHA的Actions为准；模拟器不代表实体ARM64手机验收。

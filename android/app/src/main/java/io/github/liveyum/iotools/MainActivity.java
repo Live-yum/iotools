@@ -7,35 +7,25 @@ import android.net.Uri;
 import android.graphics.Color;
 import android.view.*;
 import android.view.inputmethod.InputMethodManager;
-import android.webkit.*;
 import android.widget.*;
-import androidx.webkit.WebViewAssetLoader;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import org.json.JSONObject;
 
 public class MainActivity extends Activity {
- private WebView web;
+ private TerminalCanvas terminal;
  private TextView status;
  private final Handler handler=new Handler(Looper.getMainLooper());
  private boolean active,ready,wanted=true,starting,seenRunning,stopping;
  private int cols=80,rows=24;
- private boolean outputPending;
- private int outputSequence,streamGeneration;
  private static final int IMPORT=21,EXPORT=22,IMPORT_FILE=23,EXPORT_FILE=24;
  private File exportSource;
  private File config;
- private java.util.function.Consumer<byte[]> outputObserver;
- void observeOutputForTest(java.util.function.Consumer<byte[]> observer){outputObserver=observer;}
  private final Runnable poll=new Runnable(){public void run(){
   if(!active)return;
   if(!ready){handler.postDelayed(this,16);return;}
   String copy=NativeRuntime.clipboard();if(!copy.isEmpty())((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("iotools明确复制",new String(android.util.Base64.decode(copy,android.util.Base64.DEFAULT),StandardCharsets.UTF_8)));
-  if(!outputPending){
-   byte[] bytes=NativeRuntime.read();
-   if(outputObserver!=null&&bytes.length>0)outputObserver.accept(bytes);
-   if(bytes.length>0){outputPending=true;int sequence=++outputSequence;web.evaluateJavascript("receiveTerminal("+JSONObject.quote(android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))+","+sequence+","+streamGeneration+")",null);}
-  }
+  byte[] frame=NativeRuntime.frame();
+  if(frame.length>0){try{terminal.acceptFrame(frame);}catch(RuntimeException error){status.setText("原生屏幕错误："+error.getMessage());wanted=false;NativeRuntime.pause();}}
   int state=NativeRuntime.state();
   if(state==1)seenRunning=true;else if(seenRunning){seenRunning=false;if(!stopping)wanted=false;stopping=false;status.setText("终端已停止 · 点启动重新打开");}
   if(ready&&wanted&&state==0&&!starting)startTerminal();
@@ -54,27 +44,16 @@ public class MainActivity extends Activity {
   LinearLayout second=row(root);
   button(second,"帮助",()->send("\u001bOP"));button(second,"视图",()->send("\u001bOQ"));button(second,"表单",()->send("\u001bOR"));
   button(second,"文件",()->send("\u001bOS"));button(second,"保存",()->send("\u0013"));button(second,"取消",()->send("\u001b[19~"));
-  button(second,"键盘",()->{web.evaluateJavascript("terminalFocus()",null);((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(web,InputMethodManager.SHOW_IMPLICIT);});
+  button(second,"键盘",()->{terminal.requestFocus();((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(terminal,InputMethodManager.SHOW_IMPLICIT);});
   button(second,"输入",this::textInput);button(second,"更多",this::more);
-  web=new WebView(this);web.setBackgroundColor(Color.BLACK);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
-  WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(false);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
-  settings.setBlockNetworkLoads(true);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setBuiltInZoomControls(false);
-  WebViewAssetLoader assets=new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this)).build();
-  web.setWebViewClient(new WebViewClient(){
-   @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest req){
-    WebResourceResponse response=assets.shouldInterceptRequest(req.getUrl());
-    return response!=null?response:new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
-   }
-   @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest req){return true;}
-   @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame())runOnUiThread(()->status.setText("离线终端资源错误："+error.getErrorCode()));}
+  terminal=new TerminalCanvas(this,new TerminalCanvas.Host(){
+   public void resize(int c,int r){boolean first=!ready;ready=true;MainActivity.this.resize(c,r);if(first){if(NativeRuntime.state()==1)NativeRuntime.resume();else startTerminal();}}
+   public void key(String name,int rune,int modifiers){if(ready&&NativeRuntime.state()==1&&NativeRuntime.key(name,rune,modifiers)<0)status.setText(NativeRuntime.error());}
+   public void input(String text){send(text);}
+   public void mouse(int x,int y,boolean down){if(ready&&NativeRuntime.state()==1)NativeRuntime.mouse(x,y,down);}
   });
-  web.addJavascriptInterface(new Object(){
-   @JavascriptInterface public void ready(int c,int r){runOnUiThread(()->{ready=true;resize(c,r);if(NativeRuntime.state()==1)NativeRuntime.resume();else startTerminal();});}
-   @JavascriptInterface public void input(String text){runOnUiThread(()->send(text));}
-   @JavascriptInterface public void resize(int c,int r){runOnUiThread(()->MainActivity.this.resize(c,r));}
-   @JavascriptInterface public void outputDone(int sequence){runOnUiThread(()->{if(sequence==outputSequence)outputPending=false;});}
-  },"IOTools");
-  web.loadUrl("https://appassets.androidplatform.net/assets/index.html");
+  HorizontalScrollView viewport=new HorizontalScrollView(this);viewport.setFillViewport(true);viewport.addView(terminal,new android.view.ViewGroup.LayoutParams(-2,-1));root.addView(viewport,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+
  }
  private LinearLayout row(LinearLayout root){HorizontalScrollView scroll=new HorizontalScrollView(this);LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);scroll.addView(row);root.addView(scroll,new LinearLayout.LayoutParams(-1,-2));return row;}
  private void button(LinearLayout row,String label,Runnable action){Button b=new Button(this);b.setText(label);b.setTextSize(12);b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(12,0,12,0);b.setOnClickListener(v->action.run());row.addView(b,new LinearLayout.LayoutParams(-2,dp(42)));}
@@ -88,12 +67,12 @@ public class MainActivity extends Activity {
   int result=NativeRuntime.start(config.getAbsolutePath(),cols,rows,flags);
   starting=false;
   if(result<0){wanted=false;status.setText("启动失败："+NativeRuntime.error());return;}
-  streamGeneration++;
   stopping=false;
   status.setText("已启动 · "+cols+"×"+rows+" · 后台取消任务但保留编辑，不自动重放");
  }
  private void send(String text){if(!ready||NativeRuntime.state()==0)return;if(text.getBytes(StandardCharsets.UTF_8).length>65536){status.setText("输入超过64KiB");return;}if(NativeRuntime.input(text.getBytes(StandardCharsets.UTF_8))<0)status.setText(NativeRuntime.error());}
- private void textInput(){EditText text=new EditText(this);text.setMinLines(3);text.setHint("中文/多行文本；发送到当前输入位置");new AlertDialog.Builder(this).setTitle("输入文本").setView(text).setNegativeButton("取消",null).setPositiveButton("输入",(d,w)->web.evaluateJavascript("terminalPaste("+JSONObject.quote(text.getText().toString())+")",null)).show();}
+ private void textInput(){EditText text=new EditText(this);text.setMinLines(3);text.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);text.setHint("中文/多行文本；发送到当前输入位置");new AlertDialog.Builder(this).setTitle("输入文本").setView(text).setNegativeButton("取消",null).setPositiveButton("输入",(d,w)->{byte[] input=text.getText().toString().getBytes(StandardCharsets.UTF_8);if(NativeRuntime.paste(input)<0)status.setText(NativeRuntime.error());}).show();}
+
  private void more(){
   String[] labels={"环境 F6","HTTP控制台 F7","OPC历史 F9","独立订阅 F10","HTTP历史 F11","配置轮换 F12","OPC四窗 Ctrl+U","上页","下页","反向Tab","导入配置","导出配置","使用说明","只读模式设置","历史保存设置","导入证书/数据附件","导出本机文件"};
   String[] keys={"\u001b[17~","\u001b[18~","\u001b[20~","\u001b[21~","\u001b[23~","\u001b[24~","\u0015","\u001b[5~","\u001b[6~","\u001b[Z"};
@@ -105,7 +84,7 @@ public class MainActivity extends Activity {
    if(w==14){setting("history","历史保存","启用后HTTP响应会保存到本机history.sqlite，可能含敏感信息；默认关闭。切换会取消活动任务，保留编辑草稿。");return;}
    if(w==15){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,IMPORT_FILE);return;}
    if(w==16){exportFileMenu();return;}
-   if(w==12)new AlertDialog.Builder(this).setTitle("独立Android版").setMessage("真实Go TUI与协议引擎已内置，无需Termux。配置保存在应用私有目录；F3表单、F4文件、保存按钮=Ctrl+S。目标127.0.0.1是手机本机。仅明确执行才联网。HTTP明文由原生引擎按配置支持，WebView完全不联网。USB串口/后台常驻暂不提供；切后台取消活动请求，编辑草稿保留在内存；返回原页面，不自动执行。系统终止应用进程仍会丢失未保存草稿。当前为测试签名APK；更新签名不同时请先导出配置。").setPositiveButton("知道了",null).show();
+   if(w==12)new AlertDialog.Builder(this).setTitle("独立Android版").setMessage("真实Go TUI与协议引擎已内置，无需Termux。配置保存在应用私有目录；F3表单、F4文件、保存按钮=Ctrl+S。目标127.0.0.1是手机本机。仅明确执行才联网。HTTP明文由原生引擎按配置支持，屏幕由原生Android画布直接绘制，无WebView依赖。USB串口/后台常驻暂不提供；切后台取消活动请求，编辑草稿保留在内存；返回原页面，不自动执行。系统终止应用进程仍会丢失未保存草稿。当前为测试签名APK；更新签名不同时请先导出配置。").setPositiveButton("知道了",null).show();
   }).show();
  }
  @Override protected void onActivityResult(int request,int result,Intent data){
@@ -160,10 +139,10 @@ public class MainActivity extends Activity {
    exportSource=list[w];Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,exportSource.getName()).addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,EXPORT_FILE);
   }).setNegativeButton("取消",null).show();
  }
- private static void copy(InputStream in,OutputStream out,int max)throws IOException{byte[] buf=new byte[8192];int total=0,n;while((n=in.read(buf))!=-1){total+=n;if(total>max)throw new IOException("配置超过1MiB");out.write(buf,0,n);}}
+ private static void copy(InputStream in,OutputStream out,int max)throws IOException{byte[] buf=new byte[8192];int total=0,n;while((n=in.read(buf))!=-1){total+=n;if(total>max)throw new IOException("文件超过限制："+(max/(1<<20))+"MiB");out.write(buf,0,n);}}
  @Override protected void onStart(){super.onStart();active=true;if(ready&&NativeRuntime.state()==1)NativeRuntime.resume();handler.post(poll);}
  @Override protected void onStop(){active=false;handler.removeCallbacks(poll);NativeRuntime.pause();super.onStop();}
- @Override protected void onDestroy(){web.removeJavascriptInterface("IOTools");web.destroy();super.onDestroy();}
+ @Override protected void onDestroy(){super.onDestroy();}
  @Override public void onBackPressed(){send("\u001b");}
- public WebView terminalView(){return web;}
+ public TerminalCanvas terminalView(){return terminal;}
 }

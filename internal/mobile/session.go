@@ -13,13 +13,20 @@ import (
 )
 
 type Session struct {
-	TTY     *TTY
-	ui      *tui.UI
-	done    chan struct{}
-	mu      sync.Mutex
-	err     error
-	pending []func(tcell.Screen)
-	closed  bool
+	TTY        *TTY
+	Canvas     *CanvasScreen
+	screen     tcell.Screen
+	input      chan canvasPacket
+	inputBytes int
+	started    chan struct{}
+	startOnce  sync.Once
+	stopOnce   sync.Once
+	ui         *tui.UI
+	done       chan struct{}
+	mu         sync.Mutex
+	err        error
+	pending    []func(tcell.Screen)
+	closed     bool
 }
 
 type Options struct {
@@ -31,6 +38,12 @@ func Start(path, version string, width, height int) (*Session, error) {
 	return StartWithOptions(path, version, width, height, Options{})
 }
 func StartWithOptions(path, version string, width, height int, options Options) (*Session, error) {
+	return startSession(path, version, width, height, options, false)
+}
+func StartCanvas(path, version string, width, height int, options Options) (*Session, error) {
+	return startSession(path, version, width, height, options, true)
+}
+func startSession(path, version string, width, height int, options Options, canvas bool) (*Session, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("配置路径必须是应用私有目录绝对路径")
 	}
@@ -57,18 +70,30 @@ func StartWithOptions(path, version string, width, height int, options Options) 
 	if err != nil {
 		return nil, err
 	}
-	tty := NewTTY(width, height)
-	screen, err := tcell.NewTerminfoScreenFromTty(tty)
-	if err != nil {
-		return nil, err
+	var tty *TTY
+	var screen tcell.Screen
+	var canvasScreen *CanvasScreen
+	if canvas {
+		canvasScreen = NewCanvasScreen(width, height)
+		screen = canvasScreen
+	} else {
+		tty = NewTTY(width, height)
+		screen, err = tcell.NewTerminfoScreenFromTty(tty)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if options.History {
 		ui.HTTPHistoryPath = filepath.Join(filepath.Dir(path), "history.sqlite")
 	}
 	ui.App.SetScreen(screen)
 	ui.BuildVersion = version
-	session := &Session{TTY: tty, ui: ui, done: make(chan struct{})}
+	session := &Session{TTY: tty, Canvas: canvasScreen, screen: screen, ui: ui, done: make(chan struct{}), input: make(chan canvasPacket, 16), started: make(chan struct{})}
+	if canvasScreen != nil {
+		go session.canvasInputLoop()
+	}
 	ui.App.SetBeforeDrawFunc(func(screen tcell.Screen) bool {
+		session.startOnce.Do(func() { close(session.started) })
 		session.mu.Lock()
 		pending := session.pending
 		session.pending = nil
@@ -86,12 +111,27 @@ func StartWithOptions(path, version string, width, height int, options Options) 
 		session.closed = true
 		session.pending = nil
 		session.mu.Unlock()
-		tty.Close()
+		if tty != nil {
+			tty.Close()
+		}
 		close(session.done)
 	}()
 	return session, nil
 }
 func (s *Session) Stop() {
+	if s.Canvas != nil {
+		s.stopOnce.Do(func() {
+			go func() {
+				select {
+				case <-s.done:
+					return
+				case <-s.started:
+				}
+				s.ui.App.QueueUpdate(func() { s.ui.QuitMobile() })
+			}()
+		})
+		return
+	}
 	select {
 	case <-s.done:
 		return
