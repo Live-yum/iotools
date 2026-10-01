@@ -8,6 +8,17 @@ import android.provider.DocumentsContract;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import org.junit.Test;
+import org.junit.Before;
+import org.junit.AfterClass;
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.runner.RunWith;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +28,15 @@ import java.util.zip.*;
 
 @RunWith(AndroidJUnit4.class)
 public final class MobileFilesTest {
+    @Before public void grantOnlyDisposableFixtureUris()throws Exception{fixtureGrant(false);}
+    @AfterClass public static void revokeDisposableFixtureUris()throws Exception{fixtureGrant(true);}
+    private static void fixtureGrant(boolean revoke)throws Exception{
+        Context context=InstrumentationRegistry.getInstrumentation().getContext();
+        Intent intent=new Intent().setComponent(new ComponentName(context.getPackageName(),FixtureGrantReceiver.class.getName())).putExtra("revoke",revoke);
+        CountDownLatch done=new CountDownLatch(1);AtomicInteger status=new AtomicInteger();
+        context.sendOrderedBroadcast(intent,null,new BroadcastReceiver(){@Override public void onReceive(Context ignored,Intent result){status.set(getResultCode());done.countDown();}},new Handler(Looper.getMainLooper()),0,null,null);
+        assertTrue("fixture grant receiver timed out",done.await(15,TimeUnit.SECONDS));assertEquals("test-only URI grant failed",1,status.get());
+    }
     private File temporary()throws IOException{return Files.createTempDirectory(InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir().toPath(),"file-regression-").toFile();}
     private ContentResolver resolver(){return InstrumentationRegistry.getInstrumentation().getContext().getContentResolver();}
     private Uri document(String id){return DocumentsContract.buildDocumentUri(FileFixtureProvider.AUTHORITY,id);}

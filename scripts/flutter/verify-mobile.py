@@ -24,7 +24,7 @@ if len(sys.argv)>1:
   for name in names:
    if name.endswith('.dex'):
     data=apk.read(name)
-    for banned in (b'TerminalCanvas',b'Lio/github/liveyum/iotools/NativeUi;',b'Lio/github/liveyum/iotools/AdvancedWorkflows;',b'Lio/github/liveyum/iotools/OpcuaWorkspace;'):
+    for banned in (b'TerminalCanvas',b'Lio/github/liveyum/iotools/NativeUi;',b'Lio/github/liveyum/iotools/AdvancedWorkflows;',b'Lio/github/liveyum/iotools/OpcuaWorkspace;',b'Lio/github/liveyum/iotools/FileFixtureProvider;',b'Lio/github/liveyum/iotools/FixtureGrantReceiver;'):
      assert banned not in data,f'Removed UI class in APK: {banned}'
  print('APK contains actual Flutter engine and shared Go engine; legacy mobile UI absent')
 print('Flutter source isolation passed')
