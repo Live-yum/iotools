@@ -35,6 +35,47 @@ String exactEncode(Object? value) {
 
 Object? exactDecode(String source) => _Parser(source).parse();
 
+/// Decode the engine wire without changing the JSON types of editable HTTP
+/// bodies. Ordinary metrics remain doubles and display integers use the same
+/// decimal strings as Go's wire encoder. Only params.json within a request
+/// whose protocol is HTTP retains exact numeric tokens for later execution.
+Object? decodeEngineReply(String source) {
+  Object? normalized(Object? value, {bool preserveNumbers = false}) {
+    if (value is ExactNumber) {
+      if (preserveNumbers) return value;
+      if (RegExp(r'^-?\d+$').hasMatch(value.source)) return value.source;
+      final number = double.tryParse(value.source);
+      if (number == null || !number.isFinite)
+        throw const FormatException('内核返回非有限数值');
+      return number;
+    }
+    if (value is List)
+      return value
+          .map((item) => normalized(item, preserveNumbers: preserveNumbers))
+          .toList();
+    if (value is Map)
+      return {
+        for (final entry in value.entries)
+          entry.key.toString():
+              !preserveNumbers &&
+                  value['protocol'] == 'http' &&
+                  entry.key == 'params' &&
+                  entry.value is Map
+              ? {
+                  for (final parameter in (entry.value as Map).entries)
+                    parameter.key.toString(): normalized(
+                      parameter.value,
+                      preserveNumbers: parameter.key == 'json',
+                    ),
+                }
+              : normalized(entry.value, preserveNumbers: preserveNumbers),
+      };
+    return value;
+  }
+
+  return normalized(exactDecode(source));
+}
+
 class _Parser {
   _Parser(this.s);
   final String s;

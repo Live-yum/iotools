@@ -1,4 +1,4 @@
-//go:build !android && !sqlite_android_test
+//go:build !android && !ios && !sqlite_android_test
 
 package engine
 

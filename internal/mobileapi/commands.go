@@ -193,8 +193,10 @@ func (s *Session) command(c command) (any, error) {
 		}
 		s.mu.Lock()
 		transport := s.options.RTUTransport
+		nativeSerial := s.options.NativeSerial
 		s.options = *c.Options
 		s.options.RTUTransport = transport
+		s.options.NativeSerial = nativeSerial
 		s.revision++
 		s.previews = map[string]preview{}
 		out := s.stateLocked()

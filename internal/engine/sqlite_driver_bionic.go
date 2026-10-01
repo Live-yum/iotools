@@ -1,4 +1,4 @@
-//go:build android || sqlite_android_test
+//go:build android || ios || sqlite_android_test
 
 package engine
 
@@ -15,6 +15,7 @@ import (
 
 // Android must reach the OS through the NDK/Bionic C library. The pure-Go libc
 // implementation issues legacy Linux syscalls that Android's seccomp rejects.
+// iOS also uses its supported native C ABI and the same bundled SQLite source.
 // sqlite_android_test selects this same bundled-C driver on a CGO-enabled host.
 // Do not build with libsqlite3: the application bundles SQLite, not a device ABI.
 func init() {

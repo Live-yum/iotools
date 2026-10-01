@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'json.dart';
@@ -40,7 +39,7 @@ class MethodChannelEngine implements Engine {
   }
 
   Object? unwrap(Object? raw) {
-    final reply = mapOf(raw is String ? jsonDecode(raw) : raw);
+    final reply = mapOf(raw is String ? decodeEngineReply(raw) : raw);
     if (reply['ok'] != true)
       throw EngineException(reply['error']?.toString() ?? '内核返回无效响应');
     return reply['data'];
@@ -121,4 +120,4 @@ class MethodChannelPlatform implements PlatformServices {
       channel.invokeMethod(method, args);
 }
 
-Object? _decodeLargeReply(String source) => jsonDecode(source);
+Object? _decodeLargeReply(String source) => decodeEngineReply(source);

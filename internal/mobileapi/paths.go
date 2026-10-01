@@ -56,8 +56,8 @@ func (s *Session) preparePreviewRequest(r *config.Request) error {
 	return s.scopeRequest(r, r.Protocol == "http")
 }
 func (s *Session) scopeRequest(r *config.Request, templates bool) error {
-	if r.Protocol == "modbus" && strings.HasPrefix(r.Endpoint, "rtu://") {
-		return errors.New("Android cannot open desktop serial paths; select an attached USB device or RTU-over-TCP")
+	if r.Protocol == "modbus" && strings.HasPrefix(r.Endpoint, "rtu://") && !s.options.NativeSerial {
+		return errors.New("当前宿主不支持本地串口路径，请选择已授权 USB 设备或 RTU-over-TCP")
 	}
 	for key, value := range r.Params {
 		if key == "next_config" || strings.HasSuffix(key, "_file") {

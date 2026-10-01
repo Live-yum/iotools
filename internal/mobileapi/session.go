@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,9 @@ type Options struct {
 	ReadOnly     bool                      `json:"read_only"`
 	History      bool                      `json:"history"`
 	RTUTransport engine.ModbusRTUTransport `json:"-"`
+	// NativeSerial is a trusted host capability, never a JSON preference.
+	// Desktop hosts may enable their existing OS serial-device transport.
+	NativeSerial bool `json:"-"`
 	// PrivateRoot is supplied only by the trusted platform host at Open. It
 	// keeps recovery of a nested collection inside the original private sandbox.
 	// JSON commands cannot set it or change a session's root after opening.
@@ -435,6 +439,22 @@ func (s *Session) idle() error {
 }
 
 func normalizeRequest(r *config.Request) error {
+	if r.Protocol == "http" {
+		for key, value := range r.Params {
+			var normalized any
+			var err error
+			if key == "json" {
+				normalized, err = normalizeJSONValue(value, 0, true)
+			} else {
+				normalized, err = normalizeJSON(value, 0)
+			}
+			if err != nil {
+				return err
+			}
+			r.Params[key] = normalized
+		}
+		return nil
+	}
 	v, e := normalizeJSON(r.Params, 0)
 	if e != nil {
 		return e
@@ -445,6 +465,9 @@ func normalizeRequest(r *config.Request) error {
 	return nil
 }
 func normalizeJSON(v any, depth int) (any, error) {
+	return normalizeJSONValue(v, depth, false)
+}
+func normalizeJSONValue(v any, depth int, httpPayload bool) (any, error) {
 	if depth > 64 {
 		return nil, errors.New("JSON exceeds nesting limit")
 	}
@@ -454,13 +477,19 @@ func normalizeJSON(v any, depth int) (any, error) {
 			return n, nil
 		}
 		if !strings.ContainsAny(string(x), ".eE") {
+			if httpPayload {
+				if n, e := strconv.ParseUint(string(x), 10, 64); e == nil {
+					return n, nil
+				}
+				return nil, errors.New("HTTP JSON integer exceeds the supported exact 64-bit range")
+			}
 			return string(x), nil
 		}
 		n, e := x.Float64()
 		return n, e
 	case map[string]any:
 		for k, v := range x {
-			n, e := normalizeJSON(v, depth+1)
+			n, e := normalizeJSONValue(v, depth+1, httpPayload)
 			if e != nil {
 				return nil, e
 			}
@@ -469,7 +498,7 @@ func normalizeJSON(v any, depth int) (any, error) {
 		return x, nil
 	case []any:
 		for i, v := range x {
-			n, e := normalizeJSON(v, depth+1)
+			n, e := normalizeJSONValue(v, depth+1, httpPayload)
 			if e != nil {
 				return nil, e
 			}

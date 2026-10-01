@@ -40,7 +40,21 @@ func wireMarshal(value any) ([]byte, error) {
 				x[i] = walk(v)
 			}
 		case map[string]any:
+			// Editable HTTP JSON is a payload, not a display metric. Converting
+			// its integer tokens into strings would change the next wire request.
+			// Flutter's exact reply decoder preserves this specific subtree.
+			httpRequest := x["protocol"] == "http"
 			for k, v := range x {
+				if httpRequest && k == "params" {
+					if params, ok := v.(map[string]any); ok {
+						for key, value := range params {
+							if key != "json" {
+								params[key] = walk(value)
+							}
+						}
+						continue
+					}
+				}
 				x[k] = walk(v)
 			}
 		}
