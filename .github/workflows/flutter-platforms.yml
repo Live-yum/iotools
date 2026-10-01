@@ -230,17 +230,17 @@ jobs:
           python3 -B scripts/flutter-platforms/test_ios_notices.py
           python3 -B scripts/flutter-platforms/test_ios_build_scope.py
           python3 scripts/flutter-platforms/select-ios-xcode.py
-      - name: Compile and normally launch the iOS simulator developer artifact
+      - name: Compile and statically verify the iOS simulator test/developer artifact
         run: |
           bash scripts/flutter-platforms/build-native.sh ios-simulator arm64
           cd mobile
           flutter build ios --simulator --debug --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
           cd ..
-          python3 scripts/flutter-platforms/verify-ios.py simulator-build
+          python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
       - uses: actions/upload-artifact@v4
         with:
           name: iotools-flutter-ios-simulator-compiled-${{ github.sha }}
-          path: platform-dist/ios-simulator-build-*
+          path: platform-dist/ios-simulator-compiled-*
           if-no-files-found: error
           retention-days: 14
       - name: Required real iOS host XCTest acceptance
@@ -283,10 +283,10 @@ jobs:
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
       - name: Compile unsigned iOS device application and verify its scope
         run: |
+          python3 -B scripts/flutter-platforms/test_ios_device_release.py
+          python3 -B scripts/flutter-platforms/test_ios_release_gate.py
           bash scripts/flutter-platforms/build-native.sh ios-device arm64
-          cd mobile
-          flutter build ios --release --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
-          cd ..
+          python3 scripts/flutter-platforms/prepare-ios-device-release.py
           python3 scripts/flutter-platforms/verify-ios.py device
       - uses: actions/upload-artifact@v4
         with:

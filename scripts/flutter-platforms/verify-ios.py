@@ -20,6 +20,8 @@ import tempfile
 import time
 import zipfile
 
+from ios_release_gate import verify_production_bundle
+
 ROOT = Path(__file__).resolve().parents[2]
 SYMBOLS = {
     "_IotoolsNativeABIVersion", "_IotoolsNativeOpen", "_IotoolsNativeCommand",
@@ -29,6 +31,39 @@ SYMBOLS = {
 
 def run(*args, timeout=120):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
+
+
+def simulator_operation(evidence, label, *args, timeout=120):
+    """Preserve actual command output at the original timeout; never retry a gate."""
+    try:
+        output = run(*args, timeout=timeout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        output = error.output or ''
+        if isinstance(output, bytes):
+            output = output.decode('utf-8', errors='replace')
+        (evidence / f'{label}.txt').write_text(output + '\n' + str(error))
+        raise
+    (evidence / f'{label}.txt').write_text(output)
+    return output
+
+
+def simulator_failure_diagnostics(evidence):
+    """Bounded read-only simulator diagnostics; their result cannot pass a failed gate."""
+    udid = os.environ.get('IOTOOLS_IOS_SIMULATOR_UDID', '')
+    if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', udid):
+        return
+    commands = {
+        'failure-devices': ['xcrun', 'simctl', 'list', 'devices', '--json'],
+        'failure-services': ['xcrun', 'simctl', 'spawn', udid, 'launchctl', 'list'],
+        'failure-install-log': ['xcrun', 'simctl', 'spawn', udid, 'log', 'show', '--last', '2m',
+                                '--style', 'compact', '--predicate', 'process == "installd" OR process == "appstored"'],
+    }
+    for label, command in commands.items():
+        try:
+            simulator_operation(evidence, label, *command, timeout=15)
+        except Exception as error:
+            with (evidence / f'{label}.txt').open('a') as output:
+                output.write('\nDiagnostic unavailable: ' + str(error))
 
 
 def sha256(path):
@@ -181,12 +216,12 @@ def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
     runtime, selected = select_simulator(devices, sdk_version, os.environ.get("IOTOOLS_IOS_SIMULATOR_UDID"))
     udid = selected["udid"]
     if selected["state"] != "Booted":
-        run("xcrun", "simctl", "boot", udid)
-    run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=300)
-    run("xcrun", "simctl", "install", udid, str(app))
+        simulator_operation(evidence, 'simulator-boot', "xcrun", "simctl", "boot", udid)
+    simulator_operation(evidence, 'simulator-bootstatus', "xcrun", "simctl", "bootstatus", udid, "-b", timeout=300)
+    simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app))
     # Terminate any prior run without uninstalling or erasing simulator contents.
     subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=30)
-    launch = run("xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=60).strip()
+    launch = simulator_operation(evidence, 'simulator-launch', "xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=60).strip()
     report["normal_launch"] = {"simulator": selected["name"], "udid": udid, "runtime": runtime, "launch": launch}
     save()
     try:
@@ -249,7 +284,7 @@ def test_simulator(app, info, evidence, report, save, *, run_host_tests=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=["simulator", "simulator-build", "device"])
+    parser.add_argument("kind", choices=["simulator", "simulator-build", "simulator-compiled", "device"])
     args = parser.parse_args()
     require(platform.system() == "Darwin", "This verifies actual Xcode products and can run only on macOS")
     revision = os.environ.get("IOTOOLS_SHA", "")
@@ -267,18 +302,49 @@ def main():
         info, details = verify_bundle(app, bundle_kind, evidence)
         report.update(details, bundle_id=info["CFBundleIdentifier"])
         save()
-        if args.kind != "device":
+        if args.kind == 'simulator-compiled':
+            report['bundle_type'] = 'Debug simulator test/developer bundle; integration_test plugin/channel is included'
+            report['test_channel_exposure'] = ['plugins.flutter.io/integration_test: captureScreenshot/allTestsFinished']
+            report['remaining_gates'] = ['Simulator installation and normal launch', 'All five required host XCTest cases',
+                                       'User-selected document-provider save/reimport and full protocol UI acceptance']
+        elif args.kind != "device":
             test_simulator(app, info, evidence, report, save,
                            run_host_tests=args.kind != 'simulator-build')
         else:
+            dependency_evidence = evidence / 'device-release-dependencies.json'
+            dependency_report = json.loads(dependency_evidence.read_text())
+            require(dependency_report.get('source_sha') == revision
+                    and dependency_report.get('status') == 'device_release_built_with_isolated_test_dependency'
+                    and dependency_report.get('manifests_restored') is True,
+                    'Device dependency isolation/restoration evidence is missing or failed')
+            require(sha256(ROOT / 'mobile/pubspec.yaml') == dependency_report['original_pubspec_sha256']
+                    and sha256(ROOT / 'mobile/pubspec.lock') == dependency_report['original_lock_sha256'],
+                    'Original dependency manifests are not restored')
+            report['dependency_isolation'] = {
+                'evidence_sha256': sha256(dependency_evidence),
+                'removed_dev_dependency': dependency_report['removed_dev_dependency'],
+                'production_dependency_count': len(dependency_report['production_dependencies']),
+                'production_closure_sha256': hashlib.sha256(json.dumps(
+                    dependency_report['production_dependencies'], sort_keys=True).encode()).hexdigest(),
+                'original_lock_sha256': dependency_report['original_lock_sha256'],
+                'staged_lock_sha256': dependency_report['staged_lock_sha256'],
+                'source_and_assets_unchanged': True,
+            }
+            report['production_isolation'] = verify_production_bundle(
+                app, ROOT / 'mobile/ios/Runner/GeneratedPluginRegistrant.m',
+                ROOT / 'mobile/.flutter-plugins-dependencies')
             report["remaining_gates"] = ["Signing with user's own Apple identity", "Physical-iPhone runtime and full-protocol acceptance"]
         archive = out / f"ios-{args.kind}-{revision}.zip"
         run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive), timeout=300)
         report['licenses'] = collect_notices(archive, report['architectures'][0], out)
-        report.update(status='compiled_and_normally_launched_only' if args.kind == 'simulator-build'
+        report.update(status='compiled_only_no_runtime_acceptance' if args.kind == 'simulator-compiled' else
+                      'compiled_and_normally_launched_only' if args.kind == 'simulator-build'
                       else "passed_for_stated_scope", bytes=archive.stat().st_size, sha256=sha256(archive))
         (out / f"ios-{args.kind}-{revision}-manifest.json").write_text(json.dumps(report, indent=2))
-        scope = ("此包仅验证模拟器编译、Mach-O/FFI 静态符号及普通启动；独立必需的 XCTest 门禁未由此包宣称通过。\n"
+        scope = ("此包仅通过模拟器目标编译及 Mach-O/FFI 静态检查；不代表模拟器安装、普通启动或 XCTest 通过。\n"
+                 "这是 Debug 测试/开发包，包含 integration_test 的 captureScreenshot/allTestsFinished 测试通道，不作为生产应用交付。\n"
+                 if args.kind == 'simulator-compiled' else
+                 "此包仅验证模拟器编译、Mach-O/FFI 静态符号及普通启动；独立必需的 XCTest 门禁未由此包宣称通过。\n"
                  if args.kind == 'simulator-build' else
                  "模拟器完整门禁覆盖普通启动、真实 Go ABI/生命周期、导出边界和系统选择器展示；不等于全部协议交互通过。\n"
                  if args.kind == 'simulator' else
@@ -287,10 +353,14 @@ def main():
             f"iOS {args.kind} 构建，架构：{', '.join(report['architectures'])}\n"
             "设备版本未签名，不是可直接安装到手机的 IPA。模拟器版本仅用于相应架构的 macOS / Xcode。\n"
             + scope +
+            ("设备包已隔离 integration_test 开发依赖，并检查实际插件注册、Mach-O 链接及测试通道字节。\n"
+             if args.kind == 'device' else '') +
             "选择实际目标的文件保存/重新导入及签名真机仍需独立验收。完整验证范围见随附证据。\n"
             "ZIP 中 licenses/ 含项目及精确 iOS Go 依赖许可证；Flutter 通知随 Runner.app 的资源保留。\n")
     except Exception as error:
         report.update(status="failed", error=str(error))
+        if args.kind in ('simulator', 'simulator-build'):
+            simulator_failure_diagnostics(evidence)
         raise
     finally:
         save()
