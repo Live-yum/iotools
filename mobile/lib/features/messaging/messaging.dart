@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../core/json.dart';
 import '../../core/session.dart';
 import '../../shared/widgets.dart';
 import 'messaging_models.dart';
+import 'kafka_entities.dart';
+import 'retained_preview.dart';
 
 class ResultPage extends StatefulWidget {
   const ResultPage({
@@ -67,8 +68,7 @@ class _ResultPageState extends State<ResultPage> {
           spacing: 8,
           children: [
             OutlinedButton.icon(
-              onPressed: () =>
-                  Clipboard.setData(ClipboardData(text: pretty(s.events))),
+              onPressed: () => copyText(context, pretty(s.events)),
               icon: const Icon(Icons.copy),
               label: const Text('复制'),
             ),
@@ -159,6 +159,51 @@ class EventCard extends StatelessWidget {
       _eventTitle(kind),
       subtitle: event['time']?.toString(),
       children: [
+        if (session.originalResultRequest?['protocol'] == 'kafka' &&
+            [
+              'topics',
+              'brokers',
+              'groups',
+              'group',
+              'lag',
+              'offsets',
+              'topic-config',
+              'response',
+            ].contains(kind))
+          FilledButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => KafkaEntityBrowser(
+                  kind: kind,
+                  data: data,
+                  request: cloneMap(session.originalResultRequest!),
+                  onPrepare: onPrepare,
+                  exportText: session.exportText,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.account_tree),
+            label: const Text('浏览实体 / 分区 / 管理操作'),
+          ),
+        if (kind == 'response-file') ...[
+          Text('已保存 ${d['bytes']} 字节 · SHA256 ${d['sha256']}'),
+          OutlinedButton(
+            onPressed: () => guarded(context, () async {
+              if (session.transfer != null) {
+                await session.transfer!('files.export', {
+                  'path': d['path'],
+                  'name': d['path'].toString().split('/').last,
+                });
+              } else {
+                await session.platform.invoke('files.export', {
+                  'path': d['path'],
+                });
+              }
+            }),
+            child: const Text('导出下载文件'),
+          ),
+        ],
         if (d['truncated'] == true) ...[
           Text('结果 ${d['original_bytes']} 字节，仅显示预览'),
           DataView(d['preview']),
@@ -172,11 +217,43 @@ class EventCard extends StatelessWidget {
                   }),
                 );
                 if (context.mounted)
-                  showData(
-                    context,
-                    '完整结果',
-                    full['data'],
-                    export: session.exportText,
+                  await memoryDialog(
+                    context: context,
+                    builder: (c) => AlertDialog(
+                      title: const Text('完整结果'),
+                      content: SizedBox(
+                        width: 760,
+                        child: SingleChildScrollView(
+                          child: full['kind'] == 'retained-preview'
+                              ? RetainedPreview(
+                                  snapshot: mapOf(full['data']),
+                                  request:
+                                      session.originalResultRequest ??
+                                      session.draft,
+                                  onPrepare: (r) {
+                                    onPrepare(r);
+                                    Navigator.pop(c);
+                                  },
+                                )
+                              : DataView(full['data']),
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => showData(
+                            c,
+                            '完整原始结果',
+                            full['data'],
+                            export: session.exportText,
+                          ),
+                          child: const Text('复制 / 导出'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(c),
+                          child: const Text('关闭'),
+                        ),
+                      ],
+                    ),
                   );
               }),
               child: const Text('查看完整结果 / 导出'),
@@ -195,27 +272,13 @@ class EventCard extends StatelessWidget {
         ] else if (kind == 'record') ...[
           Text('${d['topic']} / 分区 ${d['partition']} / 偏移 ${d['offset']}'),
           DataView(d['value']),
-        ] else if (kind == 'retained-preview') ...[
-          Text('${d['count']} 个精确主题 · ${d['scan_duration_ms']}ms 有界扫描'),
-          for (final topic in (d['topics'] as List? ?? []).take(50))
-            Text(topic.toString()),
-          Text(d['warning']?.toString() ?? ''),
-          OutlinedButton(
-            onPressed: () {
-              final r = cloneMap(
-                session.originalResultRequest ?? session.draft,
-              );
-              r['action'] = 'clean-retained';
-              r['params'] = {
-                ...mapOf(r['params']),
-                'confirm_topics': d['topics'],
-                'confirm_token': d['confirm_token'],
-              };
-              onPrepare(r);
-            },
-            child: const Text('准备清理这些精确主题'),
-          ),
-        ] else if ([
+        ] else if (kind == 'retained-preview')
+          RetainedPreview(
+            snapshot: d,
+            request: session.originalResultRequest ?? session.draft,
+            onPrepare: onPrepare,
+          )
+        else if ([
           'topic',
           'topics',
           'group',
@@ -308,6 +371,10 @@ String _eventTitle(String kind) =>
       'query': '查询结果',
       'error': '错误',
       'retained-preview': '保留消息清理预览',
+      'subscribed': '订阅已建立',
+      'reconnecting': '正在重连',
+      'reconnected': '已重新连接',
+      'published': '发布结果',
     }[kind] ??
     kind;
 
@@ -440,7 +507,12 @@ class _MqttBrowserState extends State<MqttBrowser> {
     final messages = current;
     final selectors = <String>{'payload', 'bytes', 'rate', 'byte[0]'};
     for (final e in messages) {
-      selectors.addAll(numericFields(_payload(mapOf(e['data']))).keys);
+      selectors.addAll(
+        numericFields(
+          _payload(mapOf(e['data'])),
+          messagepack: mapOf(e['data'])['payload_format'] == 'messagepack',
+        ).keys,
+      );
     }
     selectors.add(selector);
     final points = List<double>.generate(
@@ -460,7 +532,10 @@ class _MqttBrowserState extends State<MqttBrowser> {
                     '不会删除 broker 上的消息或改变订阅。',
                   ) &&
                   mounted)
-                setState(() => cache.clear());
+                setState(() {
+                  cache.clear();
+                  frozen?.clear();
+                });
             },
             icon: const Icon(Icons.delete_sweep_outlined),
           ),
@@ -487,7 +562,8 @@ class _MqttBrowserState extends State<MqttBrowser> {
                   children: nodes
                       .where((n) {
                         final ps = topicPrefixes(n);
-                        return ps.take(ps.length - 1).every(expanded.contains);
+                        return search.isNotEmpty ||
+                            ps.take(ps.length - 1).every(expanded.contains);
                       })
                       .map((n) {
                         final count = cache.topics[n]?.length ?? 0;
@@ -595,7 +671,12 @@ class _MqttBrowserState extends State<MqttBrowser> {
                   TextButton(
                     onPressed: all
                         ? null
-                        : () => setState(() => cache.clearTopic(selected)),
+                        : () => setState(() {
+                            cache.clearTopic(selected);
+                            frozen?.removeWhere(
+                              (e) => mapOf(e['data'])['topic'] == selected,
+                            );
+                          }),
                     child: const Text('清空当前精确主题'),
                   ),
                 ],
@@ -622,12 +703,17 @@ class _MqttBrowserState extends State<MqttBrowser> {
                         ),
                         trailing: IconButton(
                           tooltip: '删除此条缓存',
-                          onPressed: () => setState(
-                            () => cache.deleteMessage(
+                          onPressed: () => setState(() {
+                            cache.deleteMessage(
                               d['topic'].toString(),
                               e['seq'],
-                            ),
-                          ),
+                            );
+                            frozen?.removeWhere(
+                              (x) =>
+                                  x['seq'] == e['seq'] &&
+                                  x['run_id'] == e['run_id'],
+                            );
+                          }),
                           icon: const Icon(Icons.close),
                         ),
                       ),
@@ -688,8 +774,14 @@ double point(List<JsonMap> events, int i, String key) {
   if (key == 'bytes') return bytes.length.toDouble();
   if (key == 'rate') {
     if (i == 0) return double.nan;
+    var previous = i - 1;
+    while (previous >= 0 &&
+        mapOf(events[previous]['data'])['retained'] == true) {
+      previous--;
+    }
+    if (previous < 0) return double.nan;
     final a = DateTime.tryParse(events[i]['time'].toString()),
-        b = DateTime.tryParse(events[i - 1]['time'].toString());
+        b = DateTime.tryParse(events[previous]['time'].toString());
     if (a == null || b == null) return double.nan;
     final delta = a.difference(b).inMicroseconds;
     return delta > 0 ? 1000000 / delta : double.nan;
@@ -698,7 +790,10 @@ double point(List<JsonMap> events, int i, String key) {
     final index = int.tryParse(key.substring(5, key.length - 1)) ?? 0;
     return index < bytes.length ? bytes[index].toDouble() : double.nan;
   }
-  final fields = numericFields(_payload(d));
+  final fields = numericFields(
+    _payload(d),
+    messagepack: d['payload_format'] == 'messagepack',
+  );
   return (fields[key == 'payload' ? r'$' : key] ?? double.nan).toDouble();
 }
 
@@ -712,13 +807,20 @@ class SeriesPainter extends CustomPainter {
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
     if (points.length < 2) return;
-    final min = points.reduce(math.min),
-        max = points.reduce(math.max),
-        range = max == min ? 1 : max - min;
+    final min = points.reduce(math.min), max = points.reduce(math.max);
+    final scale = math.max(min.abs(), max.abs());
+    final low = scale == 0 ? 0 : min / scale,
+        high = scale == 0 ? 0 : max / scale;
+    final range = max == min ? 1 : high - low;
     final path = Path();
     for (var i = 0; i < points.length; i++) {
       final x = i * size.width / (points.length - 1),
-          y = size.height - 12 - (points[i] - min) / range * (size.height - 24);
+          y =
+              size.height -
+              12 -
+              ((scale == 0 ? 0 : points[i] / scale) - low) /
+                  range *
+                  (size.height - 24);
       if (i == 0)
         path.moveTo(x, y);
       else
@@ -821,50 +923,7 @@ class _KafkaBrowserState extends State<KafkaBrowser> {
                       maxLines: 4,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    onTap: () => memoryDialog(
-                      context: context,
-                      builder: (c) => AlertDialog(
-                        title: const Text('记录详情'),
-                        content: SizedBox(
-                          width: 700,
-                          child: SingleChildScrollView(child: DataView(d)),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => showData(
-                              c,
-                              '完整记录',
-                              d,
-                              export: widget.session.exportText,
-                            ),
-                            child: const Text('复制 / 导出'),
-                          ),
-                          OutlinedButton(
-                            onPressed: () {
-                              final r = cloneMap(
-                                widget.session.originalResultRequest ??
-                                    widget.session.draft,
-                              );
-                              r['action'] = 'consume';
-                              r['params'] = {
-                                ...mapOf(r['params']),
-                                'topic': d['topic'],
-                                'partition': d['partition'],
-                                'offset': d['offset'],
-                                'limit': 100,
-                              };
-                              widget.onPrepare(r);
-                              Navigator.pop(c);
-                            },
-                            child: const Text('从此偏移准备消费'),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.pop(c),
-                            child: const Text('关闭'),
-                          ),
-                        ],
-                      ),
-                    ),
+                    onTap: () => detail(records, records.indexOf(e)),
                   ),
                 );
               }).toList(),
@@ -889,5 +948,103 @@ class _KafkaBrowserState extends State<KafkaBrowser> {
         ],
       ),
     );
+  }
+
+  Future<void> detail(List<JsonMap> snapshot, int selected) async {
+    var index = selected;
+    final prepared = await memoryDialog<JsonMap>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, set) {
+          final data = mapOf(snapshot[index]['data']);
+          return AlertDialog(
+            title: Text('记录 ${index + 1} / ${snapshot.length}'),
+            content: SizedBox(
+              width: 700,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      '${data['topic']} / 分区 ${data['partition']} / 偏移 ${data['offset']}',
+                    ),
+                    Text('时间 ${data['timestamp']}'),
+                    if (data['key_is_null'] == true) const Text('Key = null'),
+                    if (data['value_is_null'] == true)
+                      const Text('Tombstone：Value = null'),
+                    const SizedBox(height: 12),
+                    const Text('解码键 / 值'),
+                    DataView({'key': data['key'], 'value': data['value']}),
+                    ExpansionTile(
+                      title: const Text('消息头'),
+                      children: [DataView(data['headers'])],
+                    ),
+                    ExpansionTile(
+                      title: const Text('原始二进制 Base64'),
+                      initiallyExpanded: true,
+                      children: [
+                        DataView({
+                          'raw_key_base64': data['raw_key_base64'],
+                          'raw_value_base64': data['raw_value_base64'],
+                        }),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              IconButton(
+                tooltip: '上一条缓存记录',
+                onPressed: index > 0 ? () => set(() => index--) : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              IconButton(
+                tooltip: '下一条缓存记录',
+                onPressed: index + 1 < snapshot.length
+                    ? () => set(() => index++)
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+              TextButton(
+                onPressed: () => showData(
+                  c,
+                  '完整记录',
+                  data,
+                  export: widget.session.exportText,
+                ),
+                child: const Text('复制 / 导出'),
+              ),
+              OutlinedButton(
+                onPressed: () {
+                  final r = cloneMap(
+                    widget.session.originalResultRequest ??
+                        widget.session.draft,
+                  );
+                  r['action'] = 'consume';
+                  r['params'] = {
+                    ...mapOf(r['params']),
+                    'topic': data['topic'],
+                    'partition': data['partition'],
+                    'offset': data['offset'],
+                    'limit': 100,
+                  };
+                  Navigator.pop(c, r);
+                },
+                child: const Text('从此偏移准备消费'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(c),
+                child: const Text('关闭'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (prepared != null && mounted) {
+      widget.onPrepare(prepared);
+      Navigator.pop(context);
+    }
   }
 }

@@ -71,3 +71,60 @@ func TestDisposableMQTTFixtureRetainsExactTopicLevels(t *testing.T) {
 		t.Fatal("retained wire message did not preserve empty topic levels")
 	}
 }
+
+func TestModbusFixtureFC23DeviceIdentificationAndFullBitRead(t *testing.T) {
+	m, err := startModbusFixture("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	request := config.Request{Protocol: "modbus", Endpoint: "tcp://" + m.endpoint(), Action: "read-write-registers", Timeout: "2s", Params: map[string]any{"unit": 1, "address": 0, "count": 2, "values": []any{88, 89}, "read_address": 0, "read_count": 2}}
+	seen := false
+	if err := engine.Run(context.Background(), request, true, func(event engine.Event) {
+		if event.Kind == "registers" {
+			rows := event.Data.([]map[string]any)
+			seen = len(rows) == 2 && rows[0]["u16"] == uint16(88) && rows[1]["u16"] == uint16(89)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || m.reads.Load() != 1 || m.writes.Load() != 1 {
+		t.Fatal("FC23 must write before read in one counted transaction")
+	}
+	request.Action = "read-device-id"
+	request.Params = map[string]any{"unit": 1, "read_code": 1, "object_id": 0}
+	seen = false
+	if err := engine.Run(context.Background(), request, false, func(event engine.Event) {
+		if event.Kind == "device-identification" {
+			objects := event.Data.(map[string]any)["objects"].(map[int]string)
+			seen = objects[0] == "iotools fixture" && objects[1] == "local-loopback" && objects[2] == "1.0"
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || m.reads.Load() != 2 || m.writes.Load() != 1 {
+		t.Fatal("device identification mismatch")
+	}
+	request.Action = "read-coils"
+	request.Params = map[string]any{"unit": 1, "address": 0, "count": 2000}
+	seen = false
+	if err := engine.Run(context.Background(), request, false, func(event engine.Event) {
+		if event.Kind == "bits" {
+			bits := event.Data.(map[string]any)["values"].([]bool)
+			seen = len(bits) == 2000 && bits[0] && !bits[1999]
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !seen || m.reads.Load() != 3 {
+		t.Fatal("full bit window missing")
+	}
+	request.Action = "read-holding"
+	request.Params = map[string]any{"unit": 2, "address": 0, "count": 1}
+	if err := engine.Run(context.Background(), request, false, nil); err == nil {
+		t.Fatal("unknown unit accepted")
+	}
+	if m.reads.Load() != 3 || m.writes.Load() != 1 {
+		t.Fatal("unit mismatch changed counters")
+	}
+}

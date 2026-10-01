@@ -390,6 +390,26 @@ void main() {
       host.dispose();
     },
   );
+  testWidgets(
+    'FC23 form derives count from written words independently of read range',
+    (tester) async {
+      final host = FakeModbusHost();
+      await mount(tester, host);
+      await tapText(tester, '操作');
+      await tapText(tester, 'FC23 读写事务');
+      await tester.enterText(
+        find.byKey(const ValueKey('寄存器字（逗号分隔 0–65535）')),
+        '7,42',
+      );
+      await tester.enterText(find.byKey(const ValueKey('FC23 读取数量')), '1');
+      await tapText(tester, '预览编码与目标');
+      expect(host.runs.single['params']['count'], 2);
+      expect(host.runs.single['params']['values'], [7, 42]);
+      expect(host.runs.single['params']['read_count'], 1);
+      await tester.pumpWidget(const SizedBox());
+      host.dispose();
+    },
+  );
   test('controller freeze retains the selected immutable response', () {
     final host = FakeModbusHost()..sample();
     final controller = ModbusController(host);

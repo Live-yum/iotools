@@ -161,6 +161,64 @@ func (m *modbusFixture) reply(unit byte, pdu []byte) []byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	switch fc {
+	case 1, 2:
+		if len(pdu) != 5 {
+			return fail(3)
+		}
+		address, count := int(binary.BigEndian.Uint16(pdu[1:3])), int(binary.BigEndian.Uint16(pdu[3:5]))
+		if count < 1 || count > 2000 || address+count > 65536 {
+			return fail(2)
+		}
+		out := make([]byte, 2+(count+7)/8)
+		out[0] = fc
+		out[1] = byte((count + 7) / 8)
+		for i := 0; i < count; i++ {
+			if (address+i)%2 == 0 {
+				out[2+i/8] |= 1 << uint(i%8)
+			}
+		}
+		m.reads.Add(1)
+		return out
+	case 23:
+		if len(pdu) < 10 {
+			return fail(3)
+		}
+		ra, rc, wa, wc := int(binary.BigEndian.Uint16(pdu[1:3])), int(binary.BigEndian.Uint16(pdu[3:5])), int(binary.BigEndian.Uint16(pdu[5:7])), int(binary.BigEndian.Uint16(pdu[7:9]))
+		if rc < 1 || rc > 125 || wc < 1 || wc > 121 || ra+rc > len(m.words) || wa+wc > len(m.words) || int(pdu[9]) != 2*wc || len(pdu) != 10+2*wc {
+			return fail(3)
+		}
+		for i := 0; i < wc; i++ {
+			m.words[wa+i] = binary.BigEndian.Uint16(pdu[10+2*i:])
+		}
+		out := make([]byte, 2+2*rc)
+		out[0] = fc
+		out[1] = byte(2 * rc)
+		for i := 0; i < rc; i++ {
+			binary.BigEndian.PutUint16(out[2+2*i:], m.words[ra+i])
+		}
+		m.reads.Add(1)
+		m.writes.Add(1)
+		return out
+	case 43:
+		if len(pdu) != 4 || pdu[1] != 14 || pdu[2] < 1 || pdu[2] > 4 {
+			return fail(3)
+		}
+		objects := []string{"iotools fixture", "local-loopback", "1.0"}
+		start := int(pdu[3])
+		if start >= len(objects) {
+			return fail(2)
+		}
+		count := len(objects) - start
+		if pdu[2] == 4 {
+			count = 1
+		}
+		out := []byte{43, 14, pdu[2], 0x81, 0, 0, byte(count)}
+		for i := start; i < start+count; i++ {
+			out = append(out, byte(i), byte(len(objects[i])))
+			out = append(out, []byte(objects[i])...)
+		}
+		m.reads.Add(1)
+		return out
 	case 3, 4:
 		if len(pdu) != 5 {
 			return fail(3)

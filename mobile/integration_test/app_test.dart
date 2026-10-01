@@ -8,6 +8,7 @@ import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
 import 'opcua_workflow_test.dart';
 import 'modbus_workflow_test.dart';
+import 'kafka_management_test.dart';
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -88,7 +89,7 @@ void main() {
         await tapKey(tester, 'history_opt_in');
         await tapText(tester, '开启');
         await tapKey(tester, 'nav_requests');
-        await tapText(tester, 'Flutter AES 整体验收');
+        await openRequest(tester, 'Flutter AES 整体验收');
         await shot(tester, binding, 'flutter-http-01-form');
         await tapKey(tester, 'add_codec');
         await tester.enterText(
@@ -133,7 +134,7 @@ void main() {
         for (final name in ['literal', 'chinese', 'binary']) {
           await tester.pageBack();
           await tester.pump(const Duration(milliseconds: 350));
-          await tapText(tester, 'HTTP $name');
+          await openRequest(tester, 'HTTP $name');
           await tapKey(tester, 'run_request');
           await waitFor(tester, () => find.text('已完成').evaluate().isNotEmpty);
         }
@@ -255,7 +256,7 @@ void main() {
           tester,
           () => find.text('Flutter MQTT 主题验收').evaluate().isNotEmpty,
         );
-        await tapText(tester, 'Flutter MQTT 主题验收');
+        await openRequest(tester, 'Flutter MQTT 主题验收');
         await tapKey(tester, 'run_request');
         await waitFor(tester, () => find.text('已完成').evaluate().isNotEmpty);
         expect(find.text('/sensors//temp/'), findsWidgets);
@@ -266,7 +267,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 350));
         await tester.pageBack();
         await tester.pump(const Duration(milliseconds: 350));
-        await tapText(tester, 'Flutter Kafka 记录验收');
+        await openRequest(tester, 'Flutter Kafka 记录验收');
         await tapKey(tester, 'run_request');
         await waitFor(tester, () => find.text('已完成').evaluate().isNotEmpty);
         await tapText(tester, '浏览 Kafka 记录');
@@ -288,6 +289,7 @@ void main() {
       }
     },
   );
+  registerKafkaManagementTests();
   registerOpcuaIntegrationTests();
   registerModbusIntegrationTests();
 }
@@ -338,4 +340,12 @@ Future<void> shot(
   }
   await t.pump();
   await b.takeScreenshot(name);
+}
+
+Future<void> openRequest(WidgetTester t, String name) async {
+  final f = find.byKey(const ValueKey('request_search'));
+  await waitFor(t, () => f.evaluate().isNotEmpty);
+  await t.enterText(f, name);
+  await t.pump(const Duration(milliseconds: 200));
+  await tapText(t, name);
 }

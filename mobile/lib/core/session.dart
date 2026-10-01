@@ -10,14 +10,20 @@ class AppSession extends ChangeNotifier {
   final PlatformServices platform;
   JsonMap state = {}, catalog = {}, draft = {}, preferences = {};
   final Map<String, JsonMap> drafts = {};
+  final Map<String, Map<String, JsonMap>> _collectionDrafts = {};
+  final Map<String, String> _collectionSources = {};
+  Future<Object?> Function(String, JsonMap)? transfer;
+  String get currentCollection => state['path']?.toString() ?? 'iotools.yaml';
   final List<JsonMap> events = [];
   JsonMap? originalResultRequest, resultRequest;
+  String? originalRequestId;
   JsonMap? resultOverrides;
   String resultRunId = '', status = '尚未执行', source = '', savedSource = '';
   String? error;
   bool ready = false, paused = false, polling = false, disposed = false;
   int dropped = 0, evicted = 0;
-  Timer? _timer;
+  Timer? _timer, _visualTimer;
+  DateTime _lastVisual = DateTime.fromMillisecondsSinceEpoch(0);
   int _epoch = 0;
   final _stream = StreamController<JsonMap>.broadcast(sync: true);
   Stream<JsonMap> get eventStream => _stream.stream;
@@ -76,24 +82,50 @@ class AppSession extends ChangeNotifier {
   }
 
   void prepare(JsonMap request) {
+    originalRequestId = requests.any((r) => r['id'] == request['id'])
+        ? request['id'].toString()
+        : null;
     draft = cloneMap(request);
     drafts[draft['id'].toString()] = cloneMap(draft);
     notifyListeners();
   }
 
   void updateDraft(JsonMap request) {
+    if (draft['id'] != request['id']) drafts.remove(draft['id']);
     draft = cloneMap(request);
     drafts[draft['id'].toString()] = cloneMap(draft);
   }
 
+  void discardDraft(String id) {
+    drafts.remove(id);
+    if (draft['id'] == id)
+      draft = cloneMap(requests.where((r) => r['id'] == id).firstOrNull ?? {});
+    notifyListeners();
+  }
+
   JsonMap choose(JsonMap request) {
+    originalRequestId = requests.any((r) => r['id'] == request['id'])
+        ? request['id'].toString()
+        : null;
     draft = cloneMap(drafts[request['id']] ?? request);
     notifyListeners();
     return draft;
   }
 
   Future<void> saveRequest(JsonMap request) async {
-    state = mapOf(await command({'op': 'request.save', 'request': request}));
+    if (source != savedSource)
+      throw const EngineException(
+        'YAML 草稿尚未保存。请先保存或撤销 YAML 修改，再保存表单，以免覆盖独立编辑。',
+      );
+    state = mapOf(
+      await command({
+        'op': 'request.save',
+        'request': request,
+        if (originalRequestId != null) 'original_id': originalRequestId,
+      }),
+    );
+    drafts.remove(originalRequestId);
+    originalRequestId = request['id'].toString();
     drafts.remove(request['id']);
     draft = cloneMap(request);
     await refreshSource();
@@ -120,6 +152,7 @@ class AppSession extends ChangeNotifier {
     JsonMap? overrides,
   }) async {
     if (paused) throw const EngineException('应用处于后台，请重新预览');
+    final epoch = _epoch;
     final r = mapOf(
       await command({
         'op': 'run',
@@ -127,6 +160,21 @@ class AppSession extends ChangeNotifier {
         'confirmed': confirmed,
       }),
     );
+    if (disposed || paused || epoch != _epoch) {
+      if (r['run_id'] != null) {
+        try {
+          await command(
+            r['background'] == true
+                ? {
+                    'op': 'subscriptions.stop',
+                    'subscription_id': r['subscription_id'],
+                  }
+                : {'op': 'cancel', 'run_id': r['run_id']},
+          );
+        } catch (_) {}
+      }
+      throw const EngineException('执行已因应用生命周期变化而取消，请重新预览');
+    }
     if (r['background'] != true) {
       originalResultRequest = cloneMap(request);
       resultRequest = request['protocol'] == 'modbus'
@@ -139,7 +187,7 @@ class AppSession extends ChangeNotifier {
   }
 
   void started(JsonMap response, {bool keepRequest = false}) {
-    if (response['background'] == true) return;
+    if (disposed || paused || response['background'] == true) return;
     resultRunId = response['run_id']?.toString() ?? '';
     if (!keepRequest) {
       originalResultRequest = null;
@@ -155,9 +203,10 @@ class AppSession extends ChangeNotifier {
 
   Future<void> cancel() async {
     if (resultRunId.isEmpty) return;
-    await command({'op': 'cancel', 'run_id': resultRunId});
+    final id = resultRunId;
     status = '正在取消';
     notifyListeners();
+    await command({'op': 'cancel', 'run_id': id});
   }
 
   Future<void> poll() async {
@@ -168,6 +217,7 @@ class AppSession extends ChangeNotifier {
       final batch = mapOf(await command({'op': 'events'}));
       if (disposed || paused || epoch != _epoch) return;
       bool changed = running != (batch['running'] == true);
+      bool terminal = changed;
       for (final event in rowsOf(batch['events'])) {
         _stream.add(event);
         if (event['run_id']?.toString() != resultRunId) continue;
@@ -190,6 +240,7 @@ class AppSession extends ChangeNotifier {
           }
         }
         if (event['kind'] == 'done') {
+          terminal = true;
           final d = mapOf(event['data']);
           status = switch (d['status']) {
             'cancelled' => '已取消',
@@ -203,7 +254,23 @@ class AppSession extends ChangeNotifier {
       state['running'] = batch['running'] == true;
       dropped += (batch['dropped'] as num? ?? 0).toInt();
       evicted += (batch['evicted_result_count'] as num? ?? 0).toInt();
-      if (changed) notifyListeners();
+      if (changed) {
+        if (terminal ||
+            DateTime.now().difference(_lastVisual).inMilliseconds >= 1000) {
+          _visualTimer?.cancel();
+          _visualTimer = null;
+          _lastVisual = DateTime.now();
+          notifyListeners();
+        } else {
+          _visualTimer ??= Timer(const Duration(seconds: 1), () {
+            _visualTimer = null;
+            if (!disposed && !paused) {
+              _lastVisual = DateTime.now();
+              notifyListeners();
+            }
+          });
+        }
+      }
     } catch (e) {
       if (!disposed && !paused && epoch == _epoch) {
         error = '$e';
@@ -259,7 +326,50 @@ class AppSession extends ChangeNotifier {
 
   int get epoch => _epoch;
   Future<void> exportText(String name, String text) async {
-    await platform.invoke('files.export', {'name': name, 'text': text});
+    final args = <String, dynamic>{'name': name, 'text': text};
+    if (transfer != null) {
+      await transfer!('files.export', args);
+    } else {
+      await platform.invoke('files.export', args);
+    }
+  }
+
+  Future<void> switchCollection(String path, JsonMap preview) async {
+    final next = mapOf(
+      await command({
+        'op': 'config.switch',
+        'path': path,
+        'token': preview['token'],
+        'confirmed': true,
+      }),
+    );
+    _collectionDrafts[currentCollection] = {
+      for (final e in drafts.entries) e.key: cloneMap(e.value),
+    };
+    if (source != savedSource)
+      _collectionSources[currentCollection] = source;
+    else
+      _collectionSources.remove(currentCollection);
+    _epoch++;
+    state = next;
+    drafts
+      ..clear()
+      ..addAll(_collectionDrafts[currentCollection] ?? {});
+    await refreshSource();
+    source = _collectionSources[currentCollection] ?? source;
+    draft = {};
+    originalRequestId = null;
+    resultRunId = '';
+    resultRequest = null;
+    originalResultRequest = null;
+    events.clear();
+    status = '尚未执行';
+    final root = preferences['root']?.toString() ?? '';
+    var relative = currentCollection;
+    if (root.isNotEmpty && relative.startsWith('$root/'))
+      relative = relative.substring(root.length + 1);
+    await platform.invoke('settings.save', {'collection': relative});
+    if (!disposed) notifyListeners();
   }
 
   void stateChanged(JsonMap value) {
@@ -271,6 +381,7 @@ class AppSession extends ChangeNotifier {
   void dispose() {
     disposed = true;
     _timer?.cancel();
+    _visualTimer?.cancel();
     _stream.close();
     engine.close();
     super.dispose();

@@ -90,10 +90,14 @@ class TopicCache {
   }
 }
 
-Map<String, num> numericFields(Object? input) {
+Map<String, num> numericFields(Object? input, {bool messagepack = false}) {
   final result = <String, num>{};
   void walk(Object? value, String path, int depth) {
     if (depth > 16 || result.length > 200) return;
+    if (value is bool) {
+      result[path] = value ? 1 : 0;
+      return;
+    }
     if (value is num && value.isFinite) {
       result[path] = value;
       return;
@@ -110,6 +114,7 @@ Map<String, num> numericFields(Object? input) {
       return;
     }
     if (value is List) {
+      result[path] = value.length;
       result['$path.length'] = value.length;
       for (var i = 0; i < value.length && i < 64; i++) {
         walk(value[i], '$path[$i]', depth + 1);
@@ -117,8 +122,10 @@ Map<String, num> numericFields(Object? input) {
       return;
     }
     if (value is Map) {
-      if (!value.containsKey('messagepack_type'))
+      if (!value.containsKey('messagepack_type')) {
         result['$path.length'] = value.length;
+        if (messagepack) result[path] = value.length;
+      }
       for (final e in value.entries) {
         walk(e.value, '$path[${jsonEncode(e.key.toString())}]', depth + 1);
       }

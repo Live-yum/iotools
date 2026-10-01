@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/json.dart';
@@ -23,6 +24,11 @@ ThemeData appTheme(Brightness brightness) {
     appBarTheme: AppBarTheme(
       backgroundColor: dark ? navy : Colors.white,
       centerTitle: false,
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: dark ? surface : Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
     cardTheme: CardThemeData(
       color: dark ? surface : Colors.white,
@@ -197,9 +203,7 @@ Future<void> showData(
     ),
     actions: [
       TextButton(
-        onPressed: () => Clipboard.setData(
-          ClipboardData(text: data is String ? data : pretty(data)),
-        ),
+        onPressed: () => copyText(c, data is String ? data : pretty(data)),
         child: const Text('复制'),
       ),
       if (export != null)
@@ -235,10 +239,9 @@ class DataView extends StatelessWidget {
       );
     }
     final text = data is String ? data as String : pretty(data);
+    if (text.length > 16000) return PagedText(text);
     return SelectableText(
-      text.length > 100000
-          ? '${text.substring(0, 100000)}\n显示前 100000 字符；复制/导出保留完整内容'
-          : text,
+      text,
       style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
     );
   }
@@ -360,4 +363,87 @@ Future<T?> memoryDialog<T>({
   final result = await Navigator.of(context, rootNavigator: true).push(route);
   await route.completed;
   return result;
+}
+
+class PagedText extends StatefulWidget {
+  const PagedText(this.text, {super.key});
+  final String text;
+  @override
+  State<PagedText> createState() => _PagedTextState();
+}
+
+class _PagedTextState extends State<PagedText> {
+  int page = 0;
+  String query = '';
+  @override
+  Widget build(BuildContext context) {
+    final count = (widget.text.length / 16000).ceil(),
+        start = page * 16000,
+        end = (start + 16000).clamp(0, widget.text.length);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          decoration: const InputDecoration(labelText: '搜索完整结果'),
+          onChanged: (v) => query = v,
+          onSubmitted: (_) => nextMatch(),
+        ),
+        Row(
+          children: [
+            Text('${widget.text.length} 字符 · ${page + 1}/$count 页'),
+            const Spacer(),
+            IconButton(
+              tooltip: '查找下一项',
+              onPressed: nextMatch,
+              icon: const Icon(Icons.search),
+            ),
+            IconButton(
+              tooltip: '上一页',
+              onPressed: page > 0 ? () => setState(() => page--) : null,
+              icon: const Icon(Icons.chevron_left),
+            ),
+            IconButton(
+              tooltip: '下一页',
+              onPressed: page + 1 < count ? () => setState(() => page++) : null,
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
+        SelectableText(
+          widget.text.substring(start, end),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+        ),
+      ],
+    );
+  }
+
+  void nextMatch() {
+    if (query.isEmpty) return;
+    var match = widget.text.indexOf(query, (page + 1) * 16000);
+    if (match < 0) match = widget.text.indexOf(query);
+    if (match < 0) {
+      reportError(context, '未找到匹配内容');
+      return;
+    }
+    setState(() => page = match ~/ 16000);
+  }
+}
+
+const maxClipboardBytes = 256 * 1024;
+bool fitsClipboard(String text) =>
+    text.length <= maxClipboardBytes &&
+    utf8.encode(text).length <= maxClipboardBytes;
+Future<bool> copyText(BuildContext context, String text) async {
+  if (!fitsClipboard(text)) {
+    await reportError(context, '内容超过剪贴板的 256 KiB 上限，请使用导出保存完整内容；没有截断或复制。');
+    return false;
+  }
+  try {
+    await Clipboard.setData(ClipboardData(text: text));
+    return true;
+  } on PlatformException catch (e) {
+    await reportError(context, '系统剪贴板不可用：${e.message ?? e.code}。请使用导出。');
+    return false;
+  }
 }

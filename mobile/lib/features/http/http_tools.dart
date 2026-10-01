@@ -183,7 +183,9 @@ class HttpTools extends StatelessWidget {
           await session.command({
             'op': 'http.filter.start',
             'query': query,
-            'data': data['body'] ?? data,
+            'data': data['body'] is String
+                ? data['body']
+                : exactEncode(data['body'] ?? data),
           }),
         ),
       );

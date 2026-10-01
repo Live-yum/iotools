@@ -197,7 +197,11 @@ func runKafka(ctx context.Context, r config.Request, emit Emit) error {
 		send(emit, "group", v)
 		return v.Error()
 	case "lag":
-		v, e := admin.Lag(ctx, r.Strings("groups")...)
+		groups := r.Strings("groups")
+		if len(groups) == 0 && r.String("group", "") != "" {
+			groups = []string{r.String("group", "")}
+		}
+		v, e := admin.Lag(ctx, groups...)
 		if e != nil {
 			return e
 		}

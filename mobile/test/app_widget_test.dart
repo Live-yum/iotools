@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -26,6 +27,11 @@ void main() {
         Future.value(ByteData.sublistView(await File(path).readAsBytes())),
       );
       await loader.load();
+      final mono = FontLoader('monospace');
+      mono.addFont(
+        Future.value(ByteData.sublistView(await File(path).readAsBytes())),
+      );
+      await mono.load();
     }
   });
   testWidgets(
@@ -77,6 +83,107 @@ void main() {
       await tester.pumpAndSettle();
       await capture(tester, key, 'flutter-narrow');
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await tester.binding.setSurfaceSize(null);
+    },
+  );
+  testWidgets(
+    'Flutter form, explicit write review, completed result and file limit render',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(480, 800));
+      final key = GlobalKey(), engine = FakeEngine();
+      (engine.state['requests'] as List).first['action'] = 'POST';
+      (engine.state['requests'] as List).first['params'] = {
+        'body': '{"command":"set_temperature","value":24}',
+      };
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: IotoolsApp(engine: engine, platform: FakePlatform()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('设备状态查询'));
+      await tester.pumpAndSettle();
+      await capture(tester, key, 'flutter-http-form');
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const ValueKey('run_request')));
+      await tester.pumpAndSettle();
+      await capture(tester, key, 'flutter-write-review');
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(engine.calls.where((c) => c['op'] == 'run'), isEmpty);
+      await tester.tap(find.byKey(const ValueKey('run_request')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('confirm_action')));
+      await tester.pump(const Duration(milliseconds: 500));
+      final session = tester
+          .widget<WorkspaceShell>(find.byType(WorkspaceShell))
+          .session;
+      for (var i = 0; i < 10 && session.resultRunId.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(session.resultRunId, 'opaque-run');
+      await tester.pump(const Duration(milliseconds: 100));
+      engine.consumePendingOnce = true;
+      engine.pendingEvents = Completer<Object?>()
+        ..complete({
+          'running': false,
+          'events': [
+            {
+              'run_id': 'opaque-run',
+              'seq': 1,
+              'kind': 'response',
+              'time': '2026-10-01T06:00:00Z',
+              'data': {
+                'status': 200,
+                'headers': {
+                  'content-type': ['application/json'],
+                },
+                'body': {
+                  'device': 'PLC-01',
+                  'temperature': 23.5,
+                  '状态': '在线 😀',
+                },
+              },
+            },
+            {
+              'run_id': 'opaque-run',
+              'seq': 2,
+              'kind': 'done',
+              'data': {'status': 'completed'},
+            },
+          ],
+        });
+      engine.state['running'] = false;
+      await tester.pump(const Duration(milliseconds: 600));
+      await session.poll();
+      engine.pendingEvents = null;
+      expect(session.running, false);
+      expect(
+        session.status,
+        '已完成',
+        reason:
+            '${session.status} ${session.running} ${session.polling} ${session.resultRunId} ${session.events}',
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(session.running, false);
+      expect(find.text('取消'), findsNothing);
+      await capture(tester, key, 'flutter-http-completed-result');
+      expect(find.text('已完成'), findsWidgets);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byKey(const ValueKey('nav_settings')));
+      await tester.pumpAndSettle();
+      final attachment = find.text('导入附件（1–8 GiB）');
+      await tester.ensureVisible(attachment);
+      await tester.tap(attachment);
+      await tester.pumpAndSettle();
+      await capture(tester, key, 'flutter-file-limit');
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       await tester.pump();
       await tester.binding.setSurfaceSize(null);

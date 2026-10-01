@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'json.dart';
 
 abstract interface class Engine {
@@ -48,9 +49,16 @@ class MethodChannelEngine implements Engine {
     ),
   );
   @override
-  Future<Object?> command(JsonMap command) async => unwrap(
-    await channel.invokeMethod('command', {'json': exactEncode(command)}),
-  );
+  Future<Object?> command(JsonMap command) async {
+    final raw = await channel.invokeMethod('command', {
+      'json': exactEncode(command),
+    });
+    if (raw is String && raw.length > 262144) {
+      return unwrap(await compute(_decodeLargeReply, raw));
+    }
+    return unwrap(raw);
+  }
+
   @override
   Future<void> pause() async {
     await channel.invokeMethod('pause');
@@ -78,3 +86,5 @@ class MethodChannelPlatform implements PlatformServices {
   Future<Object?> invoke(String method, [JsonMap args = const {}]) =>
       channel.invokeMethod(method, args);
 }
+
+Object? _decodeLargeReply(String source) => jsonDecode(source);

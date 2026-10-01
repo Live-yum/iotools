@@ -13,13 +13,13 @@ Dart 与 Android 之间传递 JSON 字符串，避免平台数值转换损失 In
 
 ## 本地开发
 
-固定工具链 Flutter 3.35.7（Dart 3.9），Android JDK 17、SDK 35、NDK 28 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --debug --target-platform android-arm64,android-x64`。
+固定工具链 Flutter 3.35.7（Dart 3.9），Android JDK 17、SDK 36（目标 API 35）、NDK 28.1.13356709 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --debug --target-platform android-arm64,android-x64`。
 
 GitHub Actions 构建 ARM64 和 x86_64 所需的 Go 原生库，检查 Android 依赖图中不包含 TUI，运行 Flutter 组件测试、实际 Android 文件适配测试和模拟器上的真实协议交互。测试服务只绑定回环地址，不扫描或连接真实工业设备。
 
 ## 文件与 USB
 
-应用使用系统文档选择器，文件导入到应用私有目录。不请求完整存储访问，不保存长期文档权限。附件默认上限 1 GiB，可明确调整到 8 GiB；配置文本编辑上限 8 MiB；multipart 遵循协议内核的 4 MiB 限制。ZIP 导入保持相对路径，拒绝目录穿越、重复路径，并限制条目数和总展开大小。中断或失败会清理本次生成的未完成文件；若文档提供程序不允许清理，会给出明确错误。
+应用使用系统文档选择器，文件导入到应用私有目录。不请求完整存储访问，不保存长期文档权限。附件默认上限 1 GiB，可明确调整到 8 GiB；配置集合遵循共享内核的 4 MiB 上限，普通文本查看上限 8 MiB；multipart 遵循协议内核的 4 MiB 限制。ZIP 导入保持相对路径，拒绝目录穿越、重复路径，并限制条目数和总展开大小。中断或失败会清理本次生成的未完成文件；若文档提供程序不允许清理，会给出明确错误。
 
 USB 串口仅在用户选择设备、允许系统权限并明确打开后使用。后台或拔出设备会关闭连接，不自动重开或重放写入。实际 ARM64 手机、USB 转串口和工业设备仍需要独立硬件验收。
 

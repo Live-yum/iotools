@@ -47,8 +47,8 @@ jobs:
         run: go test -race -count=1 -timeout 5m ./...
       - name: Select installed Android NDK
         run: |
-          ndk=$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          test -n "$ndk"
+          ndk="$ANDROID_HOME/ndk/28.1.13356709"
+          test -d "$ndk"
           cat "$ndk/source.properties"
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Build actual shared Go engine

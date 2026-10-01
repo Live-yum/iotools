@@ -872,6 +872,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
               : chunks.map((v) => boundedInt(v, 0, 65535, '寄存器字')).toList();
         }
         if (action == 'read-write-registers') {
+          p['count'] = (p['values'] as List).length;
           p['read_address'] = boundedInt(readAddress.text, 0, 65535, '读取地址');
           p['read_count'] = boundedInt(readCount.text, 1, 125, '读取数量');
         }
@@ -1191,6 +1192,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
                   'register-match',
                   'device-identification',
                   'raw-pdu',
+                  'done',
                 ].contains(e['kind']),
               )
               .toList()
@@ -1204,6 +1206,11 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
   );
   List<Widget> _eventDetails(Map<String, dynamic> event) {
     final data = mbMap(event['data']);
+    if (event['kind'] == 'done')
+      return [
+        mbPair('操作状态', data['status']),
+        if (data['error'] != null) mbPair('错误详情', data['error']),
+      ];
     if (event['kind'] == 'device-identification')
       return [
         mbPair('设备单元 / 一致性', '${data['unit']} / ${data['conformity']}'),

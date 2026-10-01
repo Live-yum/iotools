@@ -16,6 +16,7 @@ class FakePlatform implements PlatformServices {
 class FakeEngine implements Engine {
   final calls = <JsonMap>[];
   Completer<Object?>? pendingEvents;
+  bool consumePendingOnce = false;
   bool closed = false;
   int pauseCount = 0;
   JsonMap state = {
@@ -101,7 +102,11 @@ class FakeEngine implements Engine {
         state['running'] = true;
         return {'run_id': 'opaque-run'};
       case 'events':
-        if (pendingEvents != null) return pendingEvents!.future;
+        if (pendingEvents != null) {
+          final pending = pendingEvents!;
+          if (consumePendingOnce) pendingEvents = null;
+          return pending.future;
+        }
         return {'events': [], 'running': state['running']};
       case 'request.save':
         return cloneMap(state);

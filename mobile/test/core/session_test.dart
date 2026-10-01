@@ -104,4 +104,62 @@ void main() {
       s.dispose();
     },
   );
+  test('saving form refuses to discard independently edited YAML', () async {
+    final e = FakeEngine(), s = AppSession(e, FakePlatform());
+    await s.initialize();
+    s.source += '\n# unsaved secret';
+    await expectLater(s.saveRequest({'id': 'a'}), throwsA(isA<Exception>()));
+    expect(e.calls.where((c) => c['op'] == 'request.save'), isEmpty);
+    expect(s.source, contains('unsaved secret'));
+    s.dispose();
+  });
+  test(
+    'lifecycle change while run command returns cannot resurrect running state',
+    () async {
+      final e = DelayedRunEngine(), s = AppSession(e, FakePlatform());
+      await s.initialize();
+      final run = s.run({'id': 'a', 'protocol': 'http'}, {'token': 'n'});
+      final expectation = expectLater(run, throwsA(isA<Exception>()));
+      await Future<void>.delayed(Duration.zero);
+      await s.pause();
+      e.pendingRun.complete({'run_id': 'late-run'});
+      await expectation;
+      expect(s.running, isFalse);
+      expect(s.resultRunId, isEmpty);
+      expect(
+        e.calls.any((c) => c['op'] == 'cancel' && c['run_id'] == 'late-run'),
+        isTrue,
+      );
+      s.dispose();
+    },
+  );
+  test(
+    'request ID rename uses original_id and discarding draft does not delete saved request',
+    () async {
+      final e = FakeEngine(), s = AppSession(e, FakePlatform());
+      await s.initialize();
+      final original = s.requests.first;
+      s.choose(original);
+      final changed = {...original, 'id': 'renamed'};
+      s.updateDraft(changed);
+      await s.saveRequest(changed);
+      final command = e.calls.lastWhere((c) => c['op'] == 'request.save');
+      expect(command['original_id'], 'http_demo');
+      expect((command['request'] as Map)['id'], 'renamed');
+      s.prepare({...original, 'name': 'unsaved'});
+      s.discardDraft('http_demo');
+      expect(s.drafts.containsKey('http_demo'), false);
+      expect(e.calls.where((c) => c['op'] == 'request.delete'), isEmpty);
+      s.dispose();
+    },
+  );
+}
+
+class DelayedRunEngine extends FakeEngine {
+  final pendingRun = Completer<Object?>();
+  @override
+  Future<Object?> command(JsonMap c) async {
+    if (c['op'] == 'run') return pendingRun.future;
+    return super.command(c);
+  }
 }

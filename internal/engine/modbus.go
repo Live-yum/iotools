@@ -47,8 +47,15 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		return err
 	}
 	addr, count, unit := r.Int("address", 0), r.Int("count", 1), r.Int("unit", 1)
-	if addr < 0 || addr > 65535 || count < 1 || count > 125 || addr+count > 65536 || unit < 1 || unit > 247 {
-		return fmt.Errorf("invalid address/count/unit (count 1..125, unit 1..247; broadcast disabled)")
+	maxCount := 125
+	if r.Action == "read-coils" || r.Action == "read-discrete" {
+		maxCount = 2000
+	}
+	if r.Action == "write-coils" {
+		maxCount = 1968
+	}
+	if addr < 0 || addr > 65535 || count < 1 || count > maxCount || addr+count > 65536 || unit < 1 || unit > 247 {
+		return fmt.Errorf("invalid address/count/unit (count 1..%d, unit 1..247; broadcast disabled)", maxCount)
 	}
 	order := r.String("word_order", "ABCD")
 	switch order {

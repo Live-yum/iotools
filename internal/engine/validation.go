@@ -36,6 +36,14 @@ func validateParams(r config.Request) error {
 		}
 	}
 	ints := map[string][2]int{"connect_timeout_ms": {1, 60000}, "request_timeout_ms": {1, 60000}, "request_gap_ms": {0, 60000}, "sweep_cycles": {1, 1000}, "reconnect_interval_ms": {100, 30000}, "scan_duration_ms": {100, 30000}, "max_topics": {1, 10000}, "partition": {0, 2147483647}, "matrix_columns": {1, 16}, "address": {0, 65535}, "count": {1, 125}, "unit": {1, 247}, "qos": {0, 2}, "limit": {1, 100000}, "samples": {1, 100000}, "interval_ms": {10, 86400000}, "partitions": {1, 100000}, "replication_factor": {1, 32767}, "baud": {1, 4000000}, "data_bits": {5, 8}, "stop_bits": {1, 2}, "max_events": {1, 100000}, "max_references": {1, 100000}}
+	if r.Protocol == "modbus" {
+		if r.Action == "read-coils" || r.Action == "read-discrete" {
+			ints["count"] = [2]int{1, 2000}
+		}
+		if r.Action == "write-coils" {
+			ints["count"] = [2]int{1, 1968}
+		}
+	}
 	for k, bounds := range ints {
 		if v, ok := r.Params[k]; ok {
 			n, e := exactInt(v)

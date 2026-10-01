@@ -3,6 +3,7 @@ import '../../core/json.dart';
 import '../../core/session.dart';
 import '../../shared/widgets.dart';
 import '../http/crypto_editor.dart';
+import '../files/file_tools.dart';
 
 class RequestForm extends StatefulWidget {
   const RequestForm({
@@ -62,7 +63,9 @@ class _RequestFormState extends State<RequestForm> {
         protocols.where((p) => p['id'] == request['protocol']).firstOrNull ??
         {};
     final actions = rowsOf(protocol['actions']);
-    final fields = rowsOf(protocol['fields']);
+    final fields = rowsOf(
+      protocol['fields'],
+    ).where((f) => f['key'] != 'keymap').toList();
     final core = fields
         .where(
           (f) => _primary(request['protocol'].toString(), f['key'].toString()),
@@ -106,7 +109,15 @@ class _RequestFormState extends State<RequestForm> {
                         request['protocol'] = v;
                         request['action'] = a['id'];
                         request['params'] = cloneMap(mapOf(a['defaults']));
-                        inputs.clear();
+                        for (final e in inputs.entries) {
+                          if (![
+                            'id',
+                            'name',
+                            'endpoint',
+                            'timeout',
+                          ].contains(e.key))
+                            e.value.text = params[e.key]?.toString() ?? '';
+                        }
                       });
                       widget.onChanged(cloneMap(request));
                     },
@@ -193,7 +204,20 @@ class _RequestFormState extends State<RequestForm> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Column(children: advanced.map(field).toList()),
+                child: Column(
+                  children: [
+                    TextField(
+                      key: const ValueKey('request_id'),
+                      controller: input('id', request['id']),
+                      decoration: const InputDecoration(
+                        labelText: '请求 ID（模板引用名称）',
+                      ),
+                      onChanged: (v) => root('id', v),
+                    ),
+                    const SizedBox(height: 12),
+                    ...advanced.map(field),
+                  ],
+                ),
               ),
             ],
           ),
@@ -214,12 +238,41 @@ class _RequestFormState extends State<RequestForm> {
         value: value == true,
         onChanged: (v) => setState(() => change(key, v)),
       );
+    if (request['protocol'] == 'kafka' &&
+        request['action'] == 'register-schema' &&
+        key == 'json')
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: TextField(
+          key: const ValueKey('schema_definition'),
+          controller: input('schema_definition', mapOf(value)['schema']),
+          minLines: 5,
+          maxLines: 14,
+          decoration: const InputDecoration(
+            labelText: 'Avro Schema JSON',
+            hintText: '例如 "string" 或 record 定义',
+          ),
+          onChanged: (v) => change('json', {'schema': v}),
+        ),
+      );
     if (type == 'json')
       return Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: OutlinedButton(
+          key: ValueKey('edit_$key'),
           onPressed: () async {
-            final x = await editStructured(context, label, value, key);
+            final x = key == 'form_multipart'
+                ? await editMultipart(context, widget.session, mapOf(value))
+                : await editStructured(
+                    context,
+                    label,
+                    value,
+                    request['protocol'] == 'kafka' &&
+                            request['action'] == 'update-connector' &&
+                            key == 'json'
+                        ? 'configs'
+                        : key,
+                  );
             if (x != null) setState(() => change(key, x));
           },
           child: Align(
@@ -253,7 +306,8 @@ class _RequestFormState extends State<RequestForm> {
           onChanged: (v) => change(key, v),
         ),
       );
-    final attachment = key.endsWith('_file') || key == 'next_config';
+    final attachment =
+        key.endsWith('_file') && key != 'response_file' || key == 'next_config';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
@@ -279,10 +333,8 @@ class _RequestFormState extends State<RequestForm> {
                   tooltip: '选择并导入私有附件',
                   icon: const Icon(Icons.attach_file),
                   onPressed: () => guarded(context, () async {
-                    final f = mapOf(
-                      await widget.session.platform.invoke('files.pick'),
-                    );
-                    if (f.isNotEmpty) {
+                    final f = await pickAttachment(context, widget.session);
+                    if (f != null) {
                       inputs[key]!.text = f['path'].toString();
                       change(key, f['path']);
                     }
@@ -369,16 +421,9 @@ Future<Object?> editStructured(
   Object? initial,
   String key,
 ) async {
-  if (key == 'value' || key == 'json') {
-    final raw = await inputDialog(
-      context,
-      title,
-      initial: initial == null ? '' : exactEncode(initial),
-      hint: 'JSON 值；整数保留原始精度',
-      multiline: true,
-    );
-    return raw == null ? null : exactDecode(raw);
-  }
+  if (key == 'value' || key == 'json')
+    return editJsonValue(context, title, initial);
+
   final listKeys = [
     'topics',
     'confirm_topics',
@@ -521,4 +566,55 @@ Object? _fieldValue(String text, String key) {
     }
   }
   return text;
+}
+
+Future<Object?> editJsonValue(
+  BuildContext context,
+  String title,
+  Object? initial,
+) async {
+  final text = TextEditingController(
+    text: initial == null ? '' : exactEncode(initial),
+  );
+  String? error;
+  final value = await memoryDialog<Object>(
+    context: context,
+    builder: (c) => StatefulBuilder(
+      builder: (c, set) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 640,
+          child: TextField(
+            key: const ValueKey('json_value_editor'),
+            controller: text,
+            minLines: 5,
+            maxLines: 14,
+            decoration: InputDecoration(
+              labelText: 'JSON 值（整数精度保留）',
+              errorText: error,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              try {
+                final parsed = exactDecode(text.text);
+                Navigator.pop(c, parsed);
+              } catch (e) {
+                set(() => error = '$e');
+              }
+            },
+            child: const Text('应用'),
+          ),
+        ],
+      ),
+    ),
+  );
+  text.dispose();
+  return value;
 }

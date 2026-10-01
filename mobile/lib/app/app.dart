@@ -5,12 +5,14 @@ import '../core/engine.dart';
 import '../core/json.dart';
 import '../core/session.dart';
 import '../shared/widgets.dart';
+import '../shared/review_dialog.dart';
 import '../features/requests/request_form.dart';
 import '../features/http/http_tools.dart';
 import '../features/history/history_page.dart';
 import '../features/messaging/messaging.dart';
 import '../features/modbus/modbus_workspace.dart';
 import '../features/opcua/opcua_workspace.dart';
+import '../features/files/file_tools.dart';
 
 class IotoolsApp extends StatefulWidget {
   const IotoolsApp({required this.engine, required this.platform, super.key});
@@ -88,17 +90,22 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   late StreamSubscription<JsonMap> subscription;
   final yaml = TextEditingController();
   BuildContext? interactionContext;
+  final List<JsonMap> _interactions = [];
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     subscription = s.eventStream.listen(interaction);
+    s.transfer = (method, args) => mounted
+        ? transferFile(context, s.platform, method, args)
+        : s.platform.invoke(method, args);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     subscription.cancel();
+    s.transfer = null;
     yaml.dispose();
     super.dispose();
   }
@@ -107,6 +114,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _interactions.clear();
       if (interactionContext != null) Navigator.of(interactionContext!).pop();
       s.pause();
     } else if (state == AppLifecycleState.resumed) {
@@ -115,6 +123,15 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   }
 
   Future<void> interaction(JsonMap event) async {
+    if (event['kind'] != 'interaction' || !mounted || s.paused) return;
+    _interactions.add(event);
+    if (dialogOpen) return;
+    while (_interactions.isNotEmpty && mounted && !s.paused) {
+      await _showInteraction(_interactions.removeAt(0));
+    }
+  }
+
+  Future<void> _showInteraction(JsonMap event) async {
     if (event['kind'] != 'interaction' || !mounted || s.paused) return;
     final data = mapOf(event['data']);
     final epoch = s.epoch;
@@ -139,7 +156,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (data['request'] != null) DataView(data['request']),
+                    if (data['request'] != null)
+                      DataView(safePreviewRequest(mapOf(data['request']))),
                     if (type == 'prompt')
                       TextField(
                         controller: text,
@@ -212,12 +230,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       if (!mounted || s.paused || epoch != s.epoch) return;
       bool accepted = true;
       if (p['confirmation_required'] == true) {
-        accepted = await confirm(
-          context,
-          '确认执行写操作',
-          '${p['summary'] ?? ''}\n\n${pretty(p['protocol_preview'] ?? p['request'])}\n\n${(p['warnings'] as List? ?? []).join('\n')}',
-          action: '确认执行',
-        );
+        accepted = await reviewExecution(context, p);
       }
       if (!accepted || !mounted || s.paused || epoch != s.epoch) return;
       await s.run(request, p, confirmed: accepted, overrides: overrides);
@@ -496,6 +509,10 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                                       onSelected: (v) => cardAction(v, r),
                                       itemBuilder: (c) => const [
                                         PopupMenuItem(
+                                          value: 'discard',
+                                          child: Text('撤销未保存表单'),
+                                        ),
+                                        PopupMenuItem(
                                           value: 'copy',
                                           child: Text('复制为新请求'),
                                         ),
@@ -536,6 +553,13 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   }
 
   Future<void> cardAction(String action, JsonMap r) async {
+    if (action == 'discard') {
+      if (await confirm(context, '撤销未保存表单？', '只移除内存中的编辑，保留已保存配置。') && mounted) {
+        s.discardDraft(r['id'].toString());
+        setState(() => generation++);
+      }
+      return;
+    }
     if (action == 'copy') {
       final copy = cloneMap(r);
       copy['id'] = '${r['id']}_${DateTime.now().millisecondsSinceEpoch}';
@@ -551,6 +575,10 @@ class _WorkspaceShellState extends State<WorkspaceShell>
         ) &&
         mounted) {
       await guarded(context, () async {
+        if (!s.requests.any((v) => v['id'] == r['id'])) {
+          s.discardDraft(r['id'].toString());
+          return;
+        }
         s.stateChanged(
           mapOf(
             await s.command({
@@ -603,6 +631,28 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           ),
         ),
       ),
+      if (tab == 1)
+        Row(
+          children: [
+            const SizedBox(width: 16),
+            const Expanded(child: Text('未保存内容仅保留在内存')),
+            TextButton(
+              onPressed: () async {
+                if (await confirm(
+                      context,
+                      '撤销 YAML 修改？',
+                      '编辑器将恢复为本次加载的已保存文本。',
+                    ) &&
+                    mounted) {
+                  s.source = s.savedSource;
+                  yaml.text = s.source;
+                  setState(() {});
+                }
+              },
+              child: const Text('撤销修改'),
+            ),
+          ],
+        ),
       Expanded(
         child: switch (tab) {
           0 => ListView(
@@ -852,6 +902,29 @@ class _WorkspaceShellState extends State<WorkspaceShell>
             child: const Text('私有文件 / 切换集合'),
           ),
           OutlinedButton(
+            onPressed: () => switchPath('iotools.yaml'),
+            child: const Text('返回初始集合'),
+          ),
+          if (mapOf(s.draft['params'])['next_config'] != null)
+            OutlinedButton(
+              onPressed: () => switchPath(
+                mapOf(s.draft['params'])['next_config'].toString(),
+              ),
+              child: const Text('预览 next_config 下一集合'),
+            ),
+          OutlinedButton(
+            onPressed: () => guarded(context, () async {
+              final file = await pickAttachment(context, s);
+              if (file != null && mounted) showData(context, '已导入附件', file);
+            }),
+            child: const Text('导入附件（1–8 GiB）'),
+          ),
+          OutlinedButton(
+            onPressed: () =>
+                guarded(context, () => s.platform.invoke('files.cancel')),
+            child: const Text('停止文件传输'),
+          ),
+          OutlinedButton(
             onPressed: () =>
                 guarded(context, () => s.exportText('iotools.yaml', s.source)),
             child: const Text('导出 YAML'),
@@ -914,10 +987,35 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       ),
     ],
   );
+  Future<void> switchPath(String path) async {
+    await guarded(context, () async {
+      final preview = mapOf(
+        await s.command({
+          'op': 'config.switch',
+          'path': path,
+          'confirmed': false,
+        }),
+      );
+      if (!mounted) return;
+      if (await confirm(
+        context,
+        '切换集合？',
+        '目标：$path\n${rowsOf(mapOf(preview['collection'])['requests']).length} 个请求\n当前未保存表单和 YAML 将保留在内存中，返回这个集合时恢复。',
+        action: '切换',
+      )) {
+        await s.switchCollection(path, preview);
+        yaml.text = s.source;
+        if (mounted) setState(() => editor = false);
+      }
+    });
+  }
+
   Future<void> importConfig() async {
     await guarded(context, () async {
       final f = mapOf(
-        await s.platform.invoke('files.pick', {'limit': 4194304}),
+        await transferFile(context, s.platform, 'files.pick', {
+          'limit': 4194304,
+        }),
       );
       if (f.isEmpty) return;
       final content = await s.platform.invoke('files.read', {
@@ -983,7 +1081,13 @@ class _WorkspaceShellState extends State<WorkspaceShell>
 
   Future<void> importBundle() async {
     await guarded(context, () async {
-      final result = mapOf(await s.platform.invoke('files.importBundle'));
+      final limit = await chooseTransferLimit(context);
+      if (limit == null || !mounted) return;
+      final result = mapOf(
+        await transferFile(context, s.platform, 'files.importBundle', {
+          'limit': limit,
+        }),
+      );
       if (result.isEmpty || !mounted) return;
       await showData(context, '已导入的私有文件', result);
       await fileInventory();
@@ -1012,39 +1116,20 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                   trailing: PopupMenuButton<String>(
                     onSelected: (v) => guarded(context, () async {
                       if (v == 'export') {
-                        await s.platform.invoke('files.export', {
-                          'path': f['path'],
-                          'name': f['name'],
-                        });
-                      } else {
-                        final p = mapOf(
-                          await s.command({
-                            'op': 'config.switch',
-                            'path': f['path'],
-                            'confirmed': false,
-                          }),
-                        );
-                        if (!mounted) return;
-                        if (await confirm(
+                        final limit = await chooseTransferLimit(context);
+                        if (limit == null || !mounted) return;
+                        await transferFile(
                           context,
-                          '切换集合？',
-                          '未保存草稿仍留在内存中。\n${pretty(p['collection'])}',
-                          action: '切换',
-                        )) {
-                          s.stateChanged(
-                            mapOf(
-                              await s.command({
-                                'op': 'config.switch',
-                                'path': f['path'],
-                                'token': p['token'],
-                                'confirmed': true,
-                              }),
-                            ),
-                          );
-                          await s.refreshSource();
-                          yaml.text = s.source;
-                          if (mounted) setState(() => editor = false);
-                        }
+                          s.platform,
+                          'files.export',
+                          {
+                            'path': f['path'],
+                            'name': f['name'],
+                            'limit': limit,
+                          },
+                        );
+                      } else {
+                        await switchPath(f['path'].toString());
                       }
                     }),
                     itemBuilder: (c) => const [

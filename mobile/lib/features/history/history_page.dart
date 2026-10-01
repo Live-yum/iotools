@@ -210,12 +210,20 @@ class _HistoryPageState extends State<HistoryPage> {
                         enabled: !widget.session.readOnly,
                         onSelected: (kind) async {
                           String? target;
-                          if (kind == 'rename' || kind == 'merge')
+                          if (kind == 'rename' ||
+                              kind == 'merge' ||
+                              kind == 'migrate')
                             target = await inputDialog(
                               c,
-                              kind == 'rename' ? '新集合名称' : '合并到集合',
+                              kind == 'rename'
+                                  ? '新集合名称'
+                                  : kind == 'merge'
+                                  ? '合并到集合'
+                                  : '迁移到集合',
                             );
-                          if ((kind == 'rename' || kind == 'merge') &&
+                          if ((kind == 'rename' ||
+                                  kind == 'merge' ||
+                                  kind == 'migrate') &&
                               target == null)
                             return;
                           if (!c.mounted) return;

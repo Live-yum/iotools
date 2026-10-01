@@ -3,6 +3,8 @@ import 'package:iotools_mobile/features/http/crypto_editor.dart';
 import 'package:iotools_mobile/features/http/http_tools.dart';
 import 'package:iotools_mobile/features/history/history_page.dart';
 import 'package:iotools_mobile/features/messaging/messaging_models.dart';
+import 'package:iotools_mobile/features/messaging/kafka_entities.dart';
+import 'package:iotools_mobile/features/messaging/messaging.dart';
 
 void main() {
   test('codec fields are algorithm specific', () {
@@ -61,5 +63,66 @@ void main() {
     expect(c.dropped, 1);
     c.clearTopic('a');
     expect(c.topics['a/']!.length, 2);
+  });
+  test(
+    'MQTT boolean array and MessagePack map numeric values preserve semantics',
+    () {
+      expect(numericFields(true)[r'$'], 1);
+      expect(numericFields([1, 2])[r'$'], 2);
+      expect(numericFields({'a': 1})[r'$'], isNull);
+      expect(numericFields({'a': 1}, messagepack: true)[r'$'], 1);
+      expect(
+        numericFields({'messagepack_type': 'binary'}, messagepack: true)[r'$'],
+        isNull,
+      );
+      final events = [
+        {
+          'time': '2026-10-01T00:00:00Z',
+          'data': {'retained': false},
+        },
+        {
+          'time': '2026-10-01T00:00:01Z',
+          'data': {'retained': true},
+        },
+        {
+          'time': '2026-10-01T00:00:02Z',
+          'data': {'retained': false},
+        },
+      ];
+      expect(point(events, 2, 'rate'), .5);
+    },
+  );
+  test('Kafka keyed maps and HTTP schema bodies become native entity rows', () {
+    expect(
+      kafkaEntities(
+        'topics',
+        {
+          'orders': {'Topic': 'orders', 'Partitions': {}},
+        },
+        {'action': 'topics'},
+      ).single['name'],
+      'orders',
+    );
+    expect(
+      kafkaEntities(
+        'response',
+        {
+          'body': ['a', 'b'],
+        },
+        {'action': 'schemas'},
+      ).map((e) => e['name']),
+      ['a', 'b'],
+    );
+    final r = kafkaDraft(
+      {
+        'protocol': 'kafka',
+        'params': {'body': 'stale', 'username': 'local'},
+      },
+      'lag',
+      {'name': 'one-group'},
+    );
+    expect((r['params'] as Map)['groups'], ['one-group']);
+    expect((r['params'] as Map).containsKey('body'), isFalse);
+    expect((r['params'] as Map)['username'], 'local');
   });
 }

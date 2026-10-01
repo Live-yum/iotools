@@ -148,8 +148,12 @@ func newModbusAPIHandler(base config.Request, scope *ModbusWriteScope) (http.Han
 				}
 				p["values"] = values
 			} else {
-				if len(req.Values) != 0 || req.Count == nil || *req.Count < 1 || *req.Count > 125 || *req.Address+*req.Count > 65536 {
-					http.Error(w, "read requires count 1..125 and no values", 400)
+				maxCount := 125
+				if req.Type == "coil" || req.Type == "discrete" {
+					maxCount = 2000
+				}
+				if len(req.Values) != 0 || req.Count == nil || *req.Count < 1 || *req.Count > maxCount || *req.Address+*req.Count > 65536 {
+					http.Error(w, fmt.Sprintf("read requires count 1..%d and no values", maxCount), 400)
 					return
 				}
 				p["count"] = *req.Count

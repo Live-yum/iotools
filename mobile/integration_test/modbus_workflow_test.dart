@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'modbus_advanced_workflow_test.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:iotools_mobile/features/modbus/modbus_models.dart';
 /// Runner must adb reverse ports 48415 (Modbus) and 48416 (metrics).
 /// This synthetic loopback fixture is not evidence of physical-device support.
 void registerModbusIntegrationTests() {
+  registerAdvancedModbusIntegrationTests();
   testWidgets(
     'Flutter Modbus: local navigation, cancelled write, confirmed write and TCP readback',
     (tester) async {
