@@ -50,7 +50,7 @@ func TestModbusFixtureRealWireReadWriteAndCounter(t *testing.T) {
 }
 
 func TestDisposableMQTTFixtureRetainsExactTopicLevels(t *testing.T) {
-	meta, stop, err := startMobileNetworkFixtures()
+	meta, stop, err := startMobileNetworkFixturesOnPorts(0, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,5 +126,38 @@ func TestModbusFixtureFC23DeviceIdentificationAndFullBitRead(t *testing.T) {
 	}
 	if m.reads.Load() != 3 || m.writes.Load() != 1 {
 		t.Fatal("unit mismatch changed counters")
+	}
+}
+
+func TestDisposableNetworkFixtureInstancesKeepDistinctLivePorts(t *testing.T) {
+	first, stopFirst, err := startMobileNetworkFixturesOnPorts(0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopFirst()
+	second, stopSecond, err := startMobileNetworkFixturesOnPorts(0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stopSecond()
+	for _, key := range []string{"mqtt_endpoint", "modbus_endpoint", "network_metrics_url"} {
+		if first[key] == second[key] {
+			t.Fatalf("independent live %s collided: %v", key, first[key])
+		}
+	}
+	for _, meta := range []map[string]any{first, second} {
+		seen := false
+		request := config.Request{Protocol: "mqtt", Endpoint: meta["mqtt_endpoint"].(string), Action: "read-one", Timeout: "3s", Params: map[string]any{"topic": "/sensors//temp/", "qos": 1}}
+		if err := engine.Run(context.Background(), request, false, func(event engine.Event) {
+			if event.Kind == "message" {
+				data := event.Data.(map[string]any)
+				seen = data["topic"] == "/sensors//temp/" && data["retained"] == true
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !seen {
+			t.Fatal("independent retained topic did not reach real wire client")
+		}
 	}
 }

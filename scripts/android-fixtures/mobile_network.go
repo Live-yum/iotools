@@ -19,11 +19,18 @@ import (
 
 // Only the CI host links these disposable services. They never enter an APK.
 func startMobileNetworkFixtures() (map[string]any, func(), error) {
+	return startMobileNetworkFixturesOnPorts(48414, 48415, 48416)
+}
+
+// Unit tests request port zero. Each server retains its actual listener from
+// bind through shutdown; there is no probe-close-rebind window. The emulator
+// launcher continues using the fixed adb-reversed ports above.
+func startMobileNetworkFixturesOnPorts(mqttPort, modbusPort, metricsPort int) (map[string]any, func(), error) {
 	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err := broker.AddHook(new(auth.AllowHook), nil); err != nil {
 		return nil, nil, err
 	}
-	listener := listeners.NewTCP(listeners.Config{ID: "flutter-local", Address: "127.0.0.1:48414"})
+	listener := listeners.NewTCP(listeners.Config{ID: "flutter-local", Address: fmt.Sprintf("127.0.0.1:%d", mqttPort)})
 	if err := broker.AddListener(listener); err != nil {
 		return nil, nil, err
 	}
@@ -42,7 +49,7 @@ func startMobileNetworkFixtures() (map[string]any, func(), error) {
 		stopBroker()
 		return nil, nil, err
 	}
-	mb, err := startModbusFixture("127.0.0.1:48415")
+	mb, err := startModbusFixture(fmt.Sprintf("127.0.0.1:%d", modbusPort))
 	if err != nil {
 		stopBroker()
 		return nil, nil, err
@@ -74,7 +81,7 @@ func startMobileNetworkFixtures() (map[string]any, func(), error) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int64{"modbus_reads": mb.reads.Load(), "modbus_writes": mb.writes.Load(), "http_posts": httpPosts.Load(), "mqtt_packets_received": atomic.LoadInt64(&broker.Info.PacketsReceived)})
 	})
-	metrics, err := net.Listen("tcp", "127.0.0.1:48416")
+	metrics, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", metricsPort))
 	if err != nil {
 		mb.close()
 		stopBroker()
@@ -89,7 +96,7 @@ func startMobileNetworkFixtures() (map[string]any, func(), error) {
 		mb.close()
 		stopBroker()
 	}
-	return map[string]any{"mqtt_endpoint": "mqtt://127.0.0.1:48414", "mqtt_retained_topic": "/sensors//temp/", "modbus_endpoint": "tcp://127.0.0.1:48415", "network_metrics_url": "http://127.0.0.1:48416/metrics"}, stop, nil
+	return map[string]any{"mqtt_endpoint": "mqtt://" + listener.Address(), "mqtt_retained_topic": "/sensors//temp/", "modbus_endpoint": "tcp://" + mb.endpoint(), "network_metrics_url": "http://" + metrics.Addr().String() + "/metrics"}, stop, nil
 }
 
 type modbusFixture struct {
