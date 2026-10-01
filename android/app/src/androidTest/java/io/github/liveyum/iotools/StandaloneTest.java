@@ -1,11 +1,14 @@
 package io.github.liveyum.iotools;
+
 import static org.junit.Assert.*;
 import static androidx.test.espresso.Espresso.onView;
-import static androidx.test.espresso.matcher.ViewMatchers.withText;
-import static androidx.test.espresso.action.ViewActions.click;
-
+import static androidx.test.espresso.matcher.ViewMatchers.*;
+import static androidx.test.espresso.action.ViewActions.*;
 import android.content.Context;
-import android.graphics.Bitmap;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+import android.widget.EditText;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -13,89 +16,48 @@ import androidx.lifecycle.Lifecycle;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.*;
+import java.nio.file.Files;
 import java.util.concurrent.atomic.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class StandaloneTest {
- private String terminal(ActivityScenario<MainActivity> scenario){AtomicReference<String> result=new AtomicReference<>("");scenario.onActivity(a->result.set(a.terminalView().renderedText()));return result.get();}
- private long generation(ActivityScenario<MainActivity> scenario){AtomicLong value=new AtomicLong();scenario.onActivity(a->value.set(a.terminalView().renderedGeneration()));return value.get();}
- private void awaitGeneration(ActivityScenario<MainActivity> scenario,long previous)throws Exception{long end=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<end){if(generation(scenario)>previous)return;Thread.sleep(100);}fail("native screen did not draw a new frame");}
- private void assertVisibleGlyphPixels(ActivityScenario<MainActivity> scenario){
-  int[] bounds=new int[4];scenario.onActivity(a->{int[] location=new int[2];a.terminalView().getLocationOnScreen(location);bounds[0]=location[0];bounds[1]=location[1];bounds[2]=a.terminalView().getWidth();bounds[3]=a.terminalView().getHeight();});
-  Bitmap screenshot=InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();assertNotNull("native screenshot",screenshot);int bright=0;
-  for(int y=Math.max(0,bounds[1]);y<Math.min(screenshot.getHeight(),bounds[1]+bounds[3]);y+=2)for(int x=Math.max(0,bounds[0]);x<Math.min(screenshot.getWidth(),bounds[0]+bounds[2]);x+=2){int color=screenshot.getPixel(x,y);if(android.graphics.Color.red(color)>160&&android.graphics.Color.green(color)>160&&android.graphics.Color.blue(color)>160)bright++;}
-  screenshot.recycle();assertTrue("actual canvas must contain visible foreground glyph pixels",bright>30);
- }
- private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
-  long end=System.currentTimeMillis()+60000;String actual="";
-  while(System.currentTimeMillis()<end){actual=terminal(scenario);if(actual.contains(text))return;Thread.sleep(100);}
-  screenshot("failed-screen");fail("Missing "+text+" in "+actual+" native="+NativeRuntime.error());
- }
- private String shell(String command)throws Exception{
-  android.os.ParcelFileDescriptor pipe=InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(command);
-  try(InputStream input=new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe);ByteArrayOutputStream output=new ByteArrayOutputStream()){
-   byte[] buffer=new byte[1024];int n;while((n=input.read(buffer))!=-1)output.write(buffer,0,n);return output.toString("UTF-8");
-  }
- }
- private void screenshot(String name)throws Exception{
-  // executeShellCommand does not interpret &&; issue each command separately.
-  shell("mkdir -p /data/local/tmp/iotools-screenshots");
-  shell("screencap -p /data/local/tmp/iotools-screenshots/"+name+".png");
-  System.out.println("Screenshot: "+shell("ls -l /data/local/tmp/iotools-screenshots/"+name+".png"));
- }
- @Test public void standaloneRealHTTPChineseEditingPersistenceAndBackgroundStop()throws Exception{
-  Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-  System.out.println("Renderer: native Android Canvas; API="+android.os.Build.VERSION.SDK_INT);
-  NativeRuntime.stop();long stop=System.currentTimeMillis()+5000;while(NativeRuntime.state()!=0&&System.currentTimeMillis()<stop)Thread.sleep(50);
-  AtomicInteger requests=new AtomicInteger();
+ private static String visible(View view){StringBuilder out=new StringBuilder();if(view.getVisibility()!=View.VISIBLE)return "";if(view instanceof TextView)out.append(((TextView)view).getText()).append('\n');if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)out.append(visible(group.getChildAt(i)));}return out.toString();}
+ private String screen(ActivityScenario<MainActivity> scenario){AtomicReference<String> text=new AtomicReference<>("");scenario.onActivity(a->text.set(visible(a.getWindow().getDecorView())));return text.get();}
+ private void awaitText(ActivityScenario<MainActivity> scenario,String expected)throws Exception {long end=System.currentTimeMillis()+30000;String actual="";while(System.currentTimeMillis()<end){actual=screen(scenario);if(actual.contains(expected))return;Thread.sleep(100);}screenshot("failed-screen");fail("Native views missing "+expected+" in "+actual);}
+ private void awaitSaved(File file,String expected)throws Exception {long end=System.currentTimeMillis()+10000;while(System.currentTimeMillis()<end){if(new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8).contains(expected))return;Thread.sleep(100);}fail("Saved file missing expected text");}
+ private String shell(String command)throws Exception {android.os.ParcelFileDescriptor pipe=InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(command);try(InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe);ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[] b=new byte[1024];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}}
+ private void screenshot(String name)throws Exception {shell("mkdir -p /data/local/tmp/iotools-screenshots");shell("screencap -p /data/local/tmp/iotools-screenshots/"+name+".png");}
+ @Test public void modernNativeHTTPWriteConfirmationEditingAndLifecycle()throws Exception {
+  Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();NativeRuntime.close();
+  AtomicInteger reads=new AtomicInteger(),writes=new AtomicInteger();
   ServerSocket server=new ServerSocket(0,10,InetAddress.getByName("127.0.0.1"));
-  Thread serving=new Thread(()->{try{while(!server.isClosed()){try(Socket s=server.accept()){
-   BufferedReader reader=new BufferedReader(new InputStreamReader(s.getInputStream(),StandardCharsets.UTF_8));
-   String line=reader.readLine();if(line==null)continue;while((line=reader.readLine())!=null&&!line.isEmpty()){}
-   requests.incrementAndGet();byte[] body="{\"客服\":\"Android真实协议成功\"}".getBytes(StandardCharsets.UTF_8);
-   s.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));s.getOutputStream().write(body);
-  }}}catch(IOException expected){}},"loopback-http");serving.start();
+  Thread serving=new Thread(()->{try{while(!server.isClosed())try(Socket socket=server.accept()){
+   BufferedReader reader=new BufferedReader(new InputStreamReader(socket.getInputStream(),StandardCharsets.UTF_8));String first=reader.readLine();if(first==null)continue;String line;while((line=reader.readLine())!=null&&!line.isEmpty()){}if(first.startsWith("POST"))writes.incrementAndGet();else reads.incrementAndGet();
+   byte[] body="{\"客服\":\"原生移动界面请求成功\",\"状态\":200}".getBytes(StandardCharsets.UTF_8);socket.getOutputStream().write(("HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: "+body.length+"\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));socket.getOutputStream().write(body);
+  }}catch(IOException expected){}},"modern-loopback-http");serving.start();
   File config=new File(context.getFilesDir(),"iotools.yaml");
-  String yaml="version: 1\nprofiles:\n  local: {}\nrequests:\n  - id: customer\n    name: 客服验收\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n";
-  try(OutputStream out=new FileOutputStream(config)){out.write(yaml.getBytes(StandardCharsets.UTF_8));}
+  String base="version: 1\nprofiles:\n  local: {}\nrequests:\n  - id: customer\n    name: 客服验收\n    protocol: http\n    action: GET\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n  - id: customer-write\n    name: 客服写入验收\n    protocol: http\n    action: POST\n    endpoint: http://127.0.0.1:"+server.getLocalPort()+"/customer\n    timeout: 5s\n";
+  Files.write(config.toPath(),base.getBytes(StandardCharsets.UTF_8));
   try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
-   awaitText(scenario,"客服验收");assertEquals("startup must not connect",0,requests.get());assertVisibleGlyphPixels(scenario);screenshot("01-home");
-   onView(withText("执行")).perform(click());awaitText(scenario,"Android真实协议成功");assertEquals(1,requests.get());screenshot("02-real-http");
-   onView(withText("文件")).perform(click());awaitText(scenario,"请求配置 YAML");screenshot("03-config-editor");
-   onView(withText("输入")).perform(click());
-   onView(androidx.test.espresso.matcher.ViewMatchers.withHint("中文/多行文本；发送到当前输入位置")).perform(androidx.test.espresso.action.ViewActions.replaceText("# 中文备注 😀\n"));
-   screenshot("03a-native-input-dialog");
-   onView(withText("输入")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());
-   awaitText(scenario,"中文备注");
-   scenario.onActivity(a->{android.view.inputmethod.InputConnection input=a.terminalView().onCreateInputConnection(new android.view.inputmethod.EditorInfo());input.setComposingText("# 输入",1);input.setComposingText("# 输入法验收",1);input.commitText("# 输入法验收",1);input.finishComposingText();input.performEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);});
-   awaitText(scenario,"输入法验收");
-   // Switching apps before saving must preserve the exact editor draft.
-   Thread.sleep(300);
-   long beforePause=generation(scenario);
-   scenario.moveToState(Lifecycle.State.CREATED);
-   Thread.sleep(300);
-   assertEquals("background retains TUI memory",1,NativeRuntime.state());
-   scenario.moveToState(Lifecycle.State.RESUMED);
-   awaitGeneration(scenario,beforePause);
-   awaitText(scenario,"中文备注");
-   assertEquals("background must not replay HTTP",1,requests.get());
-   screenshot("03b-editor-resumed");
-   onView(withText("保存")).perform(click());awaitText(scenario,"配置已保存");
-   String saved=new String(java.nio.file.Files.readAllBytes(config.toPath()),StandardCharsets.UTF_8);
-   assertTrue("Chinese/emoji bytes saved",saved.contains("中文备注 😀"));
-   assertEquals("IME composition committed exactly once",1,saved.split("输入法验收",-1).length-1);
-   assertTrue("IME Enter inserted one newline",saved.contains("# 输入法验收\nversion:"));
-   onView(withText("Esc")).perform(click());
-   scenario.moveToState(Lifecycle.State.CREATED);
-   Thread.sleep(400);
-   assertEquals("background retains idle native UI",1,NativeRuntime.state());
-   scenario.moveToState(Lifecycle.State.RESUMED);Thread.sleep(500);assertEquals("no automatic replay",1,requests.get());
-   onView(withText("启动")).perform(click());awaitText(scenario,"客服验收");assertEquals(1,requests.get());screenshot("04-reopened");
-   scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
-   Thread.sleep(1000);awaitText(scenario,"客服验收");screenshot("05-landscape");
-  }finally{NativeRuntime.stop();server.close();serving.join(2000);}
+   awaitText(scenario,"客服验收");assertEquals("startup does not connect",0,reads.get()+writes.get());screenshot("01-modern-requests");
+   onView(withText("客服验收")).perform(click());awaitText(scenario,"连接地址");
+   onView(withId(R.id.request_endpoint)).check(androidx.test.espresso.assertion.ViewAssertions.matches(isAssignableFrom(EditText.class)));screenshot("02-modern-form");
+   onView(withId(R.id.run_request)).perform(scrollTo(),click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,reads.get());screenshot("03-modern-http-result");
+   onView(withId(R.id.nav_requests)).perform(click());awaitText(scenario,"客服写入验收");onView(withText("客服写入验收")).perform(scrollTo(),click());
+   onView(withId(R.id.run_request)).perform(scrollTo(),click());onView(withText("确认执行写入操作")).check(androidx.test.espresso.assertion.ViewAssertions.matches(isDisplayed()));screenshot("04-write-review");onView(withText("取消")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());assertEquals("cancelled write never sent",0,writes.get());
+   onView(withId(R.id.run_request)).perform(scrollTo(),click());onView(withText("确认执行")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());awaitText(scenario,"原生移动界面请求成功");assertEquals(1,writes.get());
+   onView(withText("YAML")).perform(click());awaitText(scenario,"请求配置 YAML");
+   String draft=base+"# 中文草稿 😀\n";onView(withId(R.id.yaml_editor)).perform(scrollTo(),replaceText(draft),closeSoftKeyboard());
+   scenario.onActivity(a->{EditText editor=a.findViewById(R.id.yaml_editor);editor.setSelection(editor.length());android.view.inputmethod.InputConnection input=editor.onCreateInputConnection(new android.view.inputmethod.EditorInfo());input.setComposingText("# 输入",1);input.setComposingText("# 输入法验收",1);input.commitText("# 输入法验收\n",1);input.finishComposingText();});
+   scenario.moveToState(Lifecycle.State.CREATED);Thread.sleep(200);scenario.moveToState(Lifecycle.State.RESUMED);awaitText(scenario,"中文草稿 😀");awaitText(scenario,"输入法验收");assertEquals("resume does not replay",2,reads.get()+writes.get());screenshot("05-native-yaml-draft");
+   onView(withId(R.id.save_yaml)).perform(scrollTo(),click());
+   onView(withText("保存并替换")).inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog()).perform(click());
+   awaitSaved(config,"中文草稿 😀");String saved=new String(Files.readAllBytes(config.toPath()),StandardCharsets.UTF_8);assertEquals("IME commit exactly once",1,saved.split("输入法验收",-1).length-1);
+   scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));Thread.sleep(600);awaitText(scenario,"请求配置 YAML");screenshot("06-modern-landscape");
+   onView(withId(R.id.nav_settings)).perform(click());awaitText(scenario,"设置");screenshot("07-modern-settings");
+   assertEquals("navigation never replays",2,reads.get()+writes.get());
+  }finally{NativeRuntime.close();server.close();serving.join(2000);}
  }
 }

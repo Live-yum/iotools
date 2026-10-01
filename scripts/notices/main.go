@@ -18,14 +18,19 @@ type module struct {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		panic("usage: notices OUTPUT_DIR")
+	if len(os.Args) < 2 {
+		panic("usage: notices OUTPUT_DIR [PACKAGE ...]")
 	}
 	out := os.Args[1]
 	if e := os.MkdirAll(out, 0755); e != nil {
 		panic(e)
 	}
-	cmd := exec.Command("go", "list", "-deps", "-json", "./cmd/iotools")
+	packages := os.Args[2:]
+	if len(packages) == 0 {
+		packages = []string{"./cmd/iotools"}
+	}
+	args := append([]string{"list", "-deps", "-json"}, packages...)
+	cmd := exec.Command("go", args...)
 	b, e := cmd.Output()
 	if e != nil {
 		panic(e)

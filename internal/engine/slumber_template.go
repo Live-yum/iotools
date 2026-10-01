@@ -582,6 +582,11 @@ func (w *httpWorkflow) call(name string, a []any, kw map[string]any) (any, error
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(w.rootDir, p)
 		}
+		if w.options.ValidateFilePath != nil {
+			if e := w.options.ValidateFilePath(p); e != nil {
+				return nil, e
+			}
+		}
 		f, e := os.Open(p)
 		if e != nil {
 			return nil, fmt.Errorf("file template: %w", e)

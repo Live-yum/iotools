@@ -18,6 +18,9 @@ import (
 // HTTPWorkflowOptions controls only explicit workflow capabilities. History is
 // opt-in because response bodies and headers may contain credentials or private data.
 type HTTPWorkflowOptions struct {
+	// Optional host sandbox hooks. Desktop callers leave these nil.
+	ValidateFilePath      func(string) error
+	ValidateRequest       func(config.Request) error
 	NoNetwork             bool
 	AllowInsecureTLS      bool
 	AuthorizeInsecureTLS  func(context.Context, config.Request) (bool, error)
@@ -251,6 +254,11 @@ func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
 	resolved, e := w.renderRequest(r)
 	if e != nil {
 		return fmt.Errorf("render %s: %w", r.ID, e)
+	}
+	if w.options.ValidateRequest != nil {
+		if e = w.options.ValidateRequest(resolved); e != nil {
+			return e
+		}
 	}
 	allowed := w.allowWrites
 	if chained && resolved.Mutates() {

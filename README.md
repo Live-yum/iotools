@@ -1,7 +1,8 @@
-# iotools · 统一协议终端工具
+# iotools · 统一协议工具
 
 把 HTTP 网络请求、Kafka、MQTT、Modbus、OPC UA 放进一个可移植的 TUI。
-请求以 YAML 文件保存，也可以直接在终端内编辑。界面、快捷键、环境配置、
+Android 另提供原生触控应用，见 [Android 使用说明](docs/android.md)。
+请求以 YAML 文件保存，也可以直接在界面内编辑。界面、快捷键、环境配置、
 结果查看、取消操作和写入确认使用同一套交互。
 
 运行程序不需要另外安装 Java、Python、Node、Docker、外部编辑器或上述五个

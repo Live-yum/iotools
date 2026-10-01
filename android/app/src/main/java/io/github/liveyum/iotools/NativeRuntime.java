@@ -1,22 +1,16 @@
 package io.github.liveyum.iotools;
+import java.nio.charset.StandardCharsets;
+/** Structured UTF-8 bridge to the shared protocol engine. */
 public final class NativeRuntime {
  static {System.loadLibrary("iotools");}
  private NativeRuntime(){}
- public static native int start(String path,int cols,int rows,int flags);
- public static native byte[] read();
- public static native byte[] frame();
- public static native int paste(byte[] data);
- public static native int key(String name,int rune,int modifiers);
- public static native int mouse(int x,int y,boolean down);
- public static native int input(byte[] data);
- public static native int resize(int cols,int rows);
- public static native void stop();
- public static native void pause();
- public static native void resume();
- public static native void options(int flags,String path);
- public static native int validate(String path);
- public static native int state();
- public static native String error();
- public static native String clipboard();
- public static native int importConfig(String staged,String target);
+ private static native byte[] openBytes(byte[] path,int flags);
+ private static native byte[] commandBytes(byte[] command);
+ private static native void lifecycle(int action);
+ private static String decode(byte[] bytes){return bytes==null||bytes.length==0?"{\"ok\":false,\"error\":\"本地引擎未返回结果\"}":new String(bytes,StandardCharsets.UTF_8);}
+ public static String open(String path,String version,boolean readOnly,boolean history){return decode(openBytes(path.getBytes(StandardCharsets.UTF_8),(readOnly?1:0)|(history?2:0)));}
+ public static String command(String json){return decode(commandBytes(json.getBytes(StandardCharsets.UTF_8)));}
+ public static void pause(){lifecycle(0);}
+ public static void resume(){lifecycle(1);}
+ public static void close(){lifecycle(2);}
 }

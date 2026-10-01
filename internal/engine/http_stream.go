@@ -48,6 +48,11 @@ func (w *httpWorkflow) absoluteBodyFile(name string) (string, error) {
 	if !filepath.IsAbs(name) {
 		name = filepath.Join(w.rootDir, name)
 	}
+	if w.options.ValidateFilePath != nil {
+		if e := w.options.ValidateFilePath(name); e != nil {
+			return "", e
+		}
+	}
 	return name, nil
 }
 

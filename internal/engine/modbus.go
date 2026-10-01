@@ -93,7 +93,17 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		h.SlaveId = byte(unit)
 		handler = &rtuTCPHandler{packager: h, address: strings.TrimPrefix(r.Endpoint, "rtu+tcp://"), ctx: ctx, timeout: requestTimeout, connectTimeout: connectTimeout}
 		close = func() error { return nil }
+	case strings.HasPrefix(r.Endpoint, "usb://"):
+		h, err := newModbusUSBHandler(ctx, r, unit, requestTimeout)
+		if err != nil {
+			return err
+		}
+		handler = h
+		close = func() error { return nil }
 	case strings.HasPrefix(r.Endpoint, "rtu://"):
+		if err := checkModbusDeviceSerial(); err != nil {
+			return err
+		}
 		h := modbus.NewRTUClientHandler(strings.TrimPrefix(r.Endpoint, "rtu://"))
 		h.BaudRate = r.Int("baud", 9600)
 		h.DataBits = r.Int("data_bits", 8)
@@ -104,7 +114,7 @@ func runModbus(ctx context.Context, r config.Request, emit Emit) error {
 		handler = h
 		close = h.Close
 	default:
-		return fmt.Errorf("Modbus endpoint must use tcp://host:port, rtu+tcp://host:port rtu://device or explicit mock://local")
+		return fmt.Errorf("Modbus endpoint must use tcp://host:port, rtu+tcp://host:port, rtu://device, Android usb://device-id/port-index or explicit mock://local")
 	}
 	defer close()
 	handler = &modbusTimedHandler{ClientHandler: handler, ctx: ctx, gap: time.Duration(r.Int("request_gap_ms", 0)) * time.Millisecond}

@@ -1,40 +1,64 @@
 //go:build android
-
 #include <jni.h>
 #include <stdlib.h>
+#include <string.h>
 #include "_cgo_export.h"
-
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_start(JNIEnv *env,jclass cls,jstring path,jint cols,jint rows,jint flags){
- const char *p=(*env)->GetStringUTFChars(env,path,0);if(!p)return -1;
- int result=IotoolsStart((char*)p,cols,rows,flags);(*env)->ReleaseStringUTFChars(env,path,p);return result;
+static void init_usb(JNIEnv* env);
+static jbyteArray response(JNIEnv* env,char* data){
+ if(!data)return (*env)->NewByteArray(env,0);
+ size_t n=strlen(data);if(n>16*1024*1024){free(data);return (*env)->NewByteArray(env,0);}
+ jbyteArray result=(*env)->NewByteArray(env,(jsize)n);
+ if(result&&n)(*env)->SetByteArrayRegion(env,result,0,(jsize)n,(jbyte*)data);
+ free(data);return result;
 }
-JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_read(JNIEnv *env,jclass cls){
- char data[65536];int n=IotoolsRead(data,sizeof(data));if(n<0||n>65536)n=0;
- jbyteArray out=(*env)->NewByteArray(env,n);if(out&&n)(*env)->SetByteArrayRegion(env,out,0,n,(jbyte*)data);return out;
+JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_openBytes(JNIEnv* env,jclass cls,jbyteArray path,jint flags){
+ init_usb(env);
+ if(!path)return response(env,NULL);jsize n=(*env)->GetArrayLength(env,path);if(n<1||n>16384)return response(env,NULL);
+ jbyte* data=(*env)->GetByteArrayElements(env,path,0);if(!data)return response(env,NULL);
+ char* result=IotoolsOpen((char*)data,n,flags);(*env)->ReleaseByteArrayElements(env,path,data,JNI_ABORT);return response(env,result);
 }
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_input(JNIEnv *env,jclass cls,jbyteArray data){
- jsize n=(*env)->GetArrayLength(env,data);if(n>65536)return -1;
- jbyte *p=(*env)->GetByteArrayElements(env,data,0);if(!p)return -1;
- int result=IotoolsInput((char*)p,n);(*env)->ReleaseByteArrayElements(env,data,p,JNI_ABORT);return result;
+JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_commandBytes(JNIEnv* env,jclass cls,jbyteArray input){
+ if(!input)return response(env,NULL);jsize n=(*env)->GetArrayLength(env,input);if(n<1||n>8*1024*1024)return response(env,NULL);
+ jbyte* data=(*env)->GetByteArrayElements(env,input,0);if(!data)return response(env,NULL);
+ char* result=IotoolsCommand((char*)data,n);(*env)->ReleaseByteArrayElements(env,input,data,JNI_ABORT);return response(env,result);
 }
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_resize(JNIEnv *env,jclass cls,jint cols,jint rows){return IotoolsResize(cols,rows);}
-JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_stop(JNIEnv *env,jclass cls){IotoolsStop();}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_state(JNIEnv *env,jclass cls){return IotoolsState();}
-JNIEXPORT jstring JNICALL Java_io_github_liveyum_iotools_NativeRuntime_error(JNIEnv *env,jclass cls){char *p=IotoolsError();jstring s=(*env)->NewStringUTF(env,p);free(p);return s;}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_importConfig(JNIEnv *env,jclass cls,jstring stage,jstring target){
- const char *a=(*env)->GetStringUTFChars(env,stage,0);const char *b=(*env)->GetStringUTFChars(env,target,0);
- int r=-1;if(a&&b)r=IotoolsImport((char*)a,(char*)b);
- if(a)(*env)->ReleaseStringUTFChars(env,stage,a);if(b)(*env)->ReleaseStringUTFChars(env,target,b);return r;
+JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_lifecycle(JNIEnv* env,jclass cls,jint action){IotoolsLifecycle(action);}
+
+/* Retained application class reference avoids class-loader lookup on Go threads. */
+static JavaVM* usb_vm;
+static jclass usb_class;
+static jmethodID usb_exchange;
+static jmethodID usb_close;
+static void init_usb(JNIEnv* env){
+ if(usb_class)return;
+ jclass local=(*env)->FindClass(env,"io/github/liveyum/iotools/UsbSerialTransport");
+ if(!local){(*env)->ExceptionClear(env);return;}
+ (*env)->GetJavaVM(env,&usb_vm);
+ usb_class=(*env)->NewGlobalRef(env,local);(*env)->DeleteLocalRef(env,local);
+ usb_exchange=(*env)->GetStaticMethodID(env,usb_class,"exchange","(Ljava/lang/String;[BIIILjava/lang/String;I)[B");
+ usb_close=(*env)->GetStaticMethodID(env,usb_class,"close","()V");
+ if((*env)->ExceptionCheck(env)){(*env)->ExceptionClear(env);usb_exchange=NULL;usb_close=NULL;}
 }
-
-JNIEXPORT jstring JNICALL Java_io_github_liveyum_iotools_NativeRuntime_clipboard(JNIEnv *env,jclass cls){char *p=IotoolsClipboard();jstring s=(*env)->NewStringUTF(env,p);free(p);return s;}
-
-JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_pause(JNIEnv *env,jclass cls){IotoolsPause();}
-JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_resume(JNIEnv *env,jclass cls){IotoolsResume();}
-JNIEXPORT void JNICALL Java_io_github_liveyum_iotools_NativeRuntime_options(JNIEnv *env,jclass cls,jint flags,jstring path){const char*p=(*env)->GetStringUTFChars(env,path,0);if(p){IotoolsOptions(flags,(char*)p);(*env)->ReleaseStringUTFChars(env,path,p);}}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_validate(JNIEnv *env,jclass cls,jstring path){const char*p=(*env)->GetStringUTFChars(env,path,0);if(!p)return -1;int r=IotoolsValidate((char*)p);(*env)->ReleaseStringUTFChars(env,path,p);return r;}
-
-JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_frame(JNIEnv *env,jclass cls){int n=0;void*p=IotoolsFrame(&n);if(n<0||n>4*1024*1024){free(p);return (*env)->NewByteArray(env,0);}jbyteArray out=(*env)->NewByteArray(env,n);if(out&&n&&p)(*env)->SetByteArrayRegion(env,out,0,n,(jbyte*)p);free(p);return out;}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_paste(JNIEnv *env,jclass cls,jbyteArray data){jsize n=(*env)->GetArrayLength(env,data);if(n>65536)return -1;jbyte*p=(*env)->GetByteArrayElements(env,data,0);if(!p)return -1;int r=IotoolsPaste((char*)p,n);(*env)->ReleaseByteArrayElements(env,data,p,JNI_ABORT);return r;}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_key(JNIEnv *env,jclass cls,jstring name,jint rune,jint mods){const char*p=(*env)->GetStringUTFChars(env,name,0);if(!p)return -1;int r=IotoolsKey((char*)p,rune,mods);(*env)->ReleaseStringUTFChars(env,name,p);return r;}
-JNIEXPORT jint JNICALL Java_io_github_liveyum_iotools_NativeRuntime_mouse(JNIEnv *env,jclass cls,jint x,jint y,jboolean down){return IotoolsMouse(x,y,down?1:0);}
+static JNIEnv* usb_env(int* attached){
+ *attached=0;if(!usb_vm)return NULL;JNIEnv* env=NULL;
+ jint status=(*usb_vm)->GetEnv(usb_vm,(void**)&env,JNI_VERSION_1_6);
+ if(status==JNI_EDETACHED){if((*usb_vm)->AttachCurrentThread(usb_vm,&env,NULL)!=JNI_OK)return NULL;*attached=1;}
+ else if(status!=JNI_OK)return NULL;return env;
+}
+int IotoolsUSBExchange(char* endpoint,void* bytes,int n,int baud,int bits,int stops,char* parity,int timeout,void* output,int capacity){
+ int attached=0;JNIEnv* env=usb_env(&attached);if(!env||!usb_exchange)return -1;
+ if((*env)->PushLocalFrame(env,8)!=JNI_OK){if(attached)(*usb_vm)->DetachCurrentThread(usb_vm);return -2;}
+ int result=-3;jstring name=(*env)->NewStringUTF(env,endpoint);jstring p=(*env)->NewStringUTF(env,parity);jbyteArray input=(*env)->NewByteArray(env,n);
+ if(name&&p&&input){(*env)->SetByteArrayRegion(env,input,0,n,(jbyte*)bytes);
+ jbyteArray data=(jbyteArray)(*env)->CallStaticObjectMethod(env,usb_class,usb_exchange,name,input,baud,bits,stops,p,timeout);
+ if((*env)->ExceptionCheck(env)){(*env)->ExceptionClear(env);result=-4;}
+ else if(data){jsize count=(*env)->GetArrayLength(env,data);if(count>=0&&count<=capacity){(*env)->GetByteArrayRegion(env,data,0,count,(jbyte*)output);result=count;}}
+ }
+ if((*env)->ExceptionCheck(env)){(*env)->ExceptionClear(env);result=-5;}
+ (*env)->PopLocalFrame(env,NULL);if(attached)(*usb_vm)->DetachCurrentThread(usb_vm);return result;
+}
+void IotoolsUSBClose(void){
+ int attached=0;JNIEnv* env=usb_env(&attached);if(!env||!usb_close)return;
+ (*env)->CallStaticVoidMethod(env,usb_class,usb_close);if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+ if(attached)(*usb_vm)->DetachCurrentThread(usb_vm);
+}

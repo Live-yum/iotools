@@ -1,9 +1,9 @@
 name: Android standalone APK
 on:
   push:
-    branches: ['feat/android-standalone-apk', 'feat/android-native-canvas']
+    branches: ['feat/android-modern-app']
   pull_request:
-    paths: ['android/**', 'internal/mobile/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'internal/tui/clipboard*']
+    paths: ['android/**', 'internal/mobileapi/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'internal/engine/**', 'internal/config/**', 'internal/crypto/**', 'go.mod', 'go.sum']
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,17 +37,20 @@ jobs:
           cat "$ndk/source.properties"
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Build embedded Go libraries
-        run: bash scripts/android/build-native.sh
-      - name: Bundle offline terminal assets and licenses
+        run: |
+          python3 scripts/android/verify-modern.py
+          bash scripts/android/build-native.sh
+      - name: Bundle Chinese help and licenses
         run: |
           bash scripts/android/prepare-assets.sh
-          go run ./scripts/notices android/app/src/main/assets/THIRD_PARTY_LICENSES
+          go run ./scripts/notices android/app/src/main/assets/THIRD_PARTY_LICENSES ./internal/mobileapi golang.org/x/crypto/x509roots/fallback
       - name: Build debug-signed standalone APK
         run: gradle -p android --no-daemon assembleDebug assembleDebugAndroidTest
       - name: Verify APK signature and permissions
         id: verify_apk
         run: |
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          python3 scripts/android/verify-modern.py android/app/build/outputs/apk/debug/app-debug.apk
           "$tools/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/debug/app-debug.apk
           "$tools/aapt" dump permissions android/app/build/outputs/apk/debug/app-debug.apk
           "$tools/zipalign" -c -P 16 -v 4 android/app/build/outputs/apk/debug/app-debug.apk
@@ -95,5 +98,6 @@ jobs:
             android-evidence/
             android/app/build/reports/androidTests/
             android/native-*.txt
+            android/dependencies-*.txt
           if-no-files-found: error
           retention-days: 14

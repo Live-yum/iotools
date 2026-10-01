@@ -1,0 +1,21 @@
+<resources>
+    <item type="id" name="nav_requests" />
+    <item type="id" name="nav_workspace" />
+    <item type="id" name="nav_history" />
+    <item type="id" name="nav_settings" />
+    <item type="id" name="request_list" />
+    <item type="id" name="request_name" />
+    <item type="id" name="request_id" />
+    <item type="id" name="request_endpoint" />
+    <item type="id" name="request_timeout" />
+    <item type="id" name="request_action" />
+    <item type="id" name="run_request" />
+    <item type="id" name="cancel_request" />
+    <item type="id" name="save_request" />
+    <item type="id" name="yaml_editor" />
+    <item type="id" name="save_yaml" />
+    <item type="id" name="result_list" />
+    <item type="id" name="runtime_status" />
+    <item type="id" name="search_requests" />
+    <item type="id" name="new_request" />
+</resources>

@@ -59,6 +59,11 @@ func GenerateCurl(ctx context.Context, c *config.Collection, r config.Request, p
 	if e != nil {
 		return "", e
 	}
+	if w.options.ValidateRequest != nil {
+		if e = w.options.ValidateRequest(resolved); e != nil {
+			return "", e
+		}
+	}
 	return curlForRequest(resolved)
 }
 func shellQuote(value string) (string, error) {

@@ -79,4 +79,4 @@ response_transform:
 
 `go test ./internal/crypto ./internal/engine` 覆盖 fork 的四组独立 .NET 已知答案（空串、手机号、中文、整块）、全部 AES 密钥长度/模式/传输编码往返、材料编码、非法 Base64/长度/填充、指定错误密钥向量、路径缺失/冲突、大整数、事务回滚、真实本机 HTTP 的 JSON/header/query 编码和原始/派生视图分离。CBC/ECB 测试不构成认证安全保证。
 
-本工具采用统一 iotools YAML，而非直接加载 Slumber 集合：crypto 放在请求 params 内，环境变量用 `${env:NAME}`。目前不支持 Slumber `{{ ... }}` 模板函数语言、response() 自动登录串联、文件模板、集合导入、JaQ 查询、SQLite 控制台、完整 Slumber profiles 结构或 `--transformed` CLI 语义。不能据此宣称完整 Slumber 功能已对齐；其余差异需继续逐项实现验收。
+原生配置将 crypto 放在请求 params 内；也支持直接加载 Slumber 集合及相应导入流程。模板、请求链、文件函数、profiles、jq 查询与 SQLite 历史已实现，准确语义和兼容边界见 [HTTP 工作流](http-slumber.md) 和 [功能矩阵](capabilities.md)。本页专门说明加解密，不替代其他功能文档。
