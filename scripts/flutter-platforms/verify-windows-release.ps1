@@ -21,7 +21,11 @@ $compilerReferences = @(Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Fi
 if (@($compilerReferences | Where-Object { [IO.Path]::GetFileName($_) -eq 'Accessibility.dll' }).Count -eq 0) {
   $compilerReferences += [Accessibility.IAccessible].Assembly.Location
 }
-Add-Type -ReferencedAssemblies $compilerReferences @'
+# The Windows Accessibility interop assembly targets the older System.Runtime
+# identity. It is already loaded by this PowerShell host; its COM ABI is fixed.
+# Suppress only that reference-unification warning, never compilation errors or
+# the actual MSAA/Release execution checks below.
+Add-Type -ReferencedAssemblies $compilerReferences -CompilerOptions '/nowarn:1701' @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
