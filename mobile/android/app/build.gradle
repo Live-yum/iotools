@@ -2,7 +2,7 @@ plugins { id 'com.android.application'; id 'dev.flutter.flutter-gradle-plugin' }
 android {
  namespace 'io.github.liveyum.iotools'
  buildFeatures { buildConfig true }
- compileSdk 35
+ compileSdk 36
  ndkVersion '28.1.13356709'
  defaultConfig {
   applicationId 'io.github.liveyum.iotools'
@@ -14,7 +14,6 @@ android {
   if (!(sourceSha ==~ /[a-zA-Z0-9._-]+/)) throw new GradleException('Invalid build revision')
   buildConfigField 'String', 'GIT_SHA', '"' + sourceSha + '"'
   testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
-  ndk { abiFilters 'arm64-v8a', 'x86_64' }
  }
  buildTypes { debug { debuggable true }; release { signingConfig signingConfigs.debug } }
  packaging { jniLibs { useLegacyPackaging = false } }
