@@ -13,7 +13,10 @@ class AppSession extends ChangeNotifier {
   final Map<String, Map<String, JsonMap>> _collectionDrafts = {};
   final Map<String, String> _collectionSources = {};
   Future<Object?> Function(String, JsonMap)? transfer;
-  String get currentCollection => state['path']?.toString() ?? 'iotools.yaml';
+  String get currentCollection =>
+      state['path']?.toString() ??
+      preferences['collection']?.toString() ??
+      'iotools.yaml';
   final List<JsonMap> events = [];
   JsonMap? originalResultRequest, resultRequest;
   String? originalRequestId;
@@ -25,6 +28,7 @@ class AppSession extends ChangeNotifier {
   Timer? _timer, _visualTimer;
   DateTime _lastVisual = DateTime.fromMillisecondsSinceEpoch(0);
   int _epoch = 0;
+  bool _opening = false;
   final _stream = StreamController<JsonMap>.broadcast(sync: true);
   Stream<JsonMap> get eventStream => _stream.stream;
   bool get readOnly => mapOf(state['options'])['read_only'] == true;
@@ -33,46 +37,124 @@ class AppSession extends ChangeNotifier {
   List<JsonMap> get requests => rowsOf(state['requests']);
   Future<Object?> command(JsonMap c) => engine.command(c);
   Future<void> initialize() async {
+    if (disposed || _opening) return;
     try {
-      final settings = preferences = mapOf(
-        await platform.invoke('settings.get'),
-      );
-      state = await engine.open(
-        readOnly: settings['readOnly'] == true,
-        history: settings['history'] == true,
-      );
-      final selected = settings['collection']?.toString();
-      if (selected != null &&
-          selected.isNotEmpty &&
-          selected != 'iotools.yaml') {
-        final p = mapOf(
-          await command({
-            'op': 'config.switch',
-            'path': selected,
-            'confirmed': false,
-          }),
-        );
-        state = mapOf(
-          await command({
-            'op': 'config.switch',
-            'path': selected,
-            'token': p['token'],
-            'confirmed': true,
-          }),
-        );
+      preferences = mapOf(await platform.invoke('settings.get'));
+      await _openConfigured(preferences['collection']?.toString());
+    } catch (e) {
+      if (disposed) return;
+      ready = false;
+      error = '$e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> recoverCollection(String path) async {
+    if (ready) throw const EngineException('请在文件工作区切换已打开的集合');
+    final root = preferences['root']?.toString() ?? '';
+    var relative = path;
+    if (root.isNotEmpty && path.startsWith('$root/')) {
+      relative = path.substring(root.length + 1);
+    }
+    if (relative.isEmpty ||
+        relative.startsWith('/') ||
+        relative.contains('\\') ||
+        relative.contains(':') ||
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(relative) ||
+        relative.split('/').any((p) => p.isEmpty || p == '.' || p == '..')) {
+      throw const EngineException('请选择应用私有目录内的有效集合');
+    }
+    await _openConfigured(relative, remember: true);
+  }
+
+  Future<void> _openConfigured(String? path, {bool remember = false}) async {
+    if (disposed || paused || _opening) {
+      throw const EngineException('应用未就绪或正在打开文件，请稍后重试');
+    }
+    _opening = true;
+    final openingEpoch = ++_epoch;
+    _timer?.cancel();
+    _visualTimer?.cancel();
+    void ensureCurrent() {
+      if (disposed || paused || openingEpoch != _epoch) {
+        throw const EngineException('打开已因应用生命周期变化而取消，请重试');
       }
-      if (disposed) return;
-      catalog = mapOf(await command({'op': 'catalog'}));
-      await refreshSource();
-      if (disposed) return;
+    }
+
+    String collectionKey(String value) {
+      final root = preferences['root']?.toString() ?? '';
+      return root.isNotEmpty && !value.startsWith('/') ? '$root/$value' : value;
+    }
+
+    final oldKey = collectionKey(currentCollection);
+    Future<void> requireExisting(String candidate) async {
+      final expected = collectionKey(candidate);
+      final files = rowsOf(await platform.invoke('files.list'));
+      ensureCurrent();
+      if (!files.any(
+        (file) => collectionKey(file['path']?.toString() ?? '') == expected,
+      )) {
+        throw const EngineException('所选集合不存在或不可访问，原配置未修改');
+      }
+    }
+
+    try {
+      if (remember) await requireExisting(path!);
+      // The Android bridge supplies the immutable app-private root separately
+      // from this selected file. Explicit paths require an existing file.
+      final next = await engine.open(
+        readOnly: preferences['readOnly'] == true,
+        history: preferences['history'] == true,
+        path:
+            !remember &&
+                (path == null || path.isEmpty || path == 'iotools.yaml')
+            ? null
+            : path,
+      );
+      ensureCurrent();
+      final nextCatalog = mapOf(await command({'op': 'catalog'}));
+      ensureCurrent();
+      final config = mapOf(await command({'op': 'config.get'}));
+      ensureCurrent();
+      if (remember) {
+        await platform.invoke('settings.save', {'collection': path});
+        preferences = {...preferences, 'collection': path};
+      }
+      ensureCurrent();
+      _collectionDrafts[oldKey] = {
+        for (final entry in drafts.entries) entry.key: cloneMap(entry.value),
+      };
+      if (source != savedSource) _collectionSources[oldKey] = source;
+      state = next;
+      catalog = nextCatalog;
+      final nextKey = collectionKey(currentCollection);
+      drafts
+        ..clear()
+        ..addAll(_collectionDrafts[nextKey] ?? {});
+      source = savedSource = config['source']?.toString() ?? '';
+      source = _collectionSources[nextKey] ?? source;
+      draft = {};
+      originalRequestId = null;
+      resultRunId = '';
+      resultRequest = null;
+      originalResultRequest = null;
+      resultOverrides = null;
+      events.clear();
+      status = '尚未执行';
       ready = true;
       error = null;
       _timer = Timer.periodic(const Duration(milliseconds: 250), (_) => poll());
       notifyListeners();
     } catch (e) {
-      if (disposed) return;
-      error = '$e';
-      notifyListeners();
+      await engine.close();
+      if (!disposed) {
+        ready = false;
+        error = '$e';
+        notifyListeners();
+      }
+      rethrow;
+    } finally {
+      _opening = false;
     }
   }
 
@@ -316,6 +398,13 @@ class AppSession extends ChangeNotifier {
 
   Future<void> resume() async {
     final epoch = ++_epoch;
+    if (!ready) {
+      if (!disposed) {
+        paused = false;
+        notifyListeners();
+      }
+      return;
+    }
     await engine.resume();
     final next = mapOf(await command({'op': 'state'}));
     if (disposed || epoch != _epoch) return;

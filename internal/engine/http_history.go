@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "modernc.org/sqlite"
 	"net/http"
 	"net/url"
 	"os"

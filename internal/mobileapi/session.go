@@ -35,6 +35,13 @@ type Options struct {
 	ReadOnly     bool                      `json:"read_only"`
 	History      bool                      `json:"history"`
 	RTUTransport engine.ModbusRTUTransport `json:"-"`
+	// PrivateRoot is supplied only by the trusted platform host at Open. It
+	// keeps recovery of a nested collection inside the original private sandbox.
+	// JSON commands cannot set it or change a session's root after opening.
+	PrivateRoot string `json:"-"`
+	// RequireExisting distinguishes recovery from first-launch initialization.
+	// Only the trusted platform host can select this behavior.
+	RequireExisting bool `json:"-"`
 }
 
 type queuedEvent struct {
@@ -108,7 +115,14 @@ func Open(path, version string, options Options) (*Session, error) {
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("configuration path must be absolute and app-private")
 	}
-	root := filepath.Dir(filepath.Clean(path))
+	path = filepath.Clean(path)
+	root := filepath.Dir(path)
+	if options.PrivateRoot != "" {
+		if !filepath.IsAbs(options.PrivateRoot) {
+			return nil, errors.New("app-private root must be absolute")
+		}
+		root = filepath.Clean(options.PrivateRoot)
+	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
 		return nil, errors.New("app-private configuration directory does not exist")
@@ -117,11 +131,26 @@ func Open(path, version string, options Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{path: filepath.Join(real, filepath.Base(path)), root: real, version: version, options: options, previews: map[string]preview{}, subscriptions: map[string]*subscription{}, results: map[string]cachedResult{}, interactions: map[string]chan interactionReply{}, events: []json.RawMessage{}}
+	rel, err := filepath.Rel(root, path)
+	outside := func(name string, err error) bool {
+		return err != nil || name == ".." || strings.HasPrefix(name, ".."+string(os.PathSeparator))
+	}
+	if outside(rel, err) && options.PrivateRoot != "" {
+		// The platform may restore the canonical path while supplying its usual
+		// root alias (for example Android's /data/user/0 app-private directory).
+		rel, err = filepath.Rel(real, path)
+	}
+	if outside(rel, err) {
+		return nil, errors.New("configuration path is outside the app-private directory")
+	}
+	s := &Session{path: filepath.Join(real, rel), root: real, version: version, options: options, previews: map[string]preview{}, subscriptions: map[string]*subscription{}, results: map[string]cachedResult{}, interactions: map[string]chan interactionReply{}, events: []json.RawMessage{}}
 	if err = s.privatePath(s.path); err != nil {
 		return nil, err
 	}
 	if _, err = os.Lstat(s.path); os.IsNotExist(err) {
+		if options.RequireExisting {
+			return nil, fmt.Errorf("recovery configuration does not exist: %w", err)
+		}
 		f, e := os.OpenFile(s.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if e != nil {
 			return nil, e

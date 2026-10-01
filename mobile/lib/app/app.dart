@@ -90,6 +90,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   late StreamSubscription<JsonMap> subscription;
   final yaml = TextEditingController();
   BuildContext? interactionContext;
+  BuildContext? startupDialogContext;
+  String? startupRecoveryError;
   final List<JsonMap> _interactions = [];
   @override
   void initState() {
@@ -116,11 +118,187 @@ class _WorkspaceShellState extends State<WorkspaceShell>
         state == AppLifecycleState.detached) {
       _interactions.clear();
       if (interactionContext != null) Navigator.of(interactionContext!).pop();
+      if (startupDialogContext != null &&
+          ModalRoute.of(startupDialogContext!)?.isCurrent == true) {
+        Navigator.of(startupDialogContext!).pop();
+      }
       s.pause();
     } else if (state == AppLifecycleState.resumed) {
       s.resume();
     }
   }
+
+  Future<void> startupAction(Future<void> Function() action) async {
+    if (busy || s.ready) return;
+    setState(() {
+      busy = true;
+      startupRecoveryError = null;
+    });
+    try {
+      await action();
+    } catch (error) {
+      if (mounted) setState(() => startupRecoveryError = '$error');
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<T?> startupDialog<T>(WidgetBuilder builder) async {
+    try {
+      return await memoryDialog<T>(
+        context: context,
+        builder: (c) {
+          startupDialogContext = c;
+          return builder(c);
+        },
+      );
+    } finally {
+      startupDialogContext = null;
+    }
+  }
+
+  String startupFileLabel(String path) {
+    final root = s.preferences['root']?.toString() ?? '';
+    return root.isNotEmpty && path.startsWith('$root/')
+        ? path.substring(root.length + 1)
+        : path;
+  }
+
+  Future<void> chooseStartupCollection({bool importing = false}) async {
+    String? path;
+    if (importing) {
+      final selected = mapOf(
+        await transferFile(context, s.platform, 'files.pick', {
+          'limit': 4194304,
+        }),
+      );
+      if (selected.isEmpty || !mounted || s.paused) return;
+      path = selected['path']?.toString();
+    } else {
+      final epoch = s.epoch;
+      final files = rowsOf(await s.platform.invoke('files.list'));
+      if (!mounted || s.paused || epoch != s.epoch) return;
+      path = await startupDialog<String>(
+        (c) => AlertDialog(
+          title: const Text('选择私有集合'),
+          content: SizedBox(
+            width: 600,
+            height: 360,
+            child: files.isEmpty
+                ? const Center(child: Text('尚无私有文件，请返回并导入有效的 iotools 配置。'))
+                : ListView.builder(
+                    itemCount: files.length,
+                    itemBuilder: (c, index) {
+                      final file = files[index];
+                      final candidate = file['path']?.toString() ?? '';
+                      return ListTile(
+                        key: ValueKey('startup_file_$candidate'),
+                        leading: const Icon(Icons.description_outlined),
+                        title: Text(startupFileLabel(candidate)),
+                        subtitle: Text('${file['size'] ?? '?'} 字节'),
+                        onTap: candidate.isEmpty
+                            ? null
+                            : () => Navigator.pop(c, candidate),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c),
+              child: const Text('取消'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (path == null || path.isEmpty || !mounted || s.paused) return;
+    final selectedPath = path;
+    final epoch = s.epoch;
+    final accepted = await startupDialog<bool>(
+      (c) => AlertDialog(
+        title: const Text('打开这个集合？'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SelectableText(startupFileLabel(selectedPath)),
+              const SizedBox(height: 12),
+              const Text('先由内核校验，成功后才记住这次选择。原配置保持原样，打开不会执行请求。'),
+              if (importing) const Text('已导入为新的私有副本；取消打开时副本仍保留，可稍后重新选择。'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: const ValueKey('startup_use_collection'),
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('校验并打开'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true || !mounted || s.paused || epoch != s.epoch) return;
+    await s.recoverCollection(selectedPath);
+  }
+
+  Widget startupError() => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 680),
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        shrinkWrap: true,
+        children: [
+          const Icon(Icons.folder_off_outlined, size: 44),
+          const SizedBox(height: 16),
+          Text('无法打开配置', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 12),
+          SelectableText(startupRecoveryError ?? s.error ?? '请重新选择有效配置'),
+          const SizedBox(height: 12),
+          const Text('可重试当前配置，或选择、导入另一个有效的 iotools 集合。损坏文件会保留，不会被重置。'),
+          const SizedBox(height: 20),
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text('正在处理所选文件…'),
+            ),
+          FilledButton.icon(
+            key: const ValueKey('startup_retry'),
+            onPressed: busy ? null : () => startupAction(s.initialize),
+            icon: const Icon(Icons.refresh),
+            label: const Text('重试打开'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('startup_select_collection'),
+            onPressed: busy
+                ? null
+                : () => startupAction(() => chooseStartupCollection()),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('选择私有集合'),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('startup_import_collection'),
+            onPressed: busy
+                ? null
+                : () => startupAction(
+                    () => chooseStartupCollection(importing: true),
+                  ),
+            icon: const Icon(Icons.file_open_outlined),
+            label: const Text('导入配置文件'),
+          ),
+          const SizedBox(height: 8),
+          const Text('导入使用系统文件选择器，最多 4 MiB；只复制所选文件，不覆盖已有文件。'),
+        ],
+      ),
+    ),
+  );
 
   Future<void> interaction(JsonMap event) async {
     if (event['kind'] != 'interaction' || !mounted || s.paused) return;
@@ -310,7 +488,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           appBar: AppBar(title: const Text('iotools')),
           body: s.error == null
               ? const Center(child: CircularProgressIndicator())
-              : EmptyState('无法打开配置', s.error!),
+              : startupError(),
         );
       }
       final titles = ['请求工作台', '执行历史', '设置'];

@@ -24,8 +24,8 @@ func resultError(message string) *C.char {
 }
 
 //export IotoolsOpen
-func IotoolsOpen(path *C.char, n C.int, flags C.int) *C.char {
-	if n < 1 || n > 16384 {
+func IotoolsOpen(path *C.char, n C.int, flags C.int, root *C.char, rootN C.int) *C.char {
+	if n < 1 || n > 16384 || rootN < 0 || rootN > 16384 {
 		return resultError("配置路径无效")
 	}
 	sessionMu.Lock()
@@ -34,7 +34,7 @@ func IotoolsOpen(path *C.char, n C.int, flags C.int) *C.char {
 		current.Close()
 		current = nil
 	}
-	s, err := mobileapi.Open(string(C.GoBytes(unsafe.Pointer(path), n)), version, mobileapi.Options{ReadOnly: int(flags)&1 != 0, History: int(flags)&2 != 0, RTUTransport: androidUSB{}})
+	s, err := mobileapi.Open(string(C.GoBytes(unsafe.Pointer(path), n)), version, mobileapi.Options{RequireExisting: int(flags)&4 != 0, PrivateRoot: string(C.GoBytes(unsafe.Pointer(root), rootN)), ReadOnly: int(flags)&1 != 0, History: int(flags)&2 != 0, RTUTransport: androidUSB{}})
 	if err != nil {
 		return resultError(err.Error())
 	}

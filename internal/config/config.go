@@ -3,6 +3,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,22 @@ type Request struct {
 func Parse(data []byte) (*Collection, error) {
 	if len(data) > 4<<20 {
 		return nil, fmt.Errorf("collection exceeds 4 MiB")
+	}
+	// JSON permits escaped slashes; YAML double-quoted strings do not. Normalize
+	// only a valid JSON document and preserve every other byte, including number
+	// precision and duplicate keys (which the strict YAML decoder rejects).
+	if bytes.Contains(data, []byte(`\/`)) && json.Valid(data) {
+		normalized := make([]byte, 0, len(data))
+		for i := 0; i < len(data); i++ {
+			if data[i] == '\\' && i+1 < len(data) {
+				if data[i+1] != '/' {
+					normalized = append(normalized, data[i])
+				}
+				i++
+			}
+			normalized = append(normalized, data[i])
+		}
+		data = normalized
 	}
 	var c Collection
 	d := yaml.NewDecoder(bytes.NewReader(data))

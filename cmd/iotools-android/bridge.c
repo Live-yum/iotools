@@ -11,11 +11,17 @@ static jbyteArray response(JNIEnv* env,char* data){
  if(result&&n)(*env)->SetByteArrayRegion(env,result,0,(jsize)n,(jbyte*)data);
  free(data);return result;
 }
-JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_openBytes(JNIEnv* env,jclass cls,jbyteArray path,jint flags){
+JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_openBytes(JNIEnv* env,jclass cls,jbyteArray path,jint flags,jbyteArray privateRoot){
  init_usb(env);
  if(!path)return response(env,NULL);jsize n=(*env)->GetArrayLength(env,path);if(n<1||n>16384)return response(env,NULL);
  jbyte* data=(*env)->GetByteArrayElements(env,path,0);if(!data)return response(env,NULL);
- char* result=IotoolsOpen((char*)data,n,flags);(*env)->ReleaseByteArrayElements(env,path,data,JNI_ABORT);return response(env,result);
+ jsize root_n=privateRoot?(*env)->GetArrayLength(env,privateRoot):0;
+ if(root_n<0||root_n>16384){(*env)->ReleaseByteArrayElements(env,path,data,JNI_ABORT);return response(env,NULL);}
+ jbyte* root_data=root_n?(*env)->GetByteArrayElements(env,privateRoot,0):NULL;
+ if(root_n&&!root_data){(*env)->ReleaseByteArrayElements(env,path,data,JNI_ABORT);return response(env,NULL);}
+ char* result=IotoolsOpen((char*)data,n,flags,(char*)root_data,root_n);
+ if(root_data)(*env)->ReleaseByteArrayElements(env,privateRoot,root_data,JNI_ABORT);
+ (*env)->ReleaseByteArrayElements(env,path,data,JNI_ABORT);return response(env,result);
 }
 JNIEXPORT jbyteArray JNICALL Java_io_github_liveyum_iotools_NativeRuntime_commandBytes(JNIEnv* env,jclass cls,jbyteArray input){
  if(!input)return response(env,NULL);jsize n=(*env)->GetArrayLength(env,input);if(n<1||n>8*1024*1024)return response(env,NULL);

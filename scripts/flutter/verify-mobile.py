@@ -25,8 +25,9 @@ if len(sys.argv)>1:
   abis=[abi for abi in ('arm64-v8a','x86_64') if f'lib/{abi}/libflutter.so' in names]
   assert abis,'No supported Flutter ABI'
   for abi in abis:assert f'lib/{abi}/libiotools.so' in names,f'Go engine missing for {abi}'
-  if '--aot' in sys.argv:
-   assert set(abis)=={'arm64-v8a','x86_64'},'AOT acceptance package must contain both supported ABIs'
+  if '--aot' in sys.argv or '--aot-arm64' in sys.argv:
+   expected_abis={'arm64-v8a'} if '--aot-arm64' in sys.argv else {'arm64-v8a','x86_64'}
+   assert set(abis)==expected_abis,'AOT package ABI set differs from its declared artifact'
    assert 'assets/flutter_assets/kernel_blob.bin' not in names,'Development Dart kernel must not enter delivered AOT APK'
    for abi in abis:
     assert f'lib/{abi}/libapp.so' in names,f'AOT application missing for {abi}'
@@ -48,7 +49,7 @@ if len(sys.argv)>1:
     integration_plugin_present |= b'Ldev/flutter/plugins/integration_test/IntegrationTestPlugin;' in data
     for banned in (b'TerminalCanvas',b'Lio/github/liveyum/iotools/NativeUi;',b'Lio/github/liveyum/iotools/AdvancedWorkflows;',b'Lio/github/liveyum/iotools/OpcuaWorkspace;',b'Lio/github/liveyum/iotools/FileFixtureProvider;',b'Lio/github/liveyum/iotools/FixtureGrantReceiver;'):
      assert banned not in data,f'Removed UI class in APK: {banned}'
-  if '--aot' in sys.argv:assert not integration_plugin_present,'Development integration_test plugin must not enter normal AOT APK'
+  if '--aot' in sys.argv or '--aot-arm64' in sys.argv:assert not integration_plugin_present,'Development integration_test plugin must not enter normal AOT APK'
   if '--integration-test' in sys.argv:assert integration_plugin_present,'Debug integration APK must contain the actual screenshot/test plugin'
  print('APK contains actual Flutter engine and shared Go engine; legacy mobile UI absent')
 print('Flutter source isolation passed')

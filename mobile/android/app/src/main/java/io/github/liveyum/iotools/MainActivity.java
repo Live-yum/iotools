@@ -38,7 +38,7 @@ public final class MainActivity extends FlutterActivity {
   if(call.method.equals("pause")){NativeRuntime.pause();UsbSerialTransport.pause();result.success(null);return;}
   if(call.method.equals("resume")){NativeRuntime.resume();UsbSerialTransport.resume();result.success(null);return;}
   if(call.method.equals("close")){NativeRuntime.close();UsbSerialTransport.close();opened=false;result.success(null);return;}
-  if(call.method.equals("open")){work(engineIO,result,()->{String path=call.argument("path");File file=MobileFiles.privateFile(getFilesDir(),new File(path==null?"iotools.yaml":path),false);String response=NativeRuntime.open(file.getAbsolutePath(),BuildConfig.GIT_SHA,Boolean.TRUE.equals(call.argument("readOnly")),Boolean.TRUE.equals(call.argument("history")));opened=true;return response;});return;}
+  if(call.method.equals("open")){work(engineIO,result,()->{String path=call.argument("path");File file=MobileFiles.privateFile(getFilesDir(),new File(path==null?"iotools.yaml":path),false);String response=NativeRuntime.openInRoot(file.getAbsolutePath(),getFilesDir().getCanonicalPath(),BuildConfig.GIT_SHA,Boolean.TRUE.equals(call.argument("readOnly")),Boolean.TRUE.equals(call.argument("history")),path!=null);opened=true;return response;});return;}
   if(call.method.equals("command")){String json=call.argument("json");if(json==null||json.length()>8*1024*1024){result.error("invalid","命令缺失或超过上限",null);return;}work(engineIO,result,()->NativeRuntime.command(json));return;}
   result.notImplemented();
  }

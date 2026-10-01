@@ -90,7 +90,7 @@ public final class AotAcceptanceTest {
         File rootConfig = new File(privateRoot, "iotools.yaml");
         boolean rootExisted = rootConfig.exists();
         byte[] originalRoot = rootExisted ? boundedRead(rootConfig, 4L << 20) : null;
-        File temporary = null;
+        File temporary = null, damaged = null;
         ActivityScenario<MainActivity> scenario = null;
         Throwable primary = null;
         try {
@@ -131,17 +131,40 @@ public final class AotAcceptanceTest {
                 output.write(collection().toString().getBytes(StandardCharsets.UTF_8));
                 output.getFD().sync();
             }
+            damaged = new File(privateRoot, "aot-damaged-" + suffix + ".yaml");
+            assertTrue("损坏夹具必须新建且不得覆盖", damaged.createNewFile());
+            byte[] damagedBytes = "version: 1\nrequests: [\n".getBytes(StandardCharsets.UTF_8);
+            try (FileOutputStream output = new FileOutputStream(damaged)) {
+                output.write(damagedBytes);
+                output.getFD().sync();
+            }
             assertTrue("测试设置保存失败", preferences.edit().putString("theme", "dark")
                 .putBoolean("readOnly", false).putBoolean("history", false)
-                .putString("collection", temporary.getName()).commit());
+                .putString("collection", damaged.getName()).commit());
             JSONObject beforeStartup = metrics(NETWORK_METRICS);
             JSONObject kafkaStartup = metrics(KAFKA_METRICS), opcStartup = metrics(OPC_METRICS);
             Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 .setComponent(new ComponentName(target, MainActivity.class))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             scenario = ActivityScenario.launch(intent);
-            stage = "普通 Flutter 入口启动";
+            stage = "普通 Flutter 冷启动损坏配置恢复";
+            requireText("无法打开配置", UI_TIMEOUT_MS);
+            fixtureUiVisible = true;
+            capture("损坏配置_可见恢复入口");
+            clickLabel("选择私有集合"); reveal(temporary.getName(), true);
+            requireText("打开这个集合？", UI_TIMEOUT_MS); clickLabel("取消");
+            requireText("无法打开配置", UI_TIMEOUT_MS);
+            assertEquals("取消恢复不得更改集合偏好", damaged.getName(), preferences.getString("collection", ""));
+            assertArrayEquals("取消恢复不得修改损坏原文件", damagedBytes, boundedRead(damaged, 4096));
+            report.put("startup_recovery_cancel_preserved_original", true);
+            clickLabel("选择私有集合"); reveal(temporary.getName(), true);
+            requireText("打开这个集合？", UI_TIMEOUT_MS); clickLabel("校验并打开");
             requireText("请求工作台", UI_TIMEOUT_MS);
+            assertEquals("校验成功后必须记住所选集合", temporary.getName(), preferences.getString("collection", ""));
+            assertArrayEquals("成功恢复也不得修改损坏原文件", damagedBytes, boundedRead(damaged, 4096));
+            report.put("startup_recovery_opened_valid_collection", true);
+            report.put("startup_recovery_damaged_file_unchanged", true);
+            stage = "普通 Flutter 入口启动";
             reveal(name("HTTP GET"), false);
             fixtureUiVisible = true;
             JSONObject afterStartup = metrics(NETWORK_METRICS);
@@ -174,6 +197,7 @@ public final class AotAcceptanceTest {
                 NativeRuntime.close();
                 restorePreferences(preferences, originalPreferences);
                 if (temporary != null && temporary.exists() && !temporary.delete()) throw new IllegalStateException("临时集合清理失败");
+                if (damaged != null && damaged.exists() && !damaged.delete()) throw new IllegalStateException("损坏夹具清理失败");
                 if (rootExisted) {
                     byte[] current = rootConfig.exists() ? boundedRead(rootConfig, 4L << 20) : new byte[0];
                     if (!java.util.Arrays.equals(originalRoot, current)) restoreFile(rootConfig, originalRoot);
@@ -454,6 +478,9 @@ public final class AotAcceptanceTest {
         verified.put("normal_entry", report.opt("normal_entry"));
         verified.put("http_post_cancelled_without_write", report.optBoolean("http_post_cancelled_without_write", false));
         verified.put("http_post_confirmed_once", report.optBoolean("http_post_confirmed_once", false));
+        verified.put("startup_recovery_cancel_preserved_original", report.optBoolean("startup_recovery_cancel_preserved_original", false));
+        verified.put("startup_recovery_opened_valid_collection", report.optBoolean("startup_recovery_opened_valid_collection", false));
+        verified.put("startup_recovery_damaged_file_unchanged", report.optBoolean("startup_recovery_damaged_file_unchanged", false));
         JSONObject passed = new JSONObject();
         passed.put("http", pathPassed("http_get") && pathPassed("http_post"));
         for (String protocol : new String[]{"mqtt", "kafka", "modbus", "opcua"}) passed.put(protocol, pathPassed(protocol));
