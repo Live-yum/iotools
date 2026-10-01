@@ -6,6 +6,57 @@ import '../core/json.dart';
 const cyan = Color(0xff24d5ed),
     navy = Color(0xff08141f),
     surface = Color(0xff102333);
+const controlGap = 10.0;
+
+/// Preserve deliberately placed spacers while separating adjacent controls.
+List<Widget> spacedChildren(List<Widget> children, {double gap = controlGap}) {
+  bool spacer(Widget child) =>
+      child is SizedBox && child.child == null && (child.height ?? 0) > 0;
+  EdgeInsets insets(Widget child) {
+    final padding = child is Padding
+        ? child.padding
+        : child is ActionWrap
+        ? child.padding
+        : EdgeInsets.zero;
+    return padding is EdgeInsets ? padding : EdgeInsets.zero;
+  }
+
+  return [
+    for (var index = 0; index < children.length; index++) ...[
+      if (index > 0 && !spacer(children[index - 1]) && !spacer(children[index]))
+        SizedBox(
+          height:
+              (gap -
+                      insets(children[index - 1]).bottom -
+                      insets(children[index]).top)
+                  .clamp(0.0, gap),
+        ),
+      children[index],
+    ],
+  ];
+}
+
+/// Touch actions wrap at the available width and keep each row distinct.
+class ActionWrap extends StatelessWidget {
+  const ActionWrap({
+    required this.children,
+    this.padding = EdgeInsets.zero,
+    super.key,
+  });
+  final List<Widget> children;
+  final EdgeInsetsGeometry padding;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: padding,
+    child: Wrap(
+      spacing: 8,
+      runSpacing: controlGap,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: children,
+    ),
+  );
+}
+
 ThemeData appTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   return ThemeData(
@@ -81,7 +132,7 @@ class Section extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 12),
-          ...children,
+          ...spacedChildren(children),
         ],
       ),
     ),

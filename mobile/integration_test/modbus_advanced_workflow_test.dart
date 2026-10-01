@@ -301,6 +301,10 @@ requests:
         await _closed(tester);
         await _tap(tester, '会话');
         await _tap(tester, '刷新会话统计');
+        await _wait(
+          tester,
+          () => find.text('本次应用会话累计').evaluate().isNotEmpty,
+        );
         expect(find.text('本次应用会话累计'), findsOneWidget);
         await _tap(tester, '关闭');
         expect(tester.takeException(), isNull);

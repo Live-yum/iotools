@@ -621,7 +621,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
         ),
         if ((s.state['profiles'] as List? ?? []).isNotEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: ChoiceField(
               label: '环境变量配置',
               value: s.state['profile']?.toString() ?? '',
@@ -643,7 +643,10 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                           : box.maxWidth > 580
                           ? 2
                           : 1,
-                      mainAxisExtent: 154,
+                      mainAxisExtent:
+                          154 +
+                          (MediaQuery.textScalerOf(context).scale(80) - 80)
+                              .clamp(0, 144),
                       crossAxisSpacing: 12,
                     ),
                     itemCount: list.length,
@@ -712,7 +715,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                                 ),
                                 const SizedBox(height: 5),
                                 Text(
-                                  '${r['action']}  ${redactedEndpoint(r['endpoint']?.toString() ?? '')}',
+                                  '${r['action']}  ${displayEndpoint(r['endpoint']?.toString() ?? '', mapOf(mapOf(s.collection['profiles'])[s.state['profile']]))}',
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(c).textTheme.bodySmall,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../shared/widgets.dart' show ActionWrap;
 import 'modbus_activity.dart';
 import 'modbus_controller.dart';
 import 'modbus_host.dart';
@@ -152,9 +153,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
             Text(
               '${model.dirty ? '● 临时修改，保存后才写入配置' : '本机视图'} · 缓存 ${model.frames.length} 次 · 淘汰 ${model.cache.evicted} 次',
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
+            ActionWrap(
               children: [
                 OutlinedButton(
                   onPressed: () => perform(_layout),
@@ -179,8 +178,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
                 ),
               ],
             ),
-            Wrap(
-              spacing: 8,
+            ActionWrap(
               children: [
                 FilterChip(
                   label: const Text('仅固定'),
@@ -495,8 +493,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
             ],
           ),
         ),
-        Wrap(
-          spacing: 8,
+        ActionWrap(
           children: [
             OutlinedButton(
               onPressed: () => address.text = '-${count.text}',
@@ -779,8 +776,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
                   (v) => refresh(() => order = v),
                 ),
                 mbField('精确数值', value),
-                Wrap(
-                  spacing: 8,
+                ActionWrap(
                   children: [
                     OutlinedButton(
                       onPressed: () {
@@ -799,7 +795,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
                   ],
                 ),
                 if (type == 'u16')
-                  Wrap(
+                  ActionWrap(
                     children: [
                       for (var bit = 0; bit < 16; bit++)
                         FilterChip(

@@ -19,6 +19,7 @@ class _HistoryPageState extends State<HistoryPage> {
   List<JsonMap> entries = [];
   String filter = '';
   bool loading = true;
+  bool databaseExists = false;
   String? error;
   @override
   void initState() {
@@ -28,10 +29,14 @@ class _HistoryPageState extends State<HistoryPage> {
 
   Future<void> load() async {
     try {
+      final status = mapOf(
+        await widget.session.command({'op': 'history.status'}),
+      );
       final r = rowsOf(await widget.session.command({'op': 'history.list'}));
       if (mounted)
         setState(() {
           entries = r;
+          databaseExists = status['exists'] == true;
           loading = false;
           error = null;
         });
@@ -57,8 +62,8 @@ class _HistoryPageState extends State<HistoryPage> {
               child: Text('HTTP 历史当前关闭。可在设置中明确开启；查看历史不会创建数据库。'),
             ),
           ),
-        Wrap(
-          spacing: 8,
+        ActionWrap(
+          padding: const EdgeInsets.only(bottom: 12),
           children: [
             OutlinedButton.icon(
               onPressed: load,
@@ -66,15 +71,24 @@ class _HistoryPageState extends State<HistoryPage> {
               label: const Text('刷新'),
             ),
             OutlinedButton(
-              onPressed: () => sqlDialog(context, widget.session),
+              onPressed: databaseExists && !loading
+                  ? () => sqlDialog(context, widget.session)
+                  : null,
               child: const Text('SQL 查询 / 事务'),
             ),
             OutlinedButton(
-              onPressed: () => collections(),
+              onPressed: databaseExists && !loading
+                  ? () => collections()
+                  : null,
               child: const Text('集合管理'),
             ),
           ],
         ),
+        if (!loading && !databaseExists)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('暂无历史数据库，SQL 与集合管理暂不可用。开启 HTTP 历史并执行请求后即可使用。'),
+          ),
         TextField(
           decoration: const InputDecoration(labelText: '筛选请求 / 状态 / 时间'),
           onChanged: (v) => setState(() => filter = v),

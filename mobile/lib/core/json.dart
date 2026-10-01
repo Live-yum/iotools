@@ -124,24 +124,39 @@ class _Parser {
   }
 }
 
+final _secretEndpointKey = RegExp(
+  r'token|password|passwd|secret|api.?key|authorization|credential',
+  caseSensitive: false,
+);
+
+/// Display only: resolve ordinary profile variables, never environment or
+/// executable templates. Preserve unknown placeholders rather than URI-encode.
+String displayEndpoint(String input, JsonMap variables) {
+  final resolved = input.replaceAllMapped(RegExp(r'\$\{([^}]+)\}'), (m) {
+    final key = m.group(1)!;
+    if (_secretEndpointKey.hasMatch(key)) return '••••';
+    if (key.startsWith('env:')) return m.group(0)!;
+    return variables[key]?.toString() ?? m.group(0)!;
+  });
+  final safe = redactedEndpoint(resolved);
+  return resolved.contains(RegExp(r'\$\{|\{\{')) ? '$safe（待解析变量）' : safe;
+}
+
 String redactedEndpoint(String input) {
-  try {
-    final u = Uri.parse(input);
-    final secret = RegExp(
-      r'token|password|passwd|secret|api.?key|authorization',
-      caseSensitive: false,
-    );
-    return u
-        .replace(
-          userInfo: u.userInfo.isEmpty ? '' : '••••',
-          queryParameters: u.hasQuery
-              ? u.queryParameters.map(
-                  (k, v) => MapEntry(k, secret.hasMatch(k) ? '••••' : v),
-                )
-              : null,
-        )
-        .toString();
-  } catch (_) {
-    return input;
-  }
+  // Work on the original text. Uri.toString would encode template braces and
+  // can introduce empty query/fragment markers on non-HTTP protocol addresses.
+  var result = input.replaceFirstMapped(
+    RegExp(r'^([a-zA-Z][a-zA-Z0-9+.-]*://)[^/?#]*@'),
+    (m) => '${m.group(1)}••••@',
+  );
+  result = result.replaceAllMapped(RegExp(r'([?&])([^=&#]+)=([^&#]*)'), (m) {
+    var key = m.group(2)!;
+    try {
+      key = Uri.decodeQueryComponent(key);
+    } catch (_) {}
+    return _secretEndpointKey.hasMatch(key)
+        ? '${m.group(1)}${m.group(2)}=••••'
+        : m.group(0)!;
+  });
+  return result;
 }

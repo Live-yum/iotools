@@ -64,8 +64,7 @@ class _ResultPageState extends State<ResultPage> {
             '缓冲区淘汰 ${s.dropped} 条事件 · 完整结果缓存淘汰 ${s.evicted} 项',
             style: const TextStyle(color: Colors.amber),
           ),
-        Wrap(
-          spacing: 8,
+        ActionWrap(
           children: [
             OutlinedButton.icon(
               onPressed: () => copyText(context, pretty(s.events)),
@@ -655,8 +654,7 @@ class _MqttBrowserState extends State<MqttBrowser> {
                 Text(
                   '最小 ${points.reduce(math.min)} · 最大 ${points.reduce(math.max)} · ${points.length} 个点',
                 ),
-              Wrap(
-                spacing: 8,
+              ActionWrap(
                 children: [
                   TextButton(
                     onPressed: () => guarded(

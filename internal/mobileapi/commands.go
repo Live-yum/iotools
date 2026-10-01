@@ -248,7 +248,7 @@ func (s *Session) command(c command) (any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		return engine.FilterJSON(ctx, c.Query, []byte(c.Data))
-	case "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
+	case "history.status", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
 		return s.history(c)
 	case "crypto.convert":
 		if len(c.Data) > 4<<20 {
@@ -483,12 +483,26 @@ func (s *Session) selected(c command) (*config.Collection, config.Request, strin
 	return collection, r, profile, nil
 }
 func (s *Session) history(c command) (any, error) {
+	if s.options.ReadOnly && (c.Op == "history.delete" || c.Op == "history.execute") {
+		return nil, errors.New("只读模式禁止修改历史数据库")
+	}
 	path := filepath.Join(s.root, "history.sqlite")
 	if e := s.privatePath(path); e != nil {
 		return nil, e
 	}
-	if _, e := os.Stat(path); os.IsNotExist(e) && c.Op == "history.list" {
-		return []any{}, nil
+	info, statErr := os.Stat(path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, errors.New("无法读取历史数据库，请检查应用内历史文件")
+	}
+	exists := statErr == nil && info.Mode().IsRegular()
+	if c.Op == "history.status" {
+		return map[string]any{"exists": exists, "enabled": s.options.History}, nil
+	}
+	if !exists {
+		if c.Op == "history.list" || c.Op == "history.collections" {
+			return []any{}, nil
+		}
+		return nil, errors.New("暂无历史数据库：请在设置中开启 HTTP 历史并执行一次请求后使用此功能")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

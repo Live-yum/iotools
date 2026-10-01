@@ -9,7 +9,11 @@ class AppSession extends ChangeNotifier {
   AppSession(this.engine, this.platform);
   final Engine engine;
   final PlatformServices platform;
-  JsonMap state = {}, catalog = {}, draft = {}, preferences = {};
+  JsonMap state = {},
+      catalog = {},
+      draft = {},
+      preferences = {},
+      collection = {};
   final Map<String, JsonMap> drafts = {};
   final Map<String, Map<String, JsonMap>> _collectionDrafts = {};
   final Map<String, String> _collectionSources = {};
@@ -156,6 +160,7 @@ class AppSession extends ChangeNotifier {
         ..clear()
         ..addAll(_collectionDrafts[nextKey] ?? {});
       source = savedSource = config['source']?.toString() ?? '';
+      collection = mapOf(config['collection']);
       source = _collectionSources[nextKey] ?? source;
       draft = {};
       originalRequestId = null;
@@ -185,6 +190,7 @@ class AppSession extends ChangeNotifier {
   Future<void> refreshSource() async {
     final c = mapOf(await command({'op': 'config.get'}));
     source = savedSource = c['source']?.toString() ?? '';
+    collection = mapOf(c['collection']);
   }
 
   void prepare(JsonMap request) {

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iotools_mobile/app/app.dart';
 import 'support/fake_engine.dart';
+import '../integration_test/action_interaction.dart';
 
 void main() {
   setUpAll(() async {
@@ -177,8 +178,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('nav_settings')));
       await tester.pumpAndSettle();
       final attachment = find.text('导入附件（1–8 GiB）');
-      await tester.ensureVisible(attachment);
-      await tester.tap(attachment);
+      await tapReadyControl(tester, attachment);
       await tester.pumpAndSettle();
       await capture(tester, key, 'flutter-file-limit');
       expect(tester.takeException(), isNull);

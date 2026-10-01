@@ -1,3 +1,4 @@
+import 'action_interaction.dart';
 import 'dart:convert';
 import 'modbus_advanced_workflow_test.dart';
 import 'modbus_interaction.dart';
@@ -51,7 +52,9 @@ requests:
           tester,
           () => find.text('Flutter Modbus 整体验收').evaluate().isNotEmpty,
         );
-        final session = tester.widget<WorkspaceShell>(find.byType(WorkspaceShell)).session;
+        final session = tester
+            .widget<WorkspaceShell>(find.byType(WorkspaceShell))
+            .session;
         _sameCounters(initialCounters, await _metrics(), 'startup');
         await _tap(tester, 'Flutter Modbus 整体验收');
         await _tap(tester, '工具');
@@ -132,7 +135,11 @@ requests:
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-        await tester.pump(const Duration(milliseconds: 500));
+        await waitForBackgroundCondition(
+          tester,
+          () async =>
+              mbMap(await engine.command({'op': 'state'}))['paused'] == true,
+        );
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -249,15 +256,28 @@ Future<void> _writeDialog(WidgetTester tester, String value) async {
   await _enter(tester, '精确数值', value);
   await _tap(tester, '预览编码与目标');
   await _wait(tester, () => find.text('确认执行写操作').evaluate().isNotEmpty);
-  final countRow = find.byWidgetPredicate((widget) => widget is Column &&
-      widget.children.any((child) => child is Text && child.data == '数量'));
-  expect(find.descendant(of: countRow, matching: find.byWidgetPredicate(
-      (widget) => widget is SelectableText && widget.data == '1')), findsOneWidget,
-      reason: 'u16 写入预览必须为 1 个字，不沿用读取窗口的 2 个字');
+  final countRow = find.byWidgetPredicate(
+    (widget) =>
+        widget is Column &&
+        widget.children.any((child) => child is Text && child.data == '数量'),
+  );
+  expect(
+    find.descendant(
+      of: countRow,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SelectableText && widget.data == '1',
+      ),
+    ),
+    findsOneWidget,
+    reason: 'u16 写入预览必须为 1 个字，不沿用读取窗口的 2 个字',
+  );
 }
 
 Future<void> _executeAndWait(
-  WidgetTester tester, AppSession session, String label, String action,
+  WidgetTester tester,
+  AppSession session,
+  String label,
+  String action,
 ) async {
   final operation = ModbusOperationWait(session);
   try {

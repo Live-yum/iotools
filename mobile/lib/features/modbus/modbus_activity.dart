@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../shared/widgets.dart' show ActionWrap;
 import 'modbus_host.dart';
 import 'modbus_models.dart';
 import 'modbus_widgets.dart';
@@ -76,8 +77,7 @@ class _ModbusActivityViewState extends State<ModbusActivityView> {
   @override
   Widget build(BuildContext context) => mbCard('本机会话活动', [
     Text('保留 ${log.length} / 200 项 · 淘汰 $evicted 项 · 不记录负载或凭据'),
-    Wrap(
-      spacing: 8,
+    ActionWrap(
       children: [
         FilterChip(
           label: const Text('跟随'),
@@ -107,8 +107,7 @@ class _ModbusActivityViewState extends State<ModbusActivityView> {
         ),
       ),
     ),
-    Wrap(
-      spacing: 8,
+    ActionWrap(
       children: [
         OutlinedButton(
           onPressed: () => Clipboard.setData(ClipboardData(text: text)),

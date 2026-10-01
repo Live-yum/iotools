@@ -318,7 +318,16 @@ requests:
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-        await _subscriptions(tester, engine, 0);
+        await waitForBackgroundCondition(tester, () async {
+          final state = uaMap(await engine.command({'op': 'state'}));
+          final subscriptions = await engine.command({
+            'op': 'subscriptions.list',
+          });
+          return state['paused'] == true &&
+              (subscriptions as List)
+                  .map(uaMap)
+                  .every((row) => row['status'] != 'running');
+        });
         final stopped = await _fixture('/metrics');
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);

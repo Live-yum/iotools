@@ -15,7 +15,7 @@ Future<void> tapReadyControl(WidgetTester tester, Finder finder) async {
           ? widget.onPressed != null
           : true;
       if ((route == null || route.isCurrent) && enabled) {
-        await tester.ensureVisible(finder);
+        await Scrollable.ensureVisible(element, alignment: .5);
         await tester.pump();
         if (finder.hitTestable().evaluate().length == 1) {
           await tester.tap(finder);
@@ -86,4 +86,22 @@ Future<void> enterReadyText(
   );
   await tester.testTextInput.receiveAction(TextInputAction.done);
   await tester.pump();
+}
+
+/// Paused live bindings do not produce frames. Poll only the read-only native
+/// acknowledgement while backgrounded, then resume before requesting a frame.
+Future<void> waitForBackgroundCondition(
+  WidgetTester tester,
+  Future<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  await tester.runAsync(() async {
+    final deadline = DateTime.now().add(timeout);
+    while (!await condition().timeout(timeout)) {
+      if (DateTime.now().isAfter(deadline)) {
+        throw TestFailure('后台内核未在时限内确认停止状态');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  });
 }

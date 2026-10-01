@@ -56,7 +56,7 @@ void main() {
           'name': 'Flutter AES 整体验收',
           'protocol': 'http',
           'action': 'POST',
-          'endpoint': '$endpoint/aes',
+          'endpoint': r'${http}/aes',
           'timeout': '5s',
           'params': {'body': '工业 AES 请求 😀'},
         },
@@ -66,7 +66,7 @@ void main() {
             'name': 'HTTP $name',
             'protocol': 'http',
             'action': 'GET',
-            'endpoint': '$endpoint/$name',
+            'endpoint': r'${http}' + '/$name',
             'timeout': '5s',
           },
       ];
@@ -74,7 +74,9 @@ void main() {
         'op': 'config.save',
         'source': jsonEncode({
           'version': 1,
-          'profiles': {'local': {}},
+          'profiles': {
+            'local': {'http': endpoint},
+          },
           'requests': requests,
         }),
       });
@@ -87,6 +89,28 @@ void main() {
           tester,
           () => find.text('Flutter AES 整体验收').evaluate().isNotEmpty,
         );
+        expect(find.text('POST  $endpoint/aes'), findsOneWidget);
+        expect(find.textContaining(r'$%7B'), findsNothing);
+        await shot(tester, binding, 'flutter-feedback-home-resolved');
+        final historyStatus = mapOf(
+          await engine.command({'op': 'history.status'}),
+        );
+        await tapKey(tester, 'nav_history');
+        await waitFor(
+          tester,
+          () => find.text('SQL 查询 / 事务').evaluate().isNotEmpty,
+        );
+        await waitFor(
+          tester,
+          () => find.byType(LinearProgressIndicator).evaluate().isEmpty,
+        );
+        for (final label in ['SQL 查询 / 事务', '集合管理']) {
+          final button = tester.widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, label),
+          );
+          expect(button.onPressed != null, historyStatus['exists'] == true);
+        }
+        await shot(tester, binding, 'flutter-feedback-history-state');
         await tapKey(tester, 'nav_settings');
         await tapKey(tester, 'history_opt_in');
         await tapText(tester, '开启');
@@ -174,7 +198,11 @@ void main() {
           '${original['source']}\n# $secret',
         );
         pauseTestLifecycle(tester.binding);
-        await tester.pump();
+        await waitForBackgroundCondition(
+          tester,
+          () async =>
+              mapOf(await engine.command({'op': 'state'}))['paused'] == true,
+        );
         resumeTestLifecycle(tester.binding);
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.textContaining(secret), findsOneWidget);

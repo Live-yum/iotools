@@ -37,6 +37,7 @@ class FakeModbusHost extends ChangeNotifier implements ModbusHost {
       saved = <Map<String, dynamic>>[];
   final exports = <String, String>{};
   Completer<void>? heldRun;
+  Completer<Object?>? heldStats;
   Future<bool> Function(Map<String, dynamic>)? review;
   @override
   Map<String, dynamic>? originalRequest(String runId) =>
@@ -82,6 +83,7 @@ class FakeModbusHost extends ChangeNotifier implements ModbusHost {
       case 'modbus.import.apply':
         return {'requests': [], 'backup': 'original.backup.yaml'};
       case 'modbus.stats':
+        if (heldStats != null) return heldStats!.future;
         return {
           'session': {'reads': 2, 'writes': 1, 'errors': 0},
         };
@@ -183,9 +185,11 @@ Future<void> mount(WidgetTester tester, FakeModbusHost host) async {
 }
 
 Future<void> tapText(WidgetTester tester, String text) async {
-  final finder = find.text(text).last;
+  final matches = find.text(text);
+  await revealModbusFinder(tester, matches);
+  final finder = matches.last;
   await Scrollable.ensureVisible(tester.element(finder), alignment: 0.5);
-  await tester.pump();
+  await waitForModbusInteraction(tester, finder);
   await tester.tap(finder);
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -193,6 +197,32 @@ Future<void> tapText(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets('session statistics appear only after the async engine reply', (
+    tester,
+  ) async {
+    final host = FakeModbusHost()..heldStats = Completer<Object?>();
+    await mount(tester, host);
+    await tapText(tester, '会话');
+    await tapText(tester, '刷新会话统计');
+    expect(host.commands.single['op'], 'modbus.stats');
+    expect(find.text('本次应用会话累计'), findsNothing);
+    host.heldStats!.complete({
+      'session': {'reads': 12, 'writes': 4, 'success': 16, 'errors': 0},
+      'operations': 1,
+      'success': 1,
+      'failure': 0,
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('本次应用会话累计'), findsOneWidget);
+    expect(find.text('最近前台操作'), findsOneWidget);
+    expect(find.text('12'), findsOneWidget);
+    expect(find.text('4'), findsOneWidget);
+    expect(host.runs, isEmpty);
+    expect(host.saved, isEmpty);
+    await tapText(tester, '关闭');
+    await tester.pumpWidget(const SizedBox());
+    host.dispose();
+  });
   testWidgets(
     'selecting successful unit 1 does not select sibling exception unit 2',
     (tester) async {
@@ -412,11 +442,13 @@ void main() {
   ) async {
     final host = FakeModbusHost()..readOnly = true;
     await mount(tester, host);
+    await revealModbusFinder(tester, find.byKey(const ValueKey('保存工作区配置')));
     final save = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('保存工作区配置')),
     );
     expect(save.onPressed, isNull);
     await tapText(tester, '操作');
+    await revealModbusFinder(tester, find.byKey(const ValueKey('写入类型数值 / 寄存器')));
     final write = tester.widget<OutlinedButton>(
       find.byKey(const ValueKey('写入类型数值 / 寄存器')),
     );

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../../shared/widgets.dart' show spacedChildren;
 
 /// Wait for reverse transition and overlay disposal before input owners clean up.
 Future<T?> mbDialog<T>({
@@ -90,7 +91,7 @@ Widget mbCard(String title, List<Widget> children) => Card(
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 10),
-        ...children,
+        ...spacedChildren(children),
       ],
     ),
   ),

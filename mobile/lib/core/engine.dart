@@ -27,6 +27,18 @@ class MethodChannelEngine implements Engine {
     this.channel = const MethodChannel('io.github.liveyum.iotools/engine'),
   ]);
   final MethodChannel channel;
+  // All engine handles share one native session. Preserve lifecycle order even
+  // when Widget.dispose cannot await close and the host uses a worker pool.
+  static Future<void> _lifecycle = Future<void>.value();
+  Future<T> _ordered<T>(Future<T> Function() operation) {
+    final result = _lifecycle.then((_) => operation());
+    _lifecycle = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result;
+  }
+
   Object? unwrap(Object? raw) {
     final reply = mapOf(raw is String ? jsonDecode(raw) : raw);
     if (reply['ok'] != true)
@@ -39,17 +51,20 @@ class MethodChannelEngine implements Engine {
     bool readOnly = false,
     bool history = false,
     String? path,
-  }) async => mapOf(
-    unwrap(
-      await channel.invokeMethod('open', {
-        'readOnly': readOnly,
-        'history': history,
-        if (path != null) 'path': path,
-      }),
+  }) => _ordered(
+    () async => mapOf(
+      unwrap(
+        await channel.invokeMethod('open', {
+          'readOnly': readOnly,
+          'history': history,
+          if (path != null) 'path': path,
+        }),
+      ),
     ),
   );
   @override
   Future<Object?> command(JsonMap command) async {
+    await _lifecycle;
     final raw = await channel.invokeMethod('command', {
       'json': exactEncode(command),
     });
@@ -61,17 +76,17 @@ class MethodChannelEngine implements Engine {
 
   @override
   Future<void> pause() async {
-    await channel.invokeMethod('pause');
+    await _ordered(() => channel.invokeMethod<void>('pause'));
   }
 
   @override
   Future<void> resume() async {
-    await channel.invokeMethod('resume');
+    await _ordered(() => channel.invokeMethod<void>('resume'));
   }
 
   @override
   Future<void> close() async {
-    await channel.invokeMethod('close');
+    await _ordered(() => channel.invokeMethod<void>('close'));
   }
 }
 
