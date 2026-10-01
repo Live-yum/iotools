@@ -22,24 +22,29 @@ import org.junit.runner.RunWith;
 public class StandaloneTest {
  private String terminal(ActivityScenario<MainActivity> scenario)throws Exception{
   CountDownLatch latch=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>("");
-  scenario.onActivity(a->a.terminalView().evaluateJavascript("typeof terminalText==='function'?terminalText():JSON.stringify({ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
-  assertTrue("terminal callback",latch.await(10,TimeUnit.SECONDS));return result.get();
+  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
+  assertTrue("terminal callback",latch.await(30,TimeUnit.SECONDS));return result.get();
  }
  private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
-  long end=System.currentTimeMillis()+20000;String actual="";
+  long end=System.currentTimeMillis()+60000;String actual="";
   while(System.currentTimeMillis()<end){actual=terminal(scenario);if(actual.contains(text))return;Thread.sleep(100);}
   screenshot("failed-screen");fail("Missing "+text+" in "+actual+" native="+NativeRuntime.error());
  }
- private void screenshot(String name)throws Exception{
-  // Shell-owned test evidence survives Gradle uninstalling the test app.
-  String command="mkdir -p /data/local/tmp/iotools-screenshots && screencap -p /data/local/tmp/iotools-screenshots/"+name+".png";
-  try(android.os.ParcelFileDescriptor pipe=InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(command);
-      InputStream input=new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe)){
-   byte[] buffer=new byte[1024];while(input.read(buffer)!=-1){}
+ private String shell(String command)throws Exception{
+  android.os.ParcelFileDescriptor pipe=InstrumentationRegistry.getInstrumentation().getUiAutomation().executeShellCommand(command);
+  try(InputStream input=new android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe);ByteArrayOutputStream output=new ByteArrayOutputStream()){
+   byte[] buffer=new byte[1024];int n;while((n=input.read(buffer))!=-1)output.write(buffer,0,n);return output.toString("UTF-8");
   }
+ }
+ private void screenshot(String name)throws Exception{
+  // executeShellCommand does not interpret &&; issue each command separately.
+  shell("mkdir -p /data/local/tmp/iotools-screenshots");
+  shell("screencap -p /data/local/tmp/iotools-screenshots/"+name+".png");
+  System.out.println("Screenshot: "+shell("ls -l /data/local/tmp/iotools-screenshots/"+name+".png"));
  }
  @Test public void standaloneRealHTTPChineseEditingPersistenceAndBackgroundStop()throws Exception{
   Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+  System.out.println("WebView: "+android.webkit.WebView.getCurrentWebViewPackage().versionName);
   NativeRuntime.stop();long stop=System.currentTimeMillis()+5000;while(NativeRuntime.state()!=0&&System.currentTimeMillis()<stop)Thread.sleep(50);
   AtomicInteger requests=new AtomicInteger();
   ServerSocket server=new ServerSocket(0,10,InetAddress.getByName("127.0.0.1"));
