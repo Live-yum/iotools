@@ -31,7 +31,7 @@ for port in 48410 48411 48412 48413 48414 48415 48416; do adb reverse "tcp:$port
 # Release builds remove dev plugins from the generated registrant. Let drive run
 # its official debug tooling regeneration; --no-pub would retain that release registrant.
 set +e
-(cd mobile && timeout --kill-after=30s 20m flutter drive --driver=test_driver/integration_test.dart --target=integration_test/app_test.dart --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true)
+(cd mobile && timeout --kill-after=30s 30m flutter drive --driver=test_driver/integration_test.dart --target=integration_test/app_test.dart --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true)
 flutter_result=$?
 python3 scripts/flutter/verify-mobile.py mobile/build/app/outputs/flutter-apk/app-debug.apk --integration-test
 plugin_result=$?

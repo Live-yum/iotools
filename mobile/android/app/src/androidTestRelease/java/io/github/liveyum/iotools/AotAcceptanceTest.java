@@ -10,6 +10,8 @@ import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.graphics.Rect;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.LargeTest;
@@ -36,6 +38,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -359,11 +362,37 @@ public final class AotAcceptanceTest {
         UiObject2 object = device.findObject(By.text(match));
         return object == null ? device.findObject(By.desc(match)) : object;
     }
-    private UiObject2 requireText(String text, long timeout) {
+    private boolean visibleHintMatches(Pattern pattern) {
+        AccessibilityNodeInfo root = InstrumentationRegistry.getInstrumentation().getUiAutomation().getRootInActiveWindow();
+        if (root == null) return false;
+        ArrayDeque<AccessibilityNodeInfo> pending = new ArrayDeque<>();
+        pending.add(root);
+        int visited = 0;
+        try {
+            while (!pending.isEmpty() && visited++ < 5000) {
+                AccessibilityNodeInfo node = pending.removeFirst();
+                try {
+                    CharSequence hint = node.getHintText();
+                    Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+                    if (PACKAGE.contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
+                            && node.isVisibleToUser() && bounds.intersect(0, 0, device.getDisplayWidth(), device.getDisplayHeight()) && hint != null
+                            && pattern.matcher(hint).find()) return true;
+                    for (int i = 0; i < node.getChildCount() && i < 512 && pending.size() + visited < 5000; i++) {
+                        AccessibilityNodeInfo child = node.getChild(i);
+                        if (child != null) pending.addLast(child);
+                    }
+                } finally { node.recycle(); }
+            }
+            return false;
+        } finally { while (!pending.isEmpty()) pending.removeFirst().recycle(); }
+    }
+    private boolean hasVisibleText(String text) {
+        return contains(text) != null || visibleHintMatches(Pattern.compile(Pattern.quote(text)));
+    }
+    private void requireText(String text, long timeout) {
         long end = SystemClock.elapsedRealtime() + timeout;
         do {
-            UiObject2 object = contains(text);
-            if (object != null) return object;
+            if (hasVisibleText(text)) return;
             SystemClock.sleep(100);
         } while (SystemClock.elapsedRealtime() < end);
         throw new AssertionError("可访问界面未出现预期文本：" + text);
@@ -371,7 +400,7 @@ public final class AotAcceptanceTest {
     private void requirePattern(String regex, long timeout) {
         long end = SystemClock.elapsedRealtime() + timeout;
         do {
-            if (pattern(regex) != null) return;
+            if (pattern(regex) != null || visibleHintMatches(Pattern.compile("(?s)" + regex))) return;
             if (scroll(Direction.DOWN)) SystemClock.sleep(120); else SystemClock.sleep(100);
         } while (SystemClock.elapsedRealtime() < end);
         throw new AssertionError("可访问协议结果未包含预期字段：" + stage);
@@ -402,18 +431,27 @@ public final class AotAcceptanceTest {
         SystemClock.sleep(200);
     }
     private void reveal(String text, boolean click) {
+        // Flutter may merge static card labels into the hint of a selectable
+        // result. Hints are valid read evidence, never an action target.
+        if (!click && hasVisibleText(text)) return;
         UiObject2 object = contains(text);
         if (object == null) {
             for (int i = 0; i < 8 && scroll(Direction.UP); i++) SystemClock.sleep(100);
             for (int i = 0; i < 18; i++) {
+                if (!click && hasVisibleText(text)) return;
                 object = contains(text);
                 if (object != null) break;
                 if (!scroll(Direction.DOWN)) break;
                 SystemClock.sleep(120);
             }
         }
-        if (object == null) object = requireText(text, UI_TIMEOUT_MS);
-        if (click) clickObject(object);
+        if (!click) { requireText(text, UI_TIMEOUT_MS); return; }
+        long end = SystemClock.elapsedRealtime() + UI_TIMEOUT_MS;
+        while (object == null && SystemClock.elapsedRealtime() < end) {
+            object = contains(text); if (object == null) SystemClock.sleep(100);
+        }
+        if (object == null) throw new AssertionError("未找到可点击的明确文本：" + text);
+        clickObject(object);
     }
     private boolean scroll(Direction direction) {
         List<UiObject2> scrolls = new ArrayList<>(device.findObjects(By.scrollable(true)));

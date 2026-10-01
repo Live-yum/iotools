@@ -416,19 +416,7 @@ Future<void> _tapText(WidgetTester tester, String text) async {
 }
 
 Future<void> _enter(WidgetTester tester, String key, String value) async {
-  final f = find.byKey(ValueKey(key));
-  await tester.ensureVisible(f);
-  await tester.pump();
-  await tester.enterText(f, value);
-  await tester.pump();
-  final editable = find.descendant(of: f, matching: find.byType(EditableText));
-  expect(
-    tester.widget<EditableText>(editable).controller.text,
-    value,
-    reason: '真实编辑控件必须收到完整精确输入',
-  );
-  await tester.testTextInput.receiveAction(TextInputAction.done);
-  await tester.pump();
+  await enterReadyText(tester, find.byKey(ValueKey(key)), value);
 }
 
 String _selectable(WidgetTester tester, String key) {

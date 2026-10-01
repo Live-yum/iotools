@@ -177,14 +177,7 @@ requests:
         );
         await _reveal(tester, find.text('协议异常响应'));
         expect(find.text('有响应'), findsOneWidget);
-        final successful = find.ancestor(
-          of: find.text('单元 1'),
-          matching: find.byType(Card),
-        );
-        final select = find.descendant(
-          of: successful,
-          matching: find.text('仅选择此连接与单元到草稿'),
-        );
+        final select = find.byKey(const ValueKey('select_modbus_unit_1'));
         before = await _metrics();
         await _tapFinder(tester, select);
         _same(before, await _metrics(), 'probe result selection');
@@ -223,14 +216,14 @@ requests:
           'address': 0,
           'values': [31],
         });
-        expect(response.status, 403);
+        _expectStatus(response, 403);
         _same(before, await _metrics(), 'read-only HTTP write rejection');
         response = await _api('/read', {
           'type': 'holding',
           'address': 0,
           'count': 2,
         });
-        expect(response.status, 200);
+        _expectStatus(response, 200);
         expect(mbMap(response.body)['values'], [7, 42]);
         _delta(
           before,
@@ -262,27 +255,27 @@ requests:
           'address': 1,
           'values': [99],
         });
-        expect(response.status, 403);
+        _expectStatus(response, 403);
         response = await _api('/write', {
           'type': 'holding',
           'address': 0,
           'values': [31],
           'unit_id': 2,
         });
-        expect(response.status, 403);
+        _expectStatus(response, 403);
         response = await _api('/write', {
           'type': 'holding',
           'address': 0,
           'values': [31],
         }, origin: 'http://127.0.0.1');
-        expect(response.status, 403);
+        _expectStatus(response, 403);
         _same(before, await _metrics(), 'scope/unit/browser-origin rejections');
         response = await _api('/write', {
           'type': 'holding',
           'address': 0,
           'values': [31],
         });
-        expect(response.status, 204);
+        _expectStatus(response, 204);
         _delta(
           before,
           await _metrics(),
@@ -295,14 +288,14 @@ requests:
           'address': 0,
           'count': 1,
         });
-        expect(response.status, 200);
+        _expectStatus(response, 200);
         expect(mbMap(response.body)['values'], [31]);
         response = await _api('/write', {
           'type': 'holding',
           'address': 0,
           'values': [7],
         });
-        expect(response.status, 204);
+        _expectStatus(response, 204);
         await _tap(tester, '停止当前操作');
         await _idle(tester, engine);
         await _closed(tester);
@@ -418,12 +411,28 @@ Future<void> _controller(WidgetTester t, {required bool write}) async {
   }
   await _tap(t, '检查服务范围');
   await _wait(t, () => find.text('明确启动').evaluate().isNotEmpty);
+  for (final entry in {
+    '实际设备': 'tcp://127.0.0.1:48415',
+    '默认设备单元': '1',
+  }.entries) {
+    final row = find.byWidgetPredicate((widget) => widget is Column &&
+        widget.children.any((child) => child is Text && child.data == entry.key));
+    expect(find.descendant(of: row, matching: find.byWidgetPredicate(
+        (widget) => widget is SelectableText && widget.data == entry.value)),
+        findsOneWidget, reason: '控制器必须绑定本次明确选中的回环夹具与单元');
+  }
 }
 
 class _Reply {
   _Reply(this.status, this.body);
   final int status;
   final Object? body;
+}
+
+void _expectStatus(_Reply reply, int expected) {
+  final body = reply.body is String ? reply.body as String : jsonEncode(reply.body);
+  final bounded = body.length > 1024 ? '${body.substring(0, 1024)}…' : body;
+  expect(reply.status, expected, reason: '本机回环控制器响应正文：$bounded');
 }
 
 Future<_Reply> _api(

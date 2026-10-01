@@ -57,4 +57,72 @@ void main() {
       expect(find.text('cancel'), findsNothing);
     },
   );
+  testWidgets(
+    'lifecycle test driver follows strict listener graph and resumes after failure',
+    (tester) async {
+      resumeTestLifecycle(tester.binding);
+      final states = <AppLifecycleState>[];
+      final listener = AppLifecycleListener(
+        binding: tester.binding,
+        onStateChange: states.add,
+      );
+      try {
+        pauseTestLifecycle(tester.binding);
+        pauseTestLifecycle(tester.binding);
+        expect(tester.binding.lifecycleState, AppLifecycleState.paused);
+        resumeTestLifecycle(tester.binding);
+        expect(states, [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]);
+        pauseTestLifecycle(tester.binding);
+      } finally {
+        resumeTestLifecycle(tester.binding);
+        listener.dispose();
+      }
+      expect(tester.binding.lifecycleState, AppLifecycleState.resumed);
+    },
+  );
+  testWidgets(
+    'real IME style repeated editing reopens a closed connection by actual tap',
+    (tester) async {
+      final controller = TextEditingController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TextField(
+              key: const ValueKey('number'),
+              controller: controller,
+            ),
+          ),
+        ),
+      );
+      final input = find.byKey(const ValueKey('number'));
+      // IntegrationTestWidgetsFlutterBinding uses registerTestTextInput=false.
+      tester.testTextInput.unregister();
+      try {
+        await enterReadyText(tester, input, '99');
+        expect(controller.text, '99');
+        await tester.enterText(input, '2147483648');
+        await tester.pump();
+        expect(
+          controller.text,
+          '99',
+          reason: 'pinned SDK cached focus cannot reopen the closed IME client',
+        );
+        await enterReadyText(tester, input, '2147483648');
+        expect(controller.text, '2147483648');
+        await enterReadyText(tester, input, '18446744073709551615');
+        expect(controller.text, '18446744073709551615');
+      } finally {
+        tester.testTextInput.register();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      }
+    },
+  );
 }

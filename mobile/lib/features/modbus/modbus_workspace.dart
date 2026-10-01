@@ -1123,6 +1123,7 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
                 : mbMap(event['data'])['error'],
           ),
           OutlinedButton(
+            key: ValueKey('select_modbus_unit_${mbMap(event['data'])['unit']}'),
             onPressed: () {
               final p = mbClone(model.params)
                 ..['unit'] = mbMap(event['data'])['unit'];

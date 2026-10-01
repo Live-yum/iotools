@@ -173,11 +173,9 @@ void main() {
           find.byKey(const ValueKey('yaml_editor')),
           '${original['source']}\n# $secret',
         );
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        pauseTestLifecycle(tester.binding);
         await tester.pump();
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
+        resumeTestLifecycle(tester.binding);
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.textContaining(secret), findsOneWidget);
         final stored = mapOf(await engine.command({'op': 'config.get'}));
@@ -189,6 +187,7 @@ void main() {
           isNull,
         );
       } finally {
+        resumeTestLifecycle(tester.binding);
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(milliseconds: 400));
         await engine.open();
@@ -361,7 +360,8 @@ Future<void> waitForHTTPCompletion(
 ) async {
   final end = DateTime.now().add(const Duration(seconds: 20));
   while (find.text('已完成').evaluate().isEmpty) {
-    if (find.text('执行失败').evaluate().isNotEmpty || DateTime.now().isAfter(end)) {
+    if (find.text('执行失败').evaluate().isNotEmpty ||
+        DateTime.now().isAfter(end)) {
       await shot(tester, binding, 'flutter-http-failure');
       final state = await engine.command({'op': 'state'});
       // Only this test's synthetic fixture state and public vector are emitted.

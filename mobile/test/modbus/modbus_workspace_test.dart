@@ -45,6 +45,11 @@ class FakeModbusHost extends ChangeNotifier implements ModbusHost {
   Future<dynamic> command(Map<String, dynamic> command) async {
     commands.add(mbClone(command));
     switch (command['op']) {
+      case 'preview':
+        return {
+          'request': mbClone(mbMap(command['request'])),
+          'token': 'offline-review',
+        };
       case 'modbus.rules':
         return [];
       case 'modbus.interpret':
@@ -188,6 +193,82 @@ Future<void> tapText(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets(
+    'selecting successful unit 1 does not select sibling exception unit 2',
+    (tester) async {
+    final host = FakeModbusHost()..sample();
+    host.events.addAll([
+      {
+        'run_id': 'run-a',
+        'kind': 'unit-probe',
+        'data': {'unit': 2, 'responsive': false, 'exception': true},
+      },
+      {
+        'run_id': 'run-a',
+        'kind': 'unit-probe',
+        'data': {'unit': 1, 'responsive': true},
+      },
+    ]);
+    await mount(tester, host);
+    await tapText(tester, '操作');
+    await revealModbusFinder(tester, find.text('单元 1'));
+    final successful = find.ancestor(
+      of: find.text('单元 1'),
+      matching: find.byType(Card),
+    );
+    final target = find.descendant(
+      of: successful,
+      matching: find.text('仅选择此连接与单元到草稿'),
+    ).last;
+    await Scrollable.ensureVisible(tester.element(target), alignment: .5);
+    await waitForModbusInteraction(tester, target);
+    await tester.tap(target);
+    await tester.pumpAndSettle();
+    expect(
+      host.request['params']['unit'],
+      2,
+      reason: '旧 Card 祖先选择器包含两个按钮，last 错选到异常单元',
+    );
+    final exact = find.byKey(const ValueKey('select_modbus_unit_1'));
+    await Scrollable.ensureVisible(tester.element(exact), alignment: .5);
+    await waitForModbusInteraction(tester, exact);
+    await tester.tap(exact);
+    await tester.pumpAndSettle();
+    expect(host.request['params']['unit'], 1);
+    expect(host.request['endpoint'], 'tcp://actual:502');
+    expect(host.runs, isEmpty);
+    expect(host.commands, isEmpty);
+    expect(host.saved, isEmpty);
+    await tapText(tester, '本机 HTTP 服务');
+    await tapText(tester, '检查服务范围');
+    final preview = host.commands.single;
+    expect(preview['op'], 'preview');
+    expect(preview['request']['params']['unit'], 1);
+    expect(preview['request']['endpoint'], 'tcp://actual:502');
+    final unitRow = find.byWidgetPredicate(
+      (widget) => widget is Column && widget.children.any(
+        (child) => child is Text && child.data == '默认设备单元',
+      ),
+    );
+    expect(
+      find.descendant(
+        of: unitRow,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is SelectableText && widget.data == '1',
+        ),
+      ),
+      findsOneWidget,
+    );
+    await tapText(tester, '取消');
+    await tapText(tester, '取消');
+    expect(
+      host.commands.any((command) => command['op'] == 'modbus.controller.start'),
+      isFalse,
+    );
+    await tester.pumpWidget(const SizedBox());
+    host.dispose();
+    },
+  );
   testWidgets('lazy offscreen device identification action opens without IO', (
     tester,
   ) async {
