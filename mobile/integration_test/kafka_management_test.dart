@@ -212,6 +212,7 @@ Future<void> wait(WidgetTester t, bool Function() ready) async {
 Future<void> tap(WidgetTester t, Finder f) async {
   await wait(t, () => f.evaluate().isNotEmpty);
   await t.ensureVisible(f);
+  await t.pump();
   await t.tap(f);
   await t.pump(const Duration(milliseconds: 400));
 }
@@ -220,6 +221,7 @@ Future<void> enter(WidgetTester t, String key, String value) async {
   final f = find.byKey(ValueKey(key));
   await wait(t, () => f.evaluate().isNotEmpty);
   await t.ensureVisible(f);
+  await t.pump();
   await t.enterText(f, value);
   await t.pump();
 }
@@ -267,5 +269,5 @@ Future<void> openRequest(WidgetTester t, String name) async {
   await wait(t, () => search.evaluate().isNotEmpty);
   await t.enterText(search, name);
   await t.pump(const Duration(milliseconds: 200));
-  await tap(t, find.text(name));
+  await tap(t, find.widgetWithText(InkWell, name));
 }

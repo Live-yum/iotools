@@ -5,6 +5,8 @@ import 'package:iotools_mobile/features/opcua/opcua_workspace.dart';
 import 'package:iotools_mobile/features/opcua/opcua_typed_editor.dart';
 
 class FakeUa {
+  FakeUa({this.discoveryMode = 'MessageSecurityModeNone'});
+  final String discoveryMode;
   final events = StreamController<UaMap>.broadcast(sync: true);
   final commands = <UaMap>[];
   final previews = <String, UaMap>{};
@@ -92,9 +94,9 @@ class FakeUa {
             send('endpoint', {
               'url': 'opc.tcp://127.0.0.1:48410',
               'security_policy': 'None',
-              'security_mode': 'None',
+              'security_mode': discoveryMode,
               'certificate_sha256': 'UNTRUSTED',
-              'identity_tokens': ['Anonymous'],
+              'identity_tokens': ['UserTokenTypeAnonymous'],
             });
           send('done', {'status': 'completed'});
         });
@@ -227,6 +229,9 @@ void main() {
       await tester.pumpAndSettle();
       await tap(tester, 'ua-apply-connection');
       expect(prepared, isNotNull);
+      expect(uaMap(prepared!['params'])['security_mode'], 'None');
+      expect(uaMap(prepared!['params'])['auth'], 'anonymous');
+      expect(uaMap(prepared!['params'])['allow_insecure'], true);
       expect(uaMap(prepared!['params'])['server_cert_sha256'], isNull);
       expect(fake.commands.length, before);
       await tester.pumpWidget(const SizedBox());
@@ -496,6 +501,35 @@ void main() {
       await tap(tester, 'ua-refresh');
       await tap(tester, 'ua-write');
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await fake.events.close();
+    },
+  );
+  testWidgets(
+    'unknown discovered security mode remains visible and is rejected without fallback',
+    (tester) async {
+      final fake = FakeUa(discoveryMode: 'MessageSecurityModeInvalid');
+      UaMap? prepared;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpcuaWorkspace(
+            request: fake.request,
+            command: fake.command,
+            events: fake.events.stream,
+            readOnly: false,
+            onPrepare: (r) => prepared = r,
+          ),
+        ),
+      );
+      await tap(tester, 'ua-tab-discovery');
+      await tap(tester, 'ua-refresh');
+      final before = fake.commands.length;
+      await tap(tester, 'ua-select-endpoint');
+      expect(find.text('MessageSecurityModeInvalid'), findsWidgets);
+      await tap(tester, 'ua-apply-connection');
+      expect(find.textContaining('不支持的消息安全模式'), findsOneWidget);
+      expect(prepared, isNull);
+      expect(fake.commands.length, before);
       await tester.pumpWidget(const SizedBox());
       await fake.events.close();
     },

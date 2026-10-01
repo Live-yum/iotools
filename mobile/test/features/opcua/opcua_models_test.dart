@@ -15,6 +15,23 @@ UaMap base({
 };
 void main() {
   test(
+    'gopcua discovery and history mode names become canonical request modes',
+    () {
+      expect(uaSecurityMode('MessageSecurityModeNone'), 'None');
+      expect(uaSecurityMode('MessageSecurityModeSign'), 'Sign');
+      expect(
+        uaSecurityMode('MessageSecurityModeSignAndEncrypt'),
+        'SignAndEncrypt',
+      );
+      expect(uaSecurityMode('SignAndEncrypt'), 'SignAndEncrypt');
+      expect(
+        uaSecurityMode('MessageSecurityModeInvalid'),
+        'MessageSecurityModeInvalid',
+      );
+    },
+  );
+
+  test(
     'exact typed scalars, structured fields, ByteString and Byte array stay distinct',
     () {
       expect(

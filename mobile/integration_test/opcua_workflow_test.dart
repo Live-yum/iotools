@@ -95,6 +95,7 @@ requests:
           '明确允许 None 无加密（仅可信测试环境）',
         );
         await tester.ensureVisible(allow);
+        await tester.pump();
         await tester.tap(allow);
         await tester.pump();
         await _tap(tester, 'ua-apply-connection');
@@ -189,6 +190,7 @@ requests:
         await tester.ensureVisible(
           find.byKey(const ValueKey('ua-attribute-Value-value')),
         );
+        await tester.pump();
         await _screenshot(tester, binding, 'flutter-opc-05-write-readback-99');
         await _tap(tester, 'ua-back');
         await _tap(tester, 'ua-tab-browse');
@@ -254,6 +256,7 @@ requests:
         await tester.ensureVisible(
           find.byKey(const ValueKey('ua-method-outputs')),
         );
+        await tester.pump();
         await _screenshot(tester, binding, 'flutter-opc-06-method-double-6-12');
         await _tapText(tester, '关闭');
         await _jump(tester, temperature);
@@ -353,6 +356,7 @@ requests:
 }
 
 void main() {
+  WidgetController.hitTestWarningShouldBeFatal = true;
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   registerOpcuaIntegrationTests();
 }
@@ -405,6 +409,7 @@ Future<void> _tapText(WidgetTester tester, String text) async {
 Future<void> _enter(WidgetTester tester, String key, String value) async {
   final f = find.byKey(ValueKey(key));
   await tester.ensureVisible(f);
+  await tester.pump();
   await tester.enterText(f, value);
   await tester.testTextInput.receiveAction(TextInputAction.done);
   await tester.pump();

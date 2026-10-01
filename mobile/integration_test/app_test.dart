@@ -11,6 +11,7 @@ import 'modbus_workflow_test.dart';
 import 'kafka_management_test.dart';
 
 void main() {
+  WidgetController.hitTestWarningShouldBeFatal = true;
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
     'Flutter HTTP native AES controls, exact wire bytes, history, SQL and privacy',
@@ -311,6 +312,7 @@ Future<void> tapKey(WidgetTester t, String key) async {
   await waitFor(t, () => find.byKey(ValueKey(key)).evaluate().isNotEmpty);
   final f = find.byKey(ValueKey(key));
   await t.ensureVisible(f);
+  await t.pump();
   await t.tap(f);
   await t.pump(const Duration(milliseconds: 400));
 }
@@ -319,6 +321,7 @@ Future<void> tapText(WidgetTester t, String text) async {
   await waitFor(t, () => find.text(text).evaluate().isNotEmpty);
   final f = find.text(text).last;
   await t.ensureVisible(f);
+  await t.pump();
   await t.tap(f);
   await t.pump(const Duration(milliseconds: 400));
 }
@@ -337,6 +340,7 @@ Future<void> shot(
   if (!_converted) {
     await b.convertFlutterSurfaceToImage();
     _converted = true;
+    addTearDown(() => _converted = false);
   }
   await t.pump();
   await b.takeScreenshot(name);

@@ -682,7 +682,7 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
     for (final endpoint in node.endpoints.skip(page * 25).take(25))
       _card(uaSafeEndpoint(endpoint['url']), [
         _pair('安全策略', endpoint['security_policy']),
-        _pair('消息模式', endpoint['security_mode']),
+        _pair('消息模式', uaSecurityMode('${endpoint['security_mode']}')),
         _pair('身份类型', endpoint['identity_tokens']),
         _pair('未验证的指纹', endpoint['certificate_sha256']),
         _button(
@@ -1020,7 +1020,7 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
         node = '${p['node_id'] ?? 'i=85'}',
         timeout = '${draft['timeout'] ?? '10s'}';
     var policy = '${p['security_policy'] ?? 'Basic256Sha256'}'.split('#').last,
-        mode = '${p['security_mode'] ?? 'SignAndEncrypt'}',
+        mode = uaSecurityMode('${p['security_mode'] ?? 'SignAndEncrypt'}'),
         auth = '${p['auth'] ?? 'anonymous'}';
     final fields = <String, String>{
       for (final k in [
@@ -1086,7 +1086,12 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
         ),
         _choice(
           '消息模式',
-          ['None', 'Sign', 'SignAndEncrypt'],
+          [
+            'None',
+            'Sign',
+            'SignAndEncrypt',
+            if (!['None', 'Sign', 'SignAndEncrypt'].contains(mode)) mode,
+          ],
           mode,
           (v) => set(() => mode = v),
         ),
@@ -1148,6 +1153,9 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
             uri.userInfo.isNotEmpty)
           throw const FormatException('请输入不含凭据的 opc.tcp 端点');
         uaNodeId(node);
+        if (!['None', 'Sign', 'SignAndEncrypt'].contains(mode)) {
+          throw const FormatException('不支持的消息安全模式；请明确选择受支持模式');
+        }
         if ((policy == 'None' || mode == 'None') && !insecure)
           throw const FormatException('必须明确勾选 None 安全例外');
         if (['Basic128Rsa15', 'Basic256'].contains(policy) && !legacy)

@@ -69,6 +69,16 @@ const uaConnectionFields = <String>[
 ];
 String uaType(String value) =>
     value.replaceAll('TypeID', '').replaceAll('NodeID', 'NodeId');
+
+/// Discovery/history events use gopcua enum labels; request parameters use the
+/// canonical names consumed by MessageSecurityModeFromString. Never silently
+/// turn an unknown mode into an insecure default.
+String uaSecurityMode(String value) => switch (value.trim()) {
+  'MessageSecurityModeNone' => 'None',
+  'MessageSecurityModeSign' => 'Sign',
+  'MessageSecurityModeSignAndEncrypt' => 'SignAndEncrypt',
+  final other => other,
+};
 String uaAttributeType(String name) {
   if (name == 'Value') return '';
   if (name == 'DisplayName' || name == 'Description') return 'LocalizedText';

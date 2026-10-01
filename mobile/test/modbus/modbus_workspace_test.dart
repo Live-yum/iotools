@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:iotools_mobile/features/modbus/modbus_controller.dart';
 import 'package:iotools_mobile/features/modbus/modbus_models.dart';
 import 'package:iotools_mobile/features/modbus/modbus_workspace.dart';
+import 'package:iotools_mobile/shared/review_dialog.dart';
+import '../../integration_test/modbus_interaction.dart';
 
 class FakeModbusHost extends ChangeNotifier implements ModbusHost {
   @override
@@ -35,6 +37,7 @@ class FakeModbusHost extends ChangeNotifier implements ModbusHost {
       saved = <Map<String, dynamic>>[];
   final exports = <String, String>{};
   Completer<void>? heldRun;
+  Future<bool> Function(Map<String, dynamic>)? review;
   @override
   Map<String, dynamic>? originalRequest(String runId) =>
       runId == resultRunId ? originalResultRequest : null;
@@ -97,6 +100,7 @@ class FakeModbusHost extends ChangeNotifier implements ModbusHost {
 
   @override
   Future<void> reviewAndRun(Map<String, dynamic> value) async {
+    if (review != null && !await review!(value)) return;
     runs.add(mbClone(value));
     if (heldRun != null) await heldRun!.future;
   }
@@ -184,6 +188,41 @@ Future<void> tapText(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets('nested write review cancel can reopen both write forms', (
+    tester,
+  ) async {
+    final host = FakeModbusHost();
+    await mount(tester, host);
+    host.review = (request) => reviewExecution(
+      tester.element(find.byType(ModbusWorkspace)),
+      {'request': request, 'confirmation_required': true},
+    );
+    await tapText(tester, '操作');
+    for (final label in ['FC23 读写事务', '写入类型数值 / 寄存器']) {
+      await tapText(tester, label);
+      await tapText(tester, '预览编码与目标');
+      expect(find.text('确认执行写操作'), findsOneWidget);
+      await tester.tap(find.text('取消').last);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        tester.widget<OutlinedButton>(find.byKey(ValueKey(label))).onPressed,
+        isNull,
+        reason: '嵌套确认页退场时，原写入表单还在完成提交回调',
+      );
+      final action = find.text(label).last;
+      await Scrollable.ensureVisible(tester.element(action), alignment: .5);
+      await waitForModbusInteraction(tester, action);
+      await tester.tap(action);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('写入起始地址')), findsOneWidget);
+      expect(host.runs, isEmpty);
+      expect(host.commands, isEmpty);
+      expect(host.saved, isEmpty);
+      await tapText(tester, '取消');
+    }
+    await tester.pumpWidget(const SizedBox());
+    host.dispose();
+  });
   testWidgets('opening and local navigation never run a device request', (
     tester,
   ) async {

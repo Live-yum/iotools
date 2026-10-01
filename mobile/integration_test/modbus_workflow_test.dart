@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'modbus_advanced_workflow_test.dart';
+import 'modbus_interaction.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -187,6 +188,7 @@ requests:
 }
 
 void main() {
+  WidgetController.hitTestWarningShouldBeFatal = true;
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   registerModbusIntegrationTests();
 }
@@ -228,7 +230,7 @@ Future<void> _tap(WidgetTester tester, String label) async {
   final finder = find.text(label).last;
   await _wait(tester, () => finder.evaluate().isNotEmpty);
   await Scrollable.ensureVisible(tester.element(finder), alignment: 0.5);
-  await tester.pump();
+  await waitForModbusInteraction(tester, finder);
   await tester.tap(finder);
   await tester.pump(const Duration(milliseconds: 350));
 }
@@ -237,6 +239,7 @@ Future<void> _enter(WidgetTester tester, String key, String value) async {
   final finder = find.byKey(ValueKey(key));
   await _wait(tester, () => finder.evaluate().isNotEmpty);
   await tester.ensureVisible(finder);
+  await tester.pump();
   await tester.enterText(finder, value);
   await tester.testTextInput.receiveAction(TextInputAction.done);
   await tester.pump();
