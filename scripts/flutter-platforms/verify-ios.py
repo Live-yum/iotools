@@ -14,8 +14,11 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import shutil
 import subprocess
+import tempfile
 import time
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SYMBOLS = {
@@ -39,6 +42,51 @@ def sha256(path):
 def require(value, message):
     if not value:
         raise RuntimeError(message)
+
+
+def append_notices(archive, licenses):
+    manifest = licenses / 'Go/MANIFEST.json'
+    require(manifest.is_file() and (licenses / 'Go/INDEX.txt').stat().st_size > 0,
+            'Go notice index/manifest must be present')
+    records = json.loads(manifest.read_text())['Licenses']
+    require(bool(records), 'Go notice manifest must not be empty')
+    require((licenses / 'iotools-LICENSE').is_file(), 'Project license is missing')
+    for record in records:
+        relative = Path(record['File'])
+        require(not relative.is_absolute() and '..' not in relative.parts, 'Unsafe notice path')
+        require(sha256(licenses / 'Go' / relative) == record['SHA256'], 'Go notice hash mismatch')
+    with zipfile.ZipFile(archive) as bundled:
+        original = {entry.filename: (entry.CRC, entry.file_size) for entry in bundled.infolist()}
+        require(not any(name.startswith('licenses/') for name in original), 'Refusing duplicate ZIP-level notices')
+    # Notices are siblings of Runner.app, never edits to the tested app bundle.
+    with zipfile.ZipFile(archive, 'a', zipfile.ZIP_DEFLATED) as bundled:
+        for file in sorted(licenses.rglob('*')):
+            require(not file.is_symlink(), 'Notice staging must not contain symlinks')
+            if file.is_file():
+                bundled.write(file, 'licenses/' + file.relative_to(licenses).as_posix())
+    with zipfile.ZipFile(archive) as bundled:
+        require(all((bundled.getinfo(name).CRC, bundled.getinfo(name).file_size) == value
+                    for name, value in original.items()), 'Tested app archive entries changed')
+        for file in licenses.rglob('*'):
+            if file.is_file():
+                name = 'licenses/' + file.relative_to(licenses).as_posix()
+                require(hashlib.sha256(bundled.read(name)).hexdigest() == sha256(file),
+                        'Packaged notice bytes differ')
+    return {'go_license_files': len(records), 'go_manifest_sha256': sha256(manifest),
+            'project_license_sha256': sha256(licenses / 'iotools-LICENSE'),
+            'location': 'licenses/ alongside unchanged Runner.app'}
+
+
+def collect_notices(archive, architecture, out):
+    go_arch = {'arm64': 'arm64', 'x86_64': 'amd64'}[architecture]
+    with tempfile.TemporaryDirectory(prefix='ios-notices-', dir=out) as folder:
+        licenses = Path(folder) / 'licenses'
+        licenses.mkdir()
+        shutil.copyfile(ROOT / 'LICENSE', licenses / 'iotools-LICENSE')
+        subprocess.run(['go', 'run', './scripts/notices', '-goos', 'ios', '-goarch', go_arch,
+                        '-cgo', '1', str(licenses / 'Go'), './cmd/iotools-native'],
+                       cwd=ROOT, check=True, timeout=300)
+        return append_notices(archive, licenses)
 
 
 def verify_bundle(app, kind, evidence):
@@ -100,14 +148,16 @@ def select_simulator(devices, sdk_version, required_udid=None):
     return choices[0]
 
 
-def simulator_xcode_settings(architecture):
+def simulator_xcode_settings(architecture, test_target=False):
     require(architecture in ("arm64", "x86_64"), f"Unsupported simulator architecture: {architecture}")
     # Match Flutter's explicit simulator SDK selection. The project defaults to
     # iphoneos, and host-architecture substitutions must not change this bundle's
     # already-verified single architecture when XCTest rebuilds the host.
+    target = (["-project", str(ROOT / "mobile/ios/Runner.xcodeproj"), "-target", "RunnerTests"]
+              if test_target else ["-workspace", str(ROOT / "mobile/ios/Runner.xcworkspace"), "-scheme", "Runner"])
     return [
-        "xcrun", "xcodebuild", "-workspace", str(ROOT / "mobile/ios/Runner.xcworkspace"),
-        "-scheme", "Runner", "-configuration", "Debug", "-sdk", "iphonesimulator",
+        "xcrun", "xcodebuild", *target,
+        "-configuration", "Debug", "-sdk", "iphonesimulator",
         f"ARCHS={architecture}", "ONLY_ACTIVE_ARCH=YES",
         f"BUILD_DIR={ROOT / 'mobile/build/ios'}", "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGN_IDENTITY=",
     ]
@@ -115,7 +165,9 @@ def simulator_xcode_settings(architecture):
 
 def simulator_test_command(udid, result, architecture):
     return simulator_xcode_settings(architecture) + [
-        "test", "-destination", f"platform=iOS Simulator,id={udid},arch={architecture}",
+        # Apple's iOS Simulator destination keys are platform/name/id/OS.
+        # Architecture remains pinned in ARCHS, independently of device lookup.
+        "test", "-destination", f"platform=iOS Simulator,id={udid}",
         "-parallel-testing-enabled", "NO", "-only-testing:RunnerTests", "-resultBundlePath", str(result),
     ]
 
@@ -161,11 +213,12 @@ def test_simulator(app, info, evidence, report, save):
     if completed.returncode != 0:
         # Preserve eligibility and resolved build settings on the actual runner;
         # a destination error alone otherwise hides SDK/architecture filtering.
-        for action, name in [("-showdestinations", "xcode-destinations.log"),
-                             ("-showBuildSettings", "xcode-build-settings.log")]:
+        for action, name, test_target in [("-showdestinations", "xcode-destinations.log", False),
+                                          ("-showBuildSettings", "xcode-build-settings.log", False),
+                                          ("-showBuildSettings", "xcode-runner-tests-build-settings.log", True)]:
             with (evidence / name).open("w") as output:
                 try:
-                    diagnostic = subprocess.run(simulator_xcode_settings(architecture) + [action],
+                    diagnostic = subprocess.run(simulator_xcode_settings(architecture, test_target=test_target) + [action],
                                                 stdout=output, stderr=subprocess.STDOUT, timeout=120)
                     output.write(f"\nDiagnostic exit code: {diagnostic.returncode}\n")
                 except subprocess.TimeoutExpired:
@@ -210,12 +263,14 @@ def main():
             report["remaining_gates"] = ["Signing with user's own Apple identity", "Physical-iPhone runtime and full-protocol acceptance"]
         archive = out / f"ios-{args.kind}-{revision}.zip"
         run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app), str(archive), timeout=300)
+        report['licenses'] = collect_notices(archive, report['architectures'][0], out)
         report.update(status="passed_for_stated_scope", bytes=archive.stat().st_size, sha256=sha256(archive))
         (out / f"ios-{args.kind}-README.zh-CN.txt").write_text(
             f"iOS {args.kind} 构建，架构：{', '.join(report['architectures'])}\n"
             "设备版本未签名，不是可直接安装到手机的 IPA。模拟器版本仅用于相应架构的 macOS / Xcode。\n"
             "模拟器证据覆盖普通应用启动、真实 Go ABI/生命周期、导出边界和系统选择器展示；不等于全部协议交互通过。\n"
-            "选择实际目标的文件保存/重新导入及签名真机仍需独立验收。完整验证范围见随附证据。\n")
+            "选择实际目标的文件保存/重新导入及签名真机仍需独立验收。完整验证范围见随附证据。\n"
+            "ZIP 中 licenses/ 含项目及精确 iOS Go 依赖许可证；Flutter 通知随 Runner.app 的资源保留。\n")
     except Exception as error:
         report.update(status="failed", error=str(error))
         raise

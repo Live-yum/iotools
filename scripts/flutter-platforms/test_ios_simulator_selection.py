@@ -88,7 +88,9 @@ class SimulatorTestCommandTests(unittest.TestCase):
                 self.assertEqual(command[command.index("-configuration") + 1], "Debug")
                 self.assertEqual(command[command.index("-scheme") + 1], "Runner")
                 self.assertEqual(command[command.index("-destination") + 1],
-                                 f"platform=iOS Simulator,id=test-device-id,arch={architecture}")
+                                 "platform=iOS Simulator,id=test-device-id")
+                destination_keys = {part.split("=", 1)[0] for part in command[command.index("-destination") + 1].split(",")}
+                self.assertEqual(destination_keys, {"platform", "id"})
                 self.assertIn(f"ARCHS={architecture}", command)
                 self.assertIn("ONLY_ACTIVE_ARCH=YES", command)
                 self.assertIn("test", command)
@@ -102,6 +104,16 @@ class SimulatorTestCommandTests(unittest.TestCase):
         for architecture in ("", "arm64e", "arm64 x86_64"):
             with self.subTest(architecture=architecture), self.assertRaisesRegex(RuntimeError, "Unsupported simulator"):
                 verify_ios.simulator_test_command("test-device-id", Path("result.xcresult"), architecture)
+
+    def test_runner_tests_diagnostics_use_the_actual_test_target(self):
+        command = verify_ios.simulator_xcode_settings("arm64", test_target=True)
+        self.assertEqual(command[command.index("-target") + 1], "RunnerTests")
+        self.assertEqual(command[command.index("-project") + 1], str(verify_ios.ROOT / "mobile/ios/Runner.xcodeproj"))
+        self.assertNotIn("-workspace", command)
+        self.assertNotIn("-scheme", command)
+        self.assertIn("ARCHS=arm64", command)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", command)
+        self.assertEqual(command[command.index("-sdk") + 1], "iphonesimulator")
 
 
 if __name__ == "__main__":
