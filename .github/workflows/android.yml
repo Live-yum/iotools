@@ -69,8 +69,8 @@ jobs:
             echo "No existing KVM access; keeping software emulation"
             echo "ANDROID_EMULATOR_ACCEL=-accel off" >> "$GITHUB_ENV"
             echo "ANDROID_HW_DISABLE=true" >> "$GITHUB_ENV"
-            echo "ANDROID_TEST_API=29" >> "$GITHUB_ENV"
-            echo "ANDROID_TEST_TARGET=default" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_API=35" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_TARGET=google_apis" >> "$GITHUB_ENV"
           fi
       - name: Real emulator UI, protocol, editing and lifecycle tests
         uses: reactivecircus/android-emulator-runner@v2

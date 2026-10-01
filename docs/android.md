@@ -10,7 +10,7 @@ WebView禁止外部导航、网络加载、文件和content访问；协议网络
 
 ## 安装与平台
 
-Actions产物为测试签名debug APK，包含arm64-v8a与x86_64，Android 8.0/API26以上。
+Actions产物为测试签名debug APK，包含arm64-v8a与x86_64；构建最低SDK为Android 8.0/API26。最低SDK不等于所有系统版本均已实测：CI记录实际Android/WebView版本，Android 8/9与ARM64真机仍需单独验收。
 ARM64为手机目标，x86_64用于原生模拟器验收。构建使用Android NDK与Go c-shared；
 16KiB ELF段/ZIP对齐检查在CI执行。不是商店发行签名，不创建用户签名账户或长期凭据。
 不同CI构建的临时debug签名可能不同；更新前先导出配置，必要时卸载旧版再安装。
@@ -48,7 +48,7 @@ TLS验证默认不放宽；明文HTTP/MQTT等协议只能通过用户明确配�
 ## 构建与证据
 
 scripts/android/build-native.sh构建两个ABI；prepare-assets.sh按lockfile打包离线终端。
-Android工作流构建debug APK、验证签名/权限/16KiB对齐，随后运行x86_64模拟器：已有KVM权限时Android35，否则较轻的AOSP Android29软件模拟。
+Android工作流构建debug APK、验证签名/权限/16KiB对齐，随后运行x86_64模拟器：当前主验收使用Android35；有现成KVM权限时加速，否则低分辨率软件模拟，不更改KVM权限。Android29/旧WebView兼容性单独记录，不能由最低SDK推断通过。
 模拟器测试真实启动Go TUI、明确点击触发本机HTTP回包、中文/emoji文件编辑持久化、
 未保存中文草稿跨前后台保留、任务取消与不重放、恢复及横屏，并保存原生截图。
 最终通过与否及下载文件以精确提交SHA的Actions为准；模拟器不代表实体ARM64手机验收。
