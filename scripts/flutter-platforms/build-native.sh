@@ -4,6 +4,10 @@ repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo_root"
 target="${1:?target is required}"
 arch="${2:-$(go env GOHOSTARCH)}"
+if test "$target" = ios-device; then arch=arm64; fi
+if test "$target" = ios-simulator; then
+  case "$arch" in x86_64) arch=amd64;; arm64|amd64) ;; *) echo 'Unsupported iOS simulator architecture' >&2; exit 2;; esac
+fi
 build_sha="${IOTOOLS_SHA:-local}"
 case "$build_sha" in *[!a-zA-Z0-9._-]*) echo 'Invalid revision' >&2; exit 2;; esac
 export CGO_ENABLED=1
@@ -41,6 +45,13 @@ case "$target" in
   export CGO_LDFLAGS="-isysroot $sdk_root -target $triple"
   native_library="$out/libiotools_native.a"
   go build -trimpath -ldflags "-X main.version=$build_sha" -buildmode=c-archive -o "$native_library" ./cmd/iotools-native
+  apple_arch=arm64
+  if test "$arch" = amd64; then apple_arch=x86_64; fi
+  xcrun lipo -verify_arch "$apple_arch" "$native_library"
+  symbols="$(xcrun nm -g "$native_library")"
+  for symbol in IotoolsNativeABIVersion IotoolsNativeOpen IotoolsNativeCommand IotoolsNativeLifecycle IotoolsNativeFree; do
+   printf '%s\n' "$symbols" | grep -E " [Tt] _$symbol$" >/dev/null
+  done
   mkdir -p mobile/ios/Native
   cp "$native_library" mobile/ios/Native/libiotools_native.a
   ;;

@@ -647,6 +647,22 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
       text: model.draft['timeout']?.toString() ?? '10s',
     );
     final unit = TextEditingController(text: (p['unit'] ?? 1).toString());
+    final baud = TextEditingController(text: (p['baud'] ?? 9600).toString()),
+        dataBits = TextEditingController(
+          text: (p['data_bits'] ?? 8).toString(),
+        ),
+        stopBits = TextEditingController(
+          text: (p['stop_bits'] ?? 1).toString(),
+        );
+    var parity = (p['parity'] ?? 'N').toString();
+    final capabilities = mbMap(widget.host.state['capabilities']);
+    final transports = [
+      'tcp',
+      'rtu+tcp',
+      if (capabilities['serial'] == true) 'rtu',
+      if (capabilities['usb'] == true) 'usb',
+      'mock',
+    ];
     final connect = TextEditingController(
           text: (p['connect_timeout_ms'] ?? 1000).toString(),
         ),
@@ -662,23 +678,42 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
         ? 'usb'
         : endpoint.text.startsWith('mock://')
         ? 'mock'
+        : endpoint.text.startsWith('rtu://')
+        ? 'rtu'
         : 'tcp';
+    final unsupported = !transports.contains(transport);
+    if (unsupported) transport = 'tcp';
     await form(
       '连接参数 · 本机草稿',
       [
         StatefulBuilder(
-          builder: (_, refresh) => mbSelect(
-            '传输',
-            transport,
-            const ['tcp', 'rtu+tcp', 'usb', 'mock'],
-            (v) {
-              refresh(() => transport = v);
-              if (v == 'mock') endpoint.text = 'mock://local';
-            },
+          builder: (_, refresh) => Column(
+            children: [
+              mbSelect('传输', transport, transports, (v) {
+                refresh(() => transport = v);
+                if (v == 'mock') endpoint.text = 'mock://local';
+              }),
+              if (unsupported) const Text('原草稿的设备传输在当前平台不可用。请填写可用端点；取消会保留原草稿。'),
+              mbField('端点 URI（网络地址或串口路径）', endpoint),
+              if (transport == 'rtu')
+                const Text(
+                  '本机串口示例：rtu://COM3 或 rtu:///dev/ttyUSB0。使用实际设备路径；仅执行请求时才打开设备。',
+                ),
+              if (transport == 'usb')
+                const Text('USB 端点需先通过应用的 USB 设备选择器选择并授权；这里不会弹出权限或自动连接。'),
+              if (transport == 'rtu' || transport == 'usb') ...[
+                mbField('波特率', baud, numeric: true),
+                mbField('数据位', dataBits, numeric: true),
+                mbField('停止位', stopBits, numeric: true),
+                mbSelect('校验', parity, const [
+                  'N',
+                  'E',
+                  'O',
+                ], (v) => refresh(() => parity = v)),
+              ],
+            ],
           ),
         ),
-        mbField('端点 URI（含主机与端口）', endpoint),
-        const Text('USB 端点需先通过应用的 USB 设备选择器选择并授权；这里不会弹出权限或自动连接。'),
         mbField('单元', unit, numeric: true),
         mbField('总超时', timeout),
         mbField('连接超时 ms', connect, numeric: true),
@@ -694,6 +729,23 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
         if (['tcp', 'rtu+tcp'].contains(transport) &&
             (uri.host.isEmpty || !uri.hasPort))
           throw const FormatException('明确填写主机和端口');
+        if (transport == 'rtu' &&
+            (endpoint.text.trim().substring('rtu://'.length).isEmpty ||
+                uri.query.isNotEmpty ||
+                uri.fragment.isNotEmpty ||
+                uri.userInfo.isNotEmpty))
+          throw const FormatException('填写实际串口设备路径，不使用查询参数或用户信息');
+        if (transport == 'rtu' || transport == 'usb') {
+          final bits = boundedInt(dataBits.text, 5, 8, '数据位');
+          if (transport == 'usb' && bits != 8)
+            throw const FormatException('Android USB RTU 要求 8 个数据位');
+          p.addAll({
+            'baud': boundedInt(baud.text, 300, 4000000, '波特率'),
+            'data_bits': bits,
+            'stop_bits': boundedInt(stopBits.text, 1, 2, '停止位'),
+            'parity': parity,
+          });
+        }
         p.addAll({
           'unit': boundedInt(unit.text, 1, 247, '单元'),
           'connect_timeout_ms': boundedInt(connect.text, 1, 300000, '连接超时'),
@@ -710,7 +762,17 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
         return true;
       },
     );
-    for (final c in [endpoint, timeout, unit, connect, request, gap]) {
+    for (final c in [
+      endpoint,
+      timeout,
+      unit,
+      connect,
+      request,
+      gap,
+      baud,
+      dataBits,
+      stopBits,
+    ]) {
       c.dispose();
     }
   }

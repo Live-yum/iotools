@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import '../core/json.dart';
 
@@ -61,6 +62,8 @@ ThemeData appTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   return ThemeData(
     useMaterial3: true,
+    fontFamily: kIsWeb ? 'NotoSansSC' : null,
+    fontFamilyFallback: kIsWeb ? const ['NotoEmoji'] : null,
     brightness: brightness,
     colorScheme:
         ColorScheme.fromSeed(

@@ -1,2 +1,11 @@
 IPHONEOS_DEPLOYMENT_TARGET = 15.0
-OTHER_LDFLAGS = $(inherited) -force_load "$(PROJECT_DIR)/Native/libiotools_native.a" -lresolv
+// Keep the real Go C ABI in Runner itself for DynamicLibrary.process().
+// -force_load selects the archive; -u roots each entry point against dead-strip.
+// Export globals for dlsym and preserve them when Release products are stripped.
+ENABLE_DEBUG_DYLIB = NO
+STRIP_STYLE = non-global
+OTHER_LDFLAGS = $(inherited) -force_load "$(PROJECT_DIR)/Native/libiotools_native.a" -lresolv -framework Security -framework CoreFoundation -Wl,-export_dynamic -Wl,-u,_IotoolsNativeABIVersion -Wl,-u,_IotoolsNativeOpen -Wl,-u,_IotoolsNativeCommand -Wl,-u,_IotoolsNativeLifecycle -Wl,-u,_IotoolsNativeFree
+// A simulator build is explicitly for this Mac's native architecture. Do not
+// ask a single-architecture Go archive to satisfy a generic universal link.
+ARCHS[sdk=iphonesimulator*] = $(NATIVE_ARCH_ACTUAL)
+ARCHS[sdk=iphoneos*] = arm64

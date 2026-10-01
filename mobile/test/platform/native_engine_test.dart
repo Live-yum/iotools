@@ -21,10 +21,27 @@ void main() {
           libraryPath: library,
         );
       });
-      tearDown(() async {
+    tearDown(() async {
         await engine.close();
-        await root.delete(recursive: true);
-      });
+      await root.delete(recursive: true);
+    });
+    test('trusted host root aliases are canonicalized before Go opens the session', () async {
+      if (Platform.isWindows) return;
+      final aliases = await Directory.systemTemp.createTemp('iotools-root-alias-');
+      final link = Link('${aliases.path}/trusted-root');
+      await link.create(root.path);
+      final aliased = NativeFfiEngine(root: () async => link.path, libraryPath: library);
+      try {
+        expect((await aliased.open())['path'], 'iotools.yaml');
+        expect(await File('${root.path}/iotools.yaml').exists(), true);
+        await expectLater(aliased.open(path: '../outside.yaml'), throwsA(isA<EngineException>()));
+        expect(await File('${aliases.path}/outside.yaml').exists(), false);
+      } finally {
+        await aliased.close();
+        await link.delete();
+        await aliases.delete();
+      }
+    });
       test(
         'first launch, UTF8 JSON, exact UInt64, and explicit missing recovery',
         () async {

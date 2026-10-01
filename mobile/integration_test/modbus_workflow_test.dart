@@ -1,3 +1,5 @@
+import 'package:iotools_mobile/app/app.dart';
+import 'runtime_adapter.dart';
 import 'action_interaction.dart';
 import 'dart:convert';
 import 'modbus_advanced_workflow_test.dart';
@@ -6,7 +8,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/session.dart';
 import 'package:iotools_mobile/features/modbus/modbus_models.dart';
@@ -19,7 +20,8 @@ void registerModbusIntegrationTests() {
   testWidgets(
     'Flutter Modbus: local navigation, cancelled write, confirmed write and TCP readback',
     (tester) async {
-      const engine = MethodChannelEngine(), platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
       final initialCounters = await _metrics();
       await engine.open();
@@ -46,7 +48,7 @@ requests:
       var wrote = false, restored = false;
       try {
         await tester.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await _wait(
           tester,
@@ -87,7 +89,7 @@ requests:
         expect(find.text('42'), findsWidgets);
         if (Platform.isAndroid) await binding.convertFlutterSurfaceToImage();
         await tester.pump();
-        await binding.takeScreenshot('flutter-modbus-01-real-tcp-read');
+        await takeProtocolScreenshot(tester, binding, 'flutter-modbus-01-real-tcp-read');
         await _tap(tester, '列与矩阵');
         await _tap(tester, '取消');
         await _tap(tester, '趋势');
@@ -105,7 +107,7 @@ requests:
         await _writeDialog(tester, '17');
         expect(find.textContaining('127.0.0.1:48415'), findsWidgets);
         expect(find.textContaining('registers'), findsWidgets);
-        await binding.takeScreenshot('flutter-modbus-02-write-target-review');
+        await takeProtocolScreenshot(tester, binding, 'flutter-modbus-02-write-target-review');
         wrote = true;
         await _executeAndWait(tester, session, '确认执行', 'write-typed');
         final changed = await _metrics();
@@ -125,7 +127,7 @@ requests:
           (firstRead['modbus_reads'] as int) + 1,
         );
         expect(readback['modbus_writes'], changed['modbus_writes']);
-        await binding.takeScreenshot('flutter-modbus-03-real-tcp-readback');
+        await takeProtocolScreenshot(tester, binding, 'flutter-modbus-03-real-tcp-readback');
         // Restore the disposable fixture through the same explicit Flutter review.
         await _tap(tester, '操作');
         await _writeDialog(tester, '7');

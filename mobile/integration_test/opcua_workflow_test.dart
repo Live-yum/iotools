@@ -1,10 +1,10 @@
+import 'runtime_adapter.dart';
 import 'action_interaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/features/opcua/opcua_models.dart';
 
@@ -23,8 +23,8 @@ void registerOpcuaIntegrationTests() {
         ..reset()
         ..start();
       _stage('start');
-      const engine = MethodChannelEngine();
-      const platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
       final ready = await _fixture('/ready'),
           before = await _fixture('/metrics');
@@ -55,7 +55,7 @@ requests:
       await engine.close();
       try {
         await tester.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await _wait(
           tester,
@@ -552,7 +552,7 @@ Future<void> _screenshot(
   }
   _stage('capture-begin:$name');
   await _pump(tester);
-  await binding.takeScreenshot(name).timeout(const Duration(seconds: 30));
+  await takeProtocolScreenshot(tester, binding, name).timeout(const Duration(seconds: 30));
   _stage('capture-complete:$name');
   debugPrint('OPC_METRICS $name ${jsonEncode(await _fixture('/metrics'))}');
 }

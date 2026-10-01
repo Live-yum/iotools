@@ -1,9 +1,9 @@
+import 'runtime_adapter.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
 
@@ -11,7 +11,8 @@ void registerKafkaManagementTests() {
   testWidgets(
     'Flutter Kafka Schema and Connect native management performs exact reviewed mutations',
     (t) async {
-      const engine = MethodChannelEngine(), platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
       await platform.invoke('settings.save', {
         'theme': 'dark',
@@ -94,7 +95,7 @@ void registerKafkaManagementTests() {
       await engine.close();
       try {
         await t.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await wait(t, () => find.text('注册测试 Schema').evaluate().isNotEmpty);
         await openRequest(t, '注册测试 Schema');
@@ -114,7 +115,7 @@ void registerKafkaManagementTests() {
         expect(find.text('版本列表'), findsOneWidget);
         await binding.convertFlutterSurfaceToImage();
         await t.pump();
-        await binding.takeScreenshot('flutter-kafka-03-schema-native-detail');
+        await takeProtocolScreenshot(t, binding, 'flutter-kafka-03-schema-native-detail');
         await tap(t, find.text('关闭'));
         await back(t);
         await back(t);
@@ -170,7 +171,7 @@ void registerKafkaManagementTests() {
         await tap(t, find.text('浏览实体 / 分区 / 管理操作'));
         await tap(t, find.text('local-demo'));
         expect(find.text('准备更新配置'), findsOneWidget);
-        await binding.takeScreenshot(
+        await takeProtocolScreenshot(t, binding, 
           'flutter-kafka-04-connector-native-actions',
         );
         expect(after['http_mutations'], (before['http_mutations'] as int) + 6);

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
 import 'package:iotools_mobile/core/platform/native/native_files.dart';
@@ -24,15 +25,23 @@ class Dialogs implements NativeFileDialogs {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Windows picker names use both separator styles without leaking temporary directories', () {
+    final windows=p.Context(style:p.Style.windows);
+    expect(pickedFilename(r'C:\Temp\picker/中文😀.yaml',context:windows),'中文😀.yaml');
+    expect(pickedFilename(r'picker\中文😀.yaml',context:windows),'中文😀.yaml');
+  });
   late Directory root, external;
   late Dialogs dialogs;
   late NativeFiles files;
   setUp(() async {
-    root = await Directory.systemTemp.createTemp('iotools-private-test-');
+    final created = await Directory.systemTemp.createTemp('iotools-private-test-');
+    // The file service receives the host's canonical trusted root. Absolute
+    // test files must use that same root, not a macOS /var or Windows 8.3 alias.
+    root = Directory(await created.resolveSymbolicLinks());
     external = await Directory.systemTemp.createTemp('iotools-picker-test-');
     dialogs = Dialogs();
     files = NativeFiles(
-      PrivatePaths(await root.resolveSymbolicLinks()),
+      PrivatePaths(root.path),
       dialogs: dialogs,
     );
   });

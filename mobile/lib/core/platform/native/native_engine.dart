@@ -109,7 +109,10 @@ class NativeFfiEngine implements Engine {
       _handle = 0;
       await _invoke({'op': 'lifecycle', 'handle': old, 'action': 2});
     }
-    _root = await root();
+    // The trusted OS directory may use a platform alias (/var on macOS, or a
+    // Windows short path). Match the canonical root also used by Go before
+    // deriving portable handles; never canonicalize arbitrary JSON paths.
+    _root = await Directory(await root()).resolveSymbolicLinks();
     final selected = PrivatePaths(_root!).resolve(path ?? 'iotools.yaml');
     final response = await _invoke({
       'op': 'open',

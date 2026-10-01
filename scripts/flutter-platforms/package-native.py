@@ -11,8 +11,14 @@ elif target=='windows':
     bundle=root/'mobile/build/windows/x64/runner/Release';binary=bundle/'iotools.exe';core=bundle/'iotools_native.dll'
 else:
     bundle=root/'mobile/build/macos/Build/Products/Release/iotools.app';binary=bundle/'Contents/MacOS/iotools';core=bundle/'Contents/Frameworks/libiotools_native.dylib'
-for path in (binary,core):
-    assert path.is_file() and path.stat().st_size>100000,path
+assert binary.is_file() and binary.stat().st_size > 1024, binary
+assert core.is_file() and core.stat().st_size > 100000, core
+if target == "linux":
+    assert binary.read_bytes()[:4] == b"\x7fELF" and core.read_bytes()[:4] == b"\x7fELF"
+    assert (bundle/"lib/libflutter_linux_gtk.so").is_file()
+    assert (bundle/"lib/libapp.so").is_file()
+if target == "windows":
+    assert binary.read_bytes()[:2] == b"MZ" and core.read_bytes()[:2] == b"MZ"
 out=root/'platform-dist';out.mkdir(exist_ok=True)
 evidence=root/'platform-evidence';evidence.mkdir(exist_ok=True)
 if target=='linux':
@@ -33,6 +39,13 @@ if target=='windows':
         source=Path('C:/msys64/mingw64/bin')/name
         assert source.is_file(),f'Unbundled native dependency {name}'
         shutil.copyfile(source,bundle/name)
+instructions={
+ 'linux': '解压完整 bundle 目录，保留 lib 和 data 子目录；运行 ./iotools。需要带图形会话的 Linux、GTK 3 及其系统依赖。本包基于 Ubuntu 22.04 构建，不是无系统依赖的单文件程序。',
+ 'windows': '解压完整 Release 目录后运行 iotools.exe。保留同目录 DLL 和 data 子目录；随包包含程序所需 Visual C++ 运行库。此开发构建没有发行者 Authenticode 签名。',
+ 'macos': '解压并使用完整 iotools.app。最低 macOS 13；保留应用包内资源。本包保持 App Sandbox，使用开发测试 ad-hoc 签名，未经 Apple Developer ID 公证。系统如阻止运行，请使用自己的受信签名构建流程；不要绕过安全警告。',
+}[target]
+readme=bundle/('Contents/Resources/使用说明.txt' if target=='macos' else '使用说明.txt')
+readme.write_text('iotools Flutter 原生界面\n\n'+instructions+'\n\nWindows、Linux、macOS 原生界面通过随包 Go 内核执行协议，不是网页套壳。数据保存在当前用户应用数据目录；首次使用请通过应用导入 YAML/ZIP。写操作需在界面预览并确认，取消或隐藏窗口不会自动重发。Android USB 接口不适用于这些桌面平台，桌面串口需要操作系统已授予相应设备权限。\n\n这是开发测试构建，具体已验证范围请参阅同次 CI 证据。原命令行/TUI 版本继续保留在仓库 cmd/iotools，未被此界面取代。\n',encoding='utf-8')
 license_dir=bundle/('Contents/Resources/licenses' if target=='macos' else 'licenses')
 license_dir.mkdir(parents=True,exist_ok=True)
 import shutil

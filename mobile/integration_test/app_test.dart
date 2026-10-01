@@ -1,10 +1,10 @@
+import 'runtime_adapter.dart';
 import 'action_interaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
 import 'modbus_workflow_test.dart';
@@ -16,7 +16,8 @@ void main() {
   testWidgets(
     'Flutter HTTP native AES controls, exact wire bytes, history, SQL and privacy',
     (tester) async {
-      const engine = MethodChannelEngine(), platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final received = <String>[];
       // Public independent OpenSSL AES-128-CBC/PKCS7 vectors, not calculated by the engine under test.
@@ -82,7 +83,7 @@ void main() {
       await engine.close();
       try {
         await tester.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await waitFor(
           tester,
@@ -234,7 +235,8 @@ void main() {
   testWidgets(
     'Flutter MQTT exact empty topic levels and Kafka raw records on real local fixtures',
     (tester) async {
-      const engine = MethodChannelEngine(), platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       await platform.invoke('settings.save', {
         'theme': 'dark',
         'readOnly': false,
@@ -278,7 +280,7 @@ void main() {
       await engine.close();
       try {
         await tester.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await waitFor(
           tester,
@@ -367,7 +369,7 @@ Future<void> shot(
     addTearDown(() => _converted = false);
   }
   await t.pump();
-  await b.takeScreenshot(name);
+  await takeProtocolScreenshot(t, b, name);
 }
 
 Future<void> openRequest(WidgetTester t, String name) async {

@@ -19,6 +19,7 @@ class _ExecutionReview extends StatefulWidget {
 
 class _ExecutionReviewState extends State<_ExecutionReview>
     with WidgetsBindingObserver {
+  bool _dismissed = false;
   @override
   void initState() {
     super.initState();
@@ -33,10 +34,15 @@ class _ExecutionReviewState extends State<_ExecutionReview>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if ((state == AppLifecycleState.paused ||
+    if ((state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused ||
             state == AppLifecycleState.detached) &&
-        mounted)
-      Navigator.pop(context, false);
+        mounted &&
+        !_dismissed) {
+      _dismissed = true;
+      final route = ModalRoute.of(context);
+      if (route?.isActive == true) route!.navigator?.removeRoute(route, false);
+    }
   }
 
   @override
@@ -203,7 +209,11 @@ List<Widget> reviewParameters(BuildContext context, JsonMap request) {
     if (!params.containsKey(entry.key)) continue;
     shown.add(entry.key);
     final value = params[entry.key],
-        text = value is String ? value : pretty(value);
+        text = entry.key == 'json' && request['protocol'] == 'http'
+            ? exactEncode(value)
+            : value is String
+            ? value
+            : pretty(value);
     final bytes = utf8
         .encode(value is String ? value : exactEncode(value))
         .length;

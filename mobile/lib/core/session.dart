@@ -56,11 +56,28 @@ class AppSession extends ChangeNotifier {
   DateTime _lastVisual = DateTime.fromMillisecondsSinceEpoch(0);
   int _epoch = 0;
   bool _opening = false;
+  bool _wantsPaused = false;
+  Future<void> _lifecycleTransition = Future<void>.value();
   final _stream = StreamController<JsonMap>.broadcast(sync: true);
   Stream<JsonMap> get eventStream => _stream.stream;
   bool get readOnly => mapOf(state['options'])['read_only'] == true;
   bool get history => mapOf(state['options'])['history'] == true;
   bool get running => state['running'] == true;
+  bool supports(String capability) {
+    final capabilities = mapOf(preferences['capabilities']);
+    final platform = preferences['platform'];
+    if (capability == 'usb' && (platform == 'ios' || platform == 'web'))
+      return false;
+    if (capability == 'serial' && platform == 'ios') return false;
+    if (capabilities.containsKey(capability))
+      return capabilities[capability] == true;
+    if (capability == 'usb')
+      return preferences['usb'] == true || platform == 'android';
+    if (capability == 'serial')
+      return ['windows', 'linux', 'macos'].contains(platform);
+    return true;
+  }
+
   List<JsonMap> get requests => rowsOf(state['requests']);
   Future<Object?> command(JsonMap c) => engine.command(c);
   Future<void> initialize() async {
@@ -434,19 +451,32 @@ class AppSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> pause() async {
+  Future<void> pause() {
+    if (disposed || _wantsPaused) return _lifecycleTransition;
+    _wantsPaused = true;
     _epoch++;
     _clearEarlyEvents();
     final wasRunning = running;
     paused = true;
-    await engine.pause();
-    if (disposed) return;
     state['running'] = false;
     if (wasRunning) status = '已取消';
     notifyListeners();
+    final epoch = _epoch;
+    return _lifecycleTransition = () async {
+      try {
+        if (ready || _opening) await engine.pause();
+      } catch (e) {
+        if (!disposed && epoch == _epoch) {
+          error = '$e';
+          notifyListeners();
+        }
+      }
+    }();
   }
 
-  Future<void> resume() async {
+  Future<void> resume() {
+    if (disposed || !_wantsPaused) return _lifecycleTransition;
+    _wantsPaused = false;
     final epoch = ++_epoch;
     _clearEarlyEvents();
     if (!ready) {
@@ -454,14 +484,25 @@ class AppSession extends ChangeNotifier {
         paused = false;
         notifyListeners();
       }
-      return;
+      return _lifecycleTransition = Future<void>.value();
     }
-    await engine.resume();
-    final next = mapOf(await command({'op': 'state'}));
-    if (disposed || epoch != _epoch) return;
-    paused = false;
-    state = next;
-    notifyListeners();
+    return _lifecycleTransition = () async {
+      try {
+        await engine.resume();
+        if (disposed || epoch != _epoch) return;
+        final next = mapOf(await command({'op': 'state'}));
+        if (disposed || epoch != _epoch) return;
+        paused = false;
+        state = next;
+        notifyListeners();
+      } catch (e) {
+        if (!disposed && epoch == _epoch) {
+          _wantsPaused = true;
+          error = '$e';
+          notifyListeners();
+        }
+      }
+    }();
   }
 
   int get epoch => _epoch;

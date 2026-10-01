@@ -61,14 +61,17 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      if (model.paused) return;
       // Modal values are memory-only; stale confirmations cannot survive a pause.
       unawaited(model.background());
       for (final route in List<Route<dynamic>>.from(_dialogs).reversed) {
         if (route.isActive) route.navigator?.removeRoute(route);
       }
     } else if (state == AppLifecycleState.resumed) {
+      if (!model.paused) return;
       model.resume();
     }
   }

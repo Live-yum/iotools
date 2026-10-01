@@ -25,7 +25,8 @@ class _UaTypedEditorState extends State<UaTypedEditor>
   Route<dynamic>? _elementRoute;
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if ((state == AppLifecycleState.paused ||
+    if ((state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.paused ||
             state == AppLifecycleState.detached) &&
         _elementRoute?.isActive == true)
       _elementRoute?.navigator?.removeRoute(_elementRoute!);

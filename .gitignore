@@ -20,3 +20,7 @@ android/app/src/main/assets/vendor/
 android/app/src/main/assets/docs/
 android/app/src/main/assets/LICENSE
 android/native-*.txt
+
+# Multi-platform generated packages and acceptance evidence
+/platform-dist/
+/platform-evidence/

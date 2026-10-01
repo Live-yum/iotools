@@ -86,6 +86,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   AppSession get s => widget.session;
   int nav = 0, tab = 0, generation = 0;
   bool editor = false, busy = false, dialogOpen = false;
+  bool _backgrounded = false;
   String filter = '', search = '';
   late StreamSubscription<JsonMap> subscription;
   final yaml = TextEditingController();
@@ -98,9 +99,17 @@ class _WorkspaceShellState extends State<WorkspaceShell>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     subscription = s.eventStream.listen(interaction);
-    s.transfer = (method, args) => mounted
-        ? transferFile(context, s.platform, method, args)
-        : s.platform.invoke(method, args);
+    s.transfer = (method, args) async {
+      final result = mounted
+          ? await transferFile(context, s.platform, method, args)
+          : await s.platform.invoke(method, args);
+      if (mounted && mapOf(result)['download_started'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已交给浏览器开始下载，请在浏览器中确认文件保存完成')),
+        );
+      }
+      return result;
+    };
   }
 
   @override
@@ -114,8 +123,11 @@ class _WorkspaceShellState extends State<WorkspaceShell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      if (_backgrounded) return;
+      _backgrounded = true;
       _interactions.clear();
       if (interactionContext != null) Navigator.of(interactionContext!).pop();
       if (startupDialogContext != null &&
@@ -124,6 +136,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       }
       s.pause();
     } else if (state == AppLifecycleState.resumed) {
+      if (!_backgrounded && !s.paused) return;
+      _backgrounded = false;
       s.resume();
     }
   }
@@ -1130,16 +1144,56 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           ),
         ],
       ),
-      Section(
-        'USB 串口',
-        children: [
-          OutlinedButton(
-            onPressed: () => usbDialog(),
-            child: const Text('选择设备与串口参数'),
-          ),
-          const Text('需要真实适配器完成硬件验收；后台会关闭连接，返回不会自动重连。'),
-        ],
-      ),
+      if (s.supports('usb'))
+        Section(
+          'USB 串口',
+          children: [
+            OutlinedButton(
+              onPressed: () => usbDialog(),
+              child: const Text('选择设备与串口参数'),
+            ),
+            const Text('需要真实适配器完成硬件验收；后台会关闭连接，返回不会自动重连。'),
+          ],
+        ),
+      if (s.supports('serial'))
+        Section(
+          '本机串口',
+          children: [
+            const Text(
+              '在 Modbus 连接参数中填写实际串口：Windows 使用 rtu://COM3，Linux/macOS 使用 rtu:///dev/设备路径。选择与编辑只改变草稿。',
+            ),
+            OutlinedButton(
+              key: const ValueKey('open_serial_draft'),
+              onPressed: () {
+                prepare({
+                  'id': 'serial_${DateTime.now().microsecondsSinceEpoch}',
+                  'name': '本机 Modbus 串口',
+                  'protocol': 'modbus',
+                  'action': 'read-holding',
+                  'endpoint': 'rtu://',
+                  'params': {
+                    'unit': 1,
+                    'address': 0,
+                    'count': 1,
+                    'baud': 9600,
+                    'data_bits': 8,
+                    'stop_bits': 1,
+                    'parity': 'N',
+                  },
+                });
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ModbusWorkspace(
+                      host: _ModbusAdapter(s, reviewAndRun, prepare),
+                    ),
+                  ),
+                );
+              },
+              child: const Text('打开 Modbus RTU 串口草稿'),
+            ),
+          ],
+        ),
       Section(
         '关于',
         children: [
@@ -1426,7 +1480,15 @@ class _ModbusAdapter extends ModbusHost {
   @override
   JsonMap get request => s.draft;
   @override
-  JsonMap get state => s.state;
+  JsonMap get state => {
+    ...s.state,
+    'capabilities': {
+      ...mapOf(s.preferences['capabilities']),
+      'usb': s.supports('usb'),
+      'serial': s.supports('serial'),
+    },
+    'platform': s.preferences['platform'],
+  };
   @override
   List<JsonMap> get events => s.events;
   @override

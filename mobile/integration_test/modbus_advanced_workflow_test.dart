@@ -1,10 +1,10 @@
+import 'runtime_adapter.dart';
 import 'dart:convert';
 import 'modbus_interaction.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/features/modbus/modbus_models.dart';
 
@@ -15,7 +15,8 @@ void registerAdvancedModbusIntegrationTests() {
   testWidgets(
     'Flutter Modbus advanced: FC23, identification, PDU, sweep, probe, audit and loopback controller',
     (tester) async {
-      const engine = MethodChannelEngine(), platform = MethodChannelPlatform();
+      final runtime = protocolTestRuntime();
+      final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
       final settings = mbMap(await platform.invoke('settings.get'));
       await platform.invoke('settings.save', {
@@ -46,7 +47,7 @@ requests:
       await engine.close();
       try {
         await tester.pumpWidget(
-          const IotoolsApp(engine: engine, platform: platform),
+          protocolTestApp(engine, platform),
         );
         await _wait(
           tester,
@@ -310,7 +311,7 @@ requests:
         expect(tester.takeException(), isNull);
         if (Platform.isAndroid) await binding.convertFlutterSurfaceToImage();
         await tester.pump();
-        await binding.takeScreenshot(
+        await takeProtocolScreenshot(tester, binding, 
           'flutter-modbus-04-advanced-fixture-complete',
         );
       } finally {

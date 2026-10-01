@@ -147,7 +147,7 @@ class NativeFiles {
             folder.path,
             method == 'files.importBundle'
                 ? '.source.zip'
-                : safeFilename(picked.name),
+                : pickedFilename(picked.name),
           ),
         );
         await _copy(picked.openRead(), imported, maximum, declared, task);
@@ -229,6 +229,9 @@ String safeFilename(String name) {
   }
   return String.fromCharCodes(runes);
 }
+
+String pickedFilename(String name, {p.Context? context}) =>
+    safeFilename((context ?? p.context).basename(name));
 
 Future<void> _copy(
   Stream<List<int>> input,
