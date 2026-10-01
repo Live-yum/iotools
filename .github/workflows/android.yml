@@ -57,6 +57,7 @@ jobs:
         run: |
           python3 scripts/flutter/verify-mobile.py
           python3 scripts/flutter/test_emulator_runner.py
+          python3 scripts/flutter/test_release_apk_gate.py
           bash scripts/android/build-native.sh
           bash scripts/flutter/prepare-assets.sh
       - name: Build debug-signed Flutter APK and platform tests
@@ -89,6 +90,7 @@ jobs:
           flutter build apk --release --target-platform android-arm64,android-x64 --target lib/main.dart
           cd android
           ./gradlew --no-daemon -PiotoolsTestBuildType=release -Ptarget-platform=android-arm64,android-x64 assembleReleaseAndroidTest
+          ./gradlew --no-daemon :app:dependencies --configuration releaseRuntimeClasspath > ../../android-evidence/release-runtime-dependencies.txt
           cd ../..
           mkdir -p android-dist android-evidence/aot-test
           apk=mobile/build/app/outputs/flutter-apk/app-release.apk

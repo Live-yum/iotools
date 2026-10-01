@@ -36,6 +36,9 @@ while :; do sleep .1; done
 FIXTURE
 chmod 700 "$1"''')
             script(root/'bin/adb', '''printf 'adb %s\\n' "$*" >> "$TRACE"
+if test "$1" = shell && test "$2" = getprop; then printf '29\\n'; fi
+if test "$1" = shell && test "$2" = cmd; then printf 'package:/system/framework/framework-res.apk\\n'; fi
+if test "$1" = features; then printf 'cmd,shell_v2\\n'; fi
 if test "$1" = shell && test "$2" = am && test "$3" = force-stop; then exit "$STOP_RESULT"; fi
 if test "$1" = install; then test -f "$3"; fi
 if test "$1" = shell && test "$2" = am && test "$3" = instrument; then

@@ -18,6 +18,27 @@ collect() {
 }
 trap collect EXIT
 adb shell wm density 160
+# Boot completion can precede a stable package manager/API response under
+# software emulation. Require actual readiness before Gradle caches device data.
+ready_samples=0
+ready_deadline=$((SECONDS+60))
+for attempt in $(seq 1 30); do
+ sdk=
+ package_path=
+ if sdk=$(timeout 5s adb shell getprop ro.build.version.sdk 2>>android-evidence/device-ready.log); then sdk=${sdk//$'\r'/}; fi
+ if package_path=$(timeout 5s adb shell cmd package path android 2>>android-evidence/device-ready.log); then package_path=${package_path//$'\r'/}; fi
+ printf 'attempt=%s sdk=%s package=%s\n' "$attempt" "$sdk" "$package_path" >> android-evidence/device-ready.log
+ if [[ "$sdk" =~ ^[0-9]{2,3}$ ]] && ((10#$sdk>=26)) && [[ "$package_path" == package:* ]]; then
+  ready_samples=$((ready_samples+1))
+ else
+  ready_samples=0
+ fi
+ if test "$ready_samples" -eq 3; then break; fi
+ if test "$SECONDS" -ge "$ready_deadline"; then break; fi
+ sleep .2
+done
+if test "$ready_samples" -ne 3; then echo "Android API/package manager did not become consistently ready"; exit 75; fi
+timeout 5s adb features > android-evidence/adb-features.txt
 fixture="${RUNNER_TEMP:-/tmp}/iotools-flutter-fixtures"
 go build -o "$fixture" ./scripts/android-fixtures
 "$fixture" -ready "$PWD/android-evidence/fixture-ready.json" > android-evidence/fixture.log 2>&1 &
@@ -26,7 +47,7 @@ for n in $(seq 1 50); do test ! -s android-evidence/fixture-ready.json || break;
 test -s android-evidence/fixture-ready.json
 for port in 48410 48411 48412 48413 48414 48415 48416; do adb reverse "tcp:$port" "tcp:$port"; done
 # Real Android document provider and bounded byte-stream tests.
-(cd mobile/android && timeout --kill-after=30s 5m ./gradlew --no-daemon connectedDebugAndroidTest)
+(cd mobile/android && timeout --kill-after=30s 5m ./gradlew --no-daemon --max-workers=1 :app:connectedDebugAndroidTest)
 # All protocol UI interactions run inside the Flutter app, backed by real local fixtures.
 # Release builds remove dev plugins from the generated registrant. Let drive run
 # its official debug tooling regeneration; --no-pub would retain that release registrant.

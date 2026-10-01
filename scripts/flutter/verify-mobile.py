@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Prove the mobile build is Flutter and contains no old terminal/native UI."""
 from pathlib import Path
-import sys,zipfile,struct,xml.etree.ElementTree as ET
+import sys,zipfile,struct,re,xml.etree.ElementTree as ET
+from release_apk_gate import check_apk
 root=Path(__file__).resolve().parents[2]
 for p in (root/'mobile').rglob('*'):
  if not p.is_file() or any(x in p.parts for x in ['build','.dart_tool','.gradle']):continue
@@ -13,6 +14,8 @@ java=list((root/'mobile/android/app/src/main/java/io/github/liveyum/iotools').rg
 allowed={'MainActivity.java','NativeRuntime.java','MobileFiles.java','UsbSerialTransport.java'}
 assert {p.name for p in java}==allowed, 'Unexpected legacy Java UI class in Flutter APK source'
 assert 'extends FlutterActivity' in next(p for p in java if p.name=='MainActivity.java').read_text()
+gradle=(root/'mobile/android/app/build.gradle').read_text()
+assert not re.search(r'^\s*(?:implementation|api|releaseImplementation)\s+[\"\'](?:androidx\.test[.:]|junit:|org\.hamcrest:)',gradle,re.M),'Test-only Android dependencies must not enter release runtime'
 manifest=ET.parse(root/'mobile/android/app/src/main/AndroidManifest.xml').getroot()
 android='{http://schemas.android.com/apk/res/android}'
 renderer=[x for x in manifest.findall('application/meta-data') if x.get(android+'name')=='io.flutter.embedding.android.EnableImpeller']
@@ -26,6 +29,7 @@ if len(sys.argv)>1:
   assert abis,'No supported Flutter ABI'
   for abi in abis:assert f'lib/{abi}/libiotools.so' in names,f'Go engine missing for {abi}'
   if '--aot' in sys.argv or '--aot-arm64' in sys.argv:
+   check_apk(apk)
    expected_abis={'arm64-v8a'} if '--aot-arm64' in sys.argv else {'arm64-v8a','x86_64'}
    assert set(abis)==expected_abis,'AOT package ABI set differs from its declared artifact'
    assert 'assets/flutter_assets/kernel_blob.bin' not in names,'Development Dart kernel must not enter delivered AOT APK'

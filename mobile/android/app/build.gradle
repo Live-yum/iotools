@@ -25,11 +25,12 @@ flutter { source '../..' }
 dependencies {
  implementation 'com.github.mik3y:usb-serial-for-android:3.11.0'
  // Match the debug app's Flutter integration_test runtime and instrumentation.
- // Keep Gradle's consistent resolution enabled; select one tested AndroidX stack.
- implementation 'androidx.test:runner:1.6.2'
- implementation 'androidx.test:rules:1.6.1'
- implementation 'androidx.test.ext:junit:1.2.1'
- implementation 'androidx.test.espresso:espresso-core:3.6.1' 
+ // Keep test libraries out of the release runtime and manifest.
+ // Debug keeps one consistent AndroidX stack with integration_test.
+ debugImplementation 'androidx.test:runner:1.6.2'
+ debugImplementation 'androidx.test:rules:1.6.1'
+ debugImplementation 'androidx.test.ext:junit:1.2.1'
+ debugImplementation 'androidx.test.espresso:espresso-core:3.6.1' 
  androidTestImplementation 'androidx.test:runner:1.6.2'
  androidTestImplementation 'androidx.test:rules:1.6.1'
  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
