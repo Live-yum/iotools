@@ -23,7 +23,7 @@ public class StandaloneTest {
  private final ByteArrayOutputStream nativeBytes=new ByteArrayOutputStream();
  private String terminal(ActivityScenario<MainActivity> scenario)throws Exception{
   CountDownLatch latch=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>("");
-  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',rendered:document.querySelector('.xterm-rows')?document.querySelector('.xterm-rows').innerText:'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
+  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',rendered:document.querySelector('.xterm-rows')?document.querySelector('.xterm-rows').innerText:'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',model:window.terminalFaultState||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
   assertTrue("terminal callback",latch.await(30,TimeUnit.SECONDS));
   String decoded=new org.json.JSONTokener(result.get()).nextValue().toString();
   org.json.JSONObject diagnostic=new org.json.JSONObject(decoded);
@@ -31,7 +31,7 @@ public class StandaloneTest {
   if(!error.isEmpty()){
    screenshot("failed-renderer");
    byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
-   fail("Offline renderer error: "+error+" captured native fixture bytes="+captured.length);
+   fail("Offline renderer error: "+error+" model="+diagnostic.optString("model")+" captured native fixture bytes="+captured.length);
   }
   return decoded;
  }

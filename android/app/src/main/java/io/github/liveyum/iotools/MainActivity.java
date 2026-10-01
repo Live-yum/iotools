@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
  private boolean active,ready,wanted=true,starting,seenRunning,stopping;
  private int cols=80,rows=24;
  private boolean outputPending;
- private int outputSequence;
+ private int outputSequence,streamGeneration;
  private static final int IMPORT=21,EXPORT=22,IMPORT_FILE=23,EXPORT_FILE=24;
  private File exportSource;
  private File config;
@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
   if(!outputPending){
    byte[] bytes=NativeRuntime.read();
    if(outputObserver!=null&&bytes.length>0)outputObserver.accept(bytes);
-   if(bytes.length>0){outputPending=true;int sequence=++outputSequence;web.evaluateJavascript("receiveTerminal("+JSONObject.quote(android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))+","+sequence+")",null);}
+   if(bytes.length>0){outputPending=true;int sequence=++outputSequence;web.evaluateJavascript("receiveTerminal("+JSONObject.quote(android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))+","+sequence+","+streamGeneration+")",null);}
   }
   int state=NativeRuntime.state();
   if(state==1)seenRunning=true;else if(seenRunning){seenRunning=false;if(!stopping)wanted=false;stopping=false;status.setText("终端已停止 · 点启动重新打开");}
@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
   int result=NativeRuntime.start(config.getAbsolutePath(),cols,rows,flags);
   starting=false;
   if(result<0){wanted=false;status.setText("启动失败："+NativeRuntime.error());return;}
+  streamGeneration++;
   stopping=false;
   status.setText("已启动 · "+cols+"×"+rows+" · 后台取消任务但保留编辑，不自动重放");
  }
