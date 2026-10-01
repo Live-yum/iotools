@@ -22,12 +22,17 @@ import org.junit.runner.RunWith;
 public class StandaloneTest {
  private String terminal(ActivityScenario<MainActivity> scenario)throws Exception{
   CountDownLatch latch=new CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>("");
-  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
-  assertTrue("terminal callback",latch.await(30,TimeUnit.SECONDS));return result.get();
+  scenario.onActivity(a->a.terminalView().evaluateJavascript("JSON.stringify({text:typeof terminalText==='function'?terminalText():'',rendered:document.querySelector('.xterm-rows')?document.querySelector('.xterm-rows').innerText:'',ready:document.readyState,terminal:typeof Terminal,fit:typeof FitAddon,error:window.terminalLoadError||'',body:document.body?document.body.innerText.slice(0,400):''})",s->{result.set(s);latch.countDown();}));
+  assertTrue("terminal callback",latch.await(30,TimeUnit.SECONDS));
+  String decoded=new org.json.JSONTokener(result.get()).nextValue().toString();
+  org.json.JSONObject diagnostic=new org.json.JSONObject(decoded);
+  String error=diagnostic.optString("error","");
+  if(!error.isEmpty()){screenshot("failed-renderer");fail("Offline renderer error: "+error);}
+  return decoded;
  }
  private void awaitText(ActivityScenario<MainActivity> scenario,String text)throws Exception{
   long end=System.currentTimeMillis()+60000;String actual="";
-  while(System.currentTimeMillis()<end){actual=terminal(scenario);if(actual.contains(text))return;Thread.sleep(100);}
+  while(System.currentTimeMillis()<end){actual=terminal(scenario);if(new org.json.JSONObject(actual).optString("rendered","").contains(text))return;Thread.sleep(100);}
   screenshot("failed-screen");fail("Missing "+text+" in "+actual+" native="+NativeRuntime.error());
  }
  private String shell(String command)throws Exception{

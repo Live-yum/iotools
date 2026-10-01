@@ -10,4 +10,6 @@ collect() {
  printf 'API=%s target=%s test_exit=%s\n' "${ANDROID_TEST_API:-unknown}" "${ANDROID_TEST_TARGET:-unknown}" "$result" > android-evidence/platform.txt
 }
 trap collect EXIT
+# Disposable software emulator only: reduce raster work without hiding ANRs.
+adb shell wm density 160
 timeout --kill-after=30s 12m gradle -p android --no-daemon connectedDebugAndroidTest
