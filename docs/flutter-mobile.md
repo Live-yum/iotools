@@ -13,7 +13,7 @@ Dart 与 Android 之间传递 JSON 字符串，避免平台数值转换损失 In
 
 ## 本地开发
 
-固定工具链 Flutter 3.35.7（Dart 3.9），Android JDK 17、SDK 36（目标 API 35）、NDK 28.1.13356709 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --debug --target-platform android-arm64,android-x64`。
+固定工具链 Flutter 3.35.7（Dart 3.9），Android JDK 17、SDK 36（目标 API 35）、NDK 28.1.13356709 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --release --target-platform android-arm64,android-x64`。
 
 GitHub Actions 构建 ARM64 和 x86_64 所需的 Go 原生库，检查 Android 依赖图中不包含 TUI，运行 Flutter 组件测试、实际 Android 文件适配测试和模拟器上的真实协议交互。测试服务只绑定回环地址，不扫描或连接真实工业设备。
 
@@ -27,4 +27,6 @@ USB 串口仅在用户选择设备、允许系统权限并明确打开后使用�
 
 当前交付目标是 Android APK。Dart 页面与平台接口为后续 iOS 复用保留边界；这不代表已构建、签名或验证 iOS 应用。iOS 文件选择、Go 绑定和设备访问需单独适配，Android USB Host 能力不作跨平台等同承诺。
 
-开发验证包采用调试签名，不是商店正式发行签名。不同构建若使用不同临时调试证书，更新安装可能需要先卸载；卸载会删除应用私有文件，操作前应自行导出需要保留的配置和历史。
+最终验证包使用 Flutter AOT 编译与 Android 标准原生库压缩，不包含 Dart 调试 kernel。双 ABI 放在同一 APK 内，便于在 x86_64 模拟器上核对待交付文件的 SHA、安装、启动、五协议操作和截图；ARM64 真机仍是独立验收范围。
+
+验证包复用 CI 中的临时调试签名，不是商店正式发行签名。不同构建若使用不同临时调试证书，更新安装可能需要先卸载；卸载会删除应用私有文件，操作前应自行导出需要保留的配置和历史。

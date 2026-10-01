@@ -107,3 +107,5 @@ Large events include `result_id` alongside their bounded inline preview. `result
 - `config.switch` preview exposes its existing `digest`, covering the source and parsed references. Saving a draft invalidates a token: a UI must preview again and compare digests before proceeding under an earlier review.
 - `http.filter.start {query,data}` runs a bounded local jq query asynchronously, returns a `run_id`, emits `query` and `done`, and supports exact-run `cancel`. The synchronous `http.filter` remains available.
 - Kafka record events preserve `raw_key_base64`, `raw_value_base64`, `key_is_null` and `value_is_null` alongside decoded values, headers and timestamp.
+
+OPC UA 读取中的非有限 IEEE 浮点值以 `NaN`、`+Infinity`、`-Infinity` 文本传输，并保留 `value_type_name`、质量状态和时间戳；浮点数组保留原位置，避免因 JSON 不支持非有限数字而丢弃整个设备读值事件。写入值的校验范围保持不变。

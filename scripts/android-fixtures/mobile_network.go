@@ -47,10 +47,32 @@ func startMobileNetworkFixtures() (map[string]any, func(), error) {
 		stopBroker()
 		return nil, nil, err
 	}
+	var httpPosts atomic.Int64
 	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			var value map[string]string
+			decoder := json.NewDecoder(io.LimitReader(r.Body, 65537))
+			if decoder.Decode(&value) != nil || len(value) != 1 || value["operation"] != "aot-local-verify" {
+				http.Error(w, "invalid synthetic operation", 400)
+				return
+			}
+			var extra any
+			if decoder.Decode(&extra) != io.EOF {
+				http.Error(w, "invalid trailing payload", 400)
+				return
+			}
+			httpPosts.Add(1)
+		} else if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": "AOT HTTP 验收成功", "operation": r.Method})
+	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]int64{"modbus_reads": mb.reads.Load(), "modbus_writes": mb.writes.Load()})
+		_ = json.NewEncoder(w).Encode(map[string]int64{"modbus_reads": mb.reads.Load(), "modbus_writes": mb.writes.Load(), "http_posts": httpPosts.Load(), "mqtt_packets_received": atomic.LoadInt64(&broker.Info.PacketsReceived)})
 	})
 	metrics, err := net.Listen("tcp", "127.0.0.1:48416")
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -307,6 +308,40 @@ func binaryResult(b []byte) map[string]any {
 // Flatten browsing nodes into explicit identifiers usable by native controls.
 func normalizeEvent(value any) any {
 	switch v := value.(type) {
+	case float64:
+		if math.IsNaN(v) {
+			return "NaN"
+		}
+		if math.IsInf(v, 1) {
+			return "+Infinity"
+		}
+		if math.IsInf(v, -1) {
+			return "-Infinity"
+		}
+		return v
+	case float32:
+		if math.IsNaN(float64(v)) {
+			return "NaN"
+		}
+		if math.IsInf(float64(v), 1) {
+			return "+Infinity"
+		}
+		if math.IsInf(float64(v), -1) {
+			return "-Infinity"
+		}
+		return v
+	case []float64:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = normalizeEvent(x)
+		}
+		return out
+	case []float32:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = normalizeEvent(x)
+		}
+		return out
 	case *ua.ReferenceDescription:
 		if v == nil {
 			return nil

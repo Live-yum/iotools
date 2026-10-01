@@ -79,6 +79,32 @@ jobs:
           done
           cp docs/flutter-mobile.md LICENSE android-dist/
           # Keep the normal-entry APK before flutter drive builds its test entrypoint.
+      - name: Build compact AOT normal-entry APK and matching test APK
+        id: build_aot
+        run: |
+          cd mobile
+          flutter build apk --release --target-platform android-arm64,android-x64 --target lib/main.dart
+          cd android
+          ./gradlew --no-daemon -PiotoolsTestBuildType=release -Ptarget-platform=android-arm64,android-x64 assembleReleaseAndroidTest
+          cd ../..
+          mkdir -p android-dist android-evidence/aot-test
+          apk=mobile/build/app/outputs/flutter-apk/app-release.apk
+          python3 scripts/flutter/verify-mobile.py "$apk" --aot
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$tools/apksigner" verify --verbose --print-certs "$apk" | tee android-evidence/aot-signature.txt
+          "$tools/aapt" dump permissions "$apk" | tee android-evidence/aot-permissions.txt
+          python3 scripts/flutter/check-apk-permissions.py android-evidence/aot-permissions.txt
+          "$tools/zipalign" -c -P 16 -v 4 "$apk" > android-evidence/aot-zipalign.txt
+          target="iotools-flutter-universal-$IOTOOLS_SHA-aot-test-signed.apk"
+          cp "$apk" "android-dist/$target"
+          (cd android-dist && sha256sum "$target" > "$target.sha256" && stat -c '%n %s bytes' "$target")
+          test_apk=$(find mobile/build/app/outputs/apk/androidTest/release -name '*androidTest.apk' -print -quit)
+          test -n "$test_apk"
+          cp "$test_apk" android-evidence/aot-test/instrumentation.apk
+          # The normal-entry delivery APK is immutable before any self-driving debug test runs.
+      - name: Bound exact APK artifact transfers
+        id: aot_parts
+        run: python3 scripts/flutter/prepare-apk-transport.py "android-dist/iotools-flutter-universal-$IOTOOLS_SHA-aot-test-signed.apk"
       - name: Detect already granted emulator acceleration
         run: |
           if test -r /dev/kvm && test -w /dev/kvm; then
@@ -126,6 +152,43 @@ jobs:
             android-dist/LICENSE
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.build_aot.outcome == 'success' }}
+        with:
+          name: iotools-flutter-aot-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/*universal*
+            android-dist/flutter-mobile.md
+            android-dist/LICENSE
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 0 }}
+        with:
+          name: iotools-aot-transfer-00-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part00
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 1 }}
+        with:
+          name: iotools-aot-transfer-01-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part01
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 2 }}
+        with:
+          name: iotools-aot-transfer-02-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part02
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

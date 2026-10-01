@@ -11,7 +11,7 @@
 - 物理串口：`rtu://COM3` 或 `rtu:///dev/ttyUSB0`，配置 `baud`、`data_bits`、
   `parity`（N/E/O）、`stop_bits`
 - `unit` 为 1–247；广播禁用。地址是零起始协议地址 0–65535，不是 40001 显示编号
-- `count` 为 1–125；读取区域不得跨过地址 65535
+- `count`：寄存器读取为 1–125，线圈/离散输入读取为 1–2000；读取区域不得跨过地址 65535
 - `samples` 为 1–100000，`interval_ms` 为 10–86400000 毫秒；整个请求受
   `timeout` 限制。单次通信最长 5 秒；TCP/RTU-over-TCP 支持上下文取消
 - 读取动作：`read-holding`、`read-input`、`read-coils`、`read-discrete`
@@ -120,7 +120,7 @@ curl -H 'Content-Type: application/json' -d '{"type":"holding","address":10,"cou
 拒绝非回环 Host、带 Origin 的请求以及非 JSON POST，避免网页跨站调用。
 请求体最多 64 KiB，同时只执行一个设备请求；忙时返回 429。
 
-- `POST /read`：type 为 holding/input/coil/discrete，显式 address/count，count 1–125
+- `POST /read`：type 为 holding/input/coil/discrete，显式 address/count；holding/input 的 count 为 1–125，coil/discrete 为 1–2000
 - `POST /write`：默认返回 403。只有启动时选择明确写请求并提供 `--allow-writes`，
   才允许配置中 unit/address/count/type 内的写入；HTTP 不能改变设备或扩大授权
 - API 写入 values 最多 123 项；线圈仅接受数值 0/1，不接受任意非零真值
