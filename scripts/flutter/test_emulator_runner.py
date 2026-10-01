@@ -57,6 +57,7 @@ exit 99''')
             self.assertLess(recorded.index('adb shell am force-stop'),recorded.index('adb install -r android-dist/'))
             self.assertLess(recorded.index('adb install -r android-dist/'),recorded.index('adb shell am instrument'))
             self.assertIn('adb reverse --remove tcp:48416',recorded)
+            self.assertIn('adb pull /sdcard/Android/data/io.github.liveyum.iotools/files/aot-evidence/. android-evidence/aot-device/',recorded)
             self.assertEqual(apk.read_bytes(),b'normal-entry-immutable-signed-apk-fixture')
             return result.returncode, recorded
 

@@ -30,3 +30,5 @@ USB 串口仅在用户选择设备、允许系统权限并明确打开后使用�
 最终验证包使用 Flutter AOT 编译与 Android 标准原生库压缩，不包含 Dart 调试 kernel。双 ABI 放在同一 APK 内，便于在 x86_64 模拟器上核对待交付文件的 SHA、安装、启动、五协议操作和截图；ARM64 真机仍是独立验收范围。
 
 验证包复用 CI 中的临时调试签名，不是商店正式发行签名。不同构建若使用不同临时调试证书，更新安装可能需要先卸载；卸载会删除应用私有文件，操作前应自行导出需要保留的配置和历史。
+
+当前固定 Flutter 3.35.7 使用官方支持的 Android Skia 渲染后端，debug 与普通 AOT 入口采用相同设置。API 29 软件模拟器曾在 Impeller 的原生 raster 线程崩溃；更换渲染后端后的实际运行结果需以对应构建的设备验收为准，不能用这一配置本身宣称兼容性通过。参考：[Flutter 官方 Impeller Android 配置](https://docs.flutter.dev/perf/impeller#android)。

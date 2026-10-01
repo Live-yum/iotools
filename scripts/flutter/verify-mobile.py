@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the mobile build is Flutter and contains no old terminal/native UI."""
 from pathlib import Path
-import sys,zipfile,struct
+import sys,zipfile,struct,xml.etree.ElementTree as ET
 root=Path(__file__).resolve().parents[2]
 for p in (root/'mobile').rglob('*'):
  if not p.is_file() or any(x in p.parts for x in ['build','.dart_tool','.gradle']):continue
@@ -13,6 +13,10 @@ java=list((root/'mobile/android/app/src/main/java/io/github/liveyum/iotools').rg
 allowed={'MainActivity.java','NativeRuntime.java','MobileFiles.java','UsbSerialTransport.java'}
 assert {p.name for p in java}==allowed, 'Unexpected legacy Java UI class in Flutter APK source'
 assert 'extends FlutterActivity' in next(p for p in java if p.name=='MainActivity.java').read_text()
+manifest=ET.parse(root/'mobile/android/app/src/main/AndroidManifest.xml').getroot()
+android='{http://schemas.android.com/apk/res/android}'
+renderer=[x for x in manifest.findall('application/meta-data') if x.get(android+'name')=='io.flutter.embedding.android.EnableImpeller']
+assert len(renderer)==1 and renderer[0].get(android+'value')=='false','Debug and AOT must share the declared supported Skia renderer' 
 if len(sys.argv)>1:
  with zipfile.ZipFile(sys.argv[1]) as apk:
   names=set(apk.namelist())

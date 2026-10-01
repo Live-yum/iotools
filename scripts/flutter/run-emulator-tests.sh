@@ -31,7 +31,7 @@ for port in 48410 48411 48412 48413 48414 48415 48416; do adb reverse "tcp:$port
 # Release builds remove dev plugins from the generated registrant. Let drive run
 # its official debug tooling regeneration; --no-pub would retain that release registrant.
 set +e
-(cd mobile && timeout --kill-after=30s 20m flutter drive --driver=test_driver/integration_test.dart --target=integration_test/app_test.dart --dart-define=IOTOOLS_TEST_FIXTURES=true)
+(cd mobile && timeout --kill-after=30s 20m flutter drive --driver=test_driver/integration_test.dart --target=integration_test/app_test.dart --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true)
 flutter_result=$?
 python3 scripts/flutter/verify-mobile.py mobile/build/app/outputs/flutter-apk/app-debug.apk --integration-test
 plugin_result=$?
@@ -51,7 +51,7 @@ if test "$first_failure" -eq 0 && test "$aot_result" -ne 0; then first_failure=$
 set -e
 cat android-evidence/aot-instrumentation.txt
 mkdir -p android-evidence/aot-device
-adb pull /sdcard/Android/data/io.github.liveyum.iotools.test/files/aot-evidence/. android-evidence/aot-device/
+adb pull /sdcard/Android/data/io.github.liveyum.iotools/files/aot-evidence/. android-evidence/aot-device/
 if test "$aot_result" -ne 0; then exit "$aot_result"; fi
 python3 scripts/flutter/verify-aot-device.py "$aot" android-evidence
 

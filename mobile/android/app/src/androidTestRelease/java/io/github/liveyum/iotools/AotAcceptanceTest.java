@@ -51,7 +51,7 @@ import java.util.zip.ZipFile;
  * 不调用 run/preview/dispatch，不启动 integration_test Dart 入口。
  *
  * 运行器须传入 apk_sha256、build_sha，并 adb reverse 48410..48416。
- * 证据写入测试 APK 自有 externalFiles/aot-evidence，不申请用户存储权限。
+ * 证据写入目标应用自有 externalFiles/aot-evidence，不申请用户存储权限。
  */
 @RunWith(AndroidJUnit4.class)
 @LargeTest
@@ -72,10 +72,11 @@ public final class AotAcceptanceTest {
     @Test(timeout = 480_000L)
     public void normalReleaseFlutterEntryRunsAllProtocolsThroughVisibleControls() throws Throwable {
         Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        Context test = InstrumentationRegistry.getInstrumentation().getContext();
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
-        File external = test.getExternalFilesDir(null);
-        assertNotNull("测试 APK 自有证据目录不可用", external);
+        // Instrumentation runs under the target UID. Its test-package context
+        // cannot own an external-files directory under Android scoped storage.
+        File external = target.getExternalFilesDir(null);
+        assertNotNull("目标应用外部私有证据目录不可用，无法完成验收证据采集", external);
         evidence = new File(external, "aot-evidence");
         assertTrue("无法创建证据目录", evidence.isDirectory() || evidence.mkdirs());
         report.put("schema", 1).put("status", "running").put("protocols", protocols);
