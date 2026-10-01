@@ -1,3 +1,4 @@
+import 'action_interaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -160,6 +161,10 @@ requests:
         );
         await _enter(tester, 'ua-write-value-Int32', '2147483648');
         await _tap(tester, 'ua-preview-write');
+        await _wait(
+          tester,
+          () => find.textContaining('Int32 范围').evaluate().isNotEmpty,
+        );
         expect(find.textContaining('Int32 范围'), findsOneWidget);
         _sameCounters(
           'invalid typed write is rejected locally',
@@ -224,6 +229,10 @@ requests:
         );
         await _enter(tester, 'ua-argument-0-Int32', '2147483648');
         await _tap(tester, 'ua-preview-call');
+        await _wait(
+          tester,
+          () => find.textContaining('Int32 范围').evaluate().isNotEmpty,
+        );
         expect(find.textContaining('Int32 范围'), findsOneWidget);
         _sameCounters(
           'invalid method argument rejected locally',
@@ -383,7 +392,9 @@ Future<void> _wait(WidgetTester tester, bool Function() predicate) async {
   final end = DateTime.now().add(const Duration(seconds: 35));
   while (!predicate()) {
     if (DateTime.now().isAfter(end))
-      throw TestFailure('Timed out waiting for Flutter OPC UI');
+      throw TestFailure(
+        'Timed out waiting for Flutter OPC UI; visible=${find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().join(" | ")}',
+      );
     await tester.pump(const Duration(milliseconds: 100));
   }
 }
@@ -391,10 +402,8 @@ Future<void> _wait(WidgetTester tester, bool Function() predicate) async {
 Future<void> _tap(WidgetTester tester, String key) async {
   final f = find.byKey(ValueKey(key));
   await _wait(tester, () => f.evaluate().isNotEmpty);
-  await tester.ensureVisible(f);
-  await tester.pump();
-  await tester.tap(f);
-  await tester.pump(const Duration(milliseconds: 300));
+  await tapReadyControl(tester, f);
+  await tester.pump(const Duration(milliseconds: 100));
 }
 
 Future<void> _tapText(WidgetTester tester, String text) async {
@@ -411,6 +420,13 @@ Future<void> _enter(WidgetTester tester, String key, String value) async {
   await tester.ensureVisible(f);
   await tester.pump();
   await tester.enterText(f, value);
+  await tester.pump();
+  final editable = find.descendant(of: f, matching: find.byType(EditableText));
+  expect(
+    tester.widget<EditableText>(editable).controller.text,
+    value,
+    reason: '真实编辑控件必须收到完整精确输入',
+  );
   await tester.testTextInput.receiveAction(TextInputAction.done);
   await tester.pump();
 }

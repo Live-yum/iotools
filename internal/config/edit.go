@@ -12,7 +12,7 @@ func ReplaceRequest(source []byte, id string, request Request) ([]byte, error) {
 		return nil, e
 	}
 	var document yaml.Node
-	if e := yaml.Unmarshal(source, &document); e != nil {
+	if e := yaml.Unmarshal(NormalizeJSONForYAML(source), &document); e != nil {
 		return nil, e
 	}
 	root := document.Content[0]

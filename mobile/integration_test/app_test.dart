@@ -1,3 +1,4 @@
+import 'action_interaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -128,7 +129,7 @@ void main() {
         expect(received, isEmpty);
         await tapKey(tester, 'run_request');
         await tapKey(tester, 'confirm_action');
-        await waitFor(tester, () => find.text('已完成').evaluate().isNotEmpty);
+        await waitForHTTPCompletion(tester, engine, binding, received);
         expect(received, [expected]);
         expect(find.textContaining('AES 解密成功中文'), findsWidgets);
         await shot(tester, binding, 'flutter-http-04-decrypted-result');
@@ -137,7 +138,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 350));
           await openRequest(tester, 'HTTP $name');
           await tapKey(tester, 'run_request');
-          await waitFor(tester, () => find.text('已完成').evaluate().isNotEmpty);
+          await waitForHTTPCompletion(tester, engine, binding, received);
         }
         await tapKey(tester, 'nav_history');
         await waitFor(
@@ -311,10 +312,8 @@ Future<void> waitFor(
 Future<void> tapKey(WidgetTester t, String key) async {
   await waitFor(t, () => find.byKey(ValueKey(key)).evaluate().isNotEmpty);
   final f = find.byKey(ValueKey(key));
-  await t.ensureVisible(f);
-  await t.pump();
-  await t.tap(f);
-  await t.pump(const Duration(milliseconds: 400));
+  await tapReadyControl(t, f);
+  await t.pump(const Duration(milliseconds: 100));
 }
 
 Future<void> tapText(WidgetTester t, String text) async {
@@ -352,4 +351,25 @@ Future<void> openRequest(WidgetTester t, String name) async {
   await t.enterText(f, name);
   await t.pump(const Duration(milliseconds: 200));
   await tapText(t, name);
+}
+
+Future<void> waitForHTTPCompletion(
+  WidgetTester tester,
+  Engine engine,
+  IntegrationTestWidgetsFlutterBinding binding,
+  List<String> received,
+) async {
+  final end = DateTime.now().add(const Duration(seconds: 20));
+  while (find.text('已完成').evaluate().isEmpty) {
+    if (find.text('执行失败').evaluate().isNotEmpty || DateTime.now().isAfter(end)) {
+      await shot(tester, binding, 'flutter-http-failure');
+      final state = await engine.command({'op': 'state'});
+      // Only this test's synthetic fixture state and public vector are emitted.
+      throw TestFailure(
+        'HTTP UI did not complete; fixture writes=${received.length}; state=$state; '
+        'visible=${find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().join(" | ")}',
+      );
+    }
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }

@@ -850,6 +850,9 @@ class _ModbusWorkspaceState extends State<ModbusWorkspace> {
           p.remove('rules');
         }
         if (action == 'write-typed') {
+          // A read window's count is unrelated to the chosen type's width.
+          // The shared encoder supplies the exact word count for review/run.
+          p.remove('count');
           p['value_type'] = type;
           p['value'] = exactTypedValue(type, value.text);
           p['word_order'] = order;

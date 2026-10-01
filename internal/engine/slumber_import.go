@@ -57,7 +57,7 @@ func decodeCollectionMap(data []byte) (map[string]any, error) {
 	if len(data) > 4<<20 {
 		return nil, fmt.Errorf("collection exceeds 4 MiB")
 	}
-	d := yaml.NewDecoder(bytes.NewReader(data))
+	d := yaml.NewDecoder(bytes.NewReader(config.NormalizeJSONForYAML(data)))
 	var root map[string]any
 	if e := d.Decode(&root); e != nil {
 		return nil, e

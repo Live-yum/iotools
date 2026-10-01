@@ -15,7 +15,7 @@ func importSlumberV3(data []byte) (*config.Collection, error) {
 	if len(data) > maxBody {
 		return nil, fmt.Errorf("collection exceeds 4 MiB")
 	}
-	d := yaml.NewDecoder(bytes.NewReader(data))
+	d := yaml.NewDecoder(bytes.NewReader(config.NormalizeJSONForYAML(data)))
 	var node yaml.Node
 	if e := d.Decode(&node); e != nil {
 		return nil, e

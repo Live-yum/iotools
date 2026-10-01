@@ -34,10 +34,10 @@ type Request struct {
 	Params   map[string]any `yaml:"params,omitempty" json:"params,omitempty"`
 }
 
-func Parse(data []byte) (*Collection, error) {
-	if len(data) > 4<<20 {
-		return nil, fmt.Errorf("collection exceeds 4 MiB")
-	}
+// NormalizeJSONForYAML preserves JSON numbers, duplicate keys and source spelling
+// while adapting JSON-only slash escapes for the shared YAML collection parser.
+// Callers must apply their original-byte size limits before calling this helper.
+func NormalizeJSONForYAML(data []byte) []byte {
 	// JSON permits escaped slashes; YAML double-quoted strings do not. Normalize
 	// only a valid JSON document and preserve every other byte, including number
 	// precision and duplicate keys (which the strict YAML decoder rejects).
@@ -52,8 +52,16 @@ func Parse(data []byte) (*Collection, error) {
 			}
 			normalized = append(normalized, data[i])
 		}
-		data = normalized
+		return normalized
 	}
+	return data
+}
+
+func Parse(data []byte) (*Collection, error) {
+	if len(data) > 4<<20 {
+		return nil, fmt.Errorf("collection exceeds 4 MiB")
+	}
+	data = NormalizeJSONForYAML(data)
 	var c Collection
 	d := yaml.NewDecoder(bytes.NewReader(data))
 	d.KnownFields(true)

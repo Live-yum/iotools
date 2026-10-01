@@ -340,8 +340,7 @@ Future<JsonMap?> editTransform(
       paths = TextEditingController(
         text: (initial['paths'] as List? ?? []).join('\n'),
       );
-  bool parse = initial['parse'] == 'json',
-      missing = initial['skip_missing'] == true,
+  bool missing = initial['skip_missing'] == true,
       nulls = initial['skip_null'] == true,
       blank = initial['skip_blank'] == true;
   final result = await memoryDialog<JsonMap>(
@@ -424,11 +423,7 @@ Future<JsonMap?> editTransform(
                     options: const ['utf8', 'utf8-sig'],
                     onChanged: (v) => set(() => encoding = v),
                   ),
-                  CheckboxListTile(
-                    title: const Text('转换后解析 JSON'),
-                    value: parse,
-                    onChanged: (v) => set(() => parse = v!),
-                  ),
+                  const Text('正文转换须为第一步；转换后解析 JSON，再继续字段转换'),
                 ],
               ],
             ),
@@ -478,7 +473,7 @@ Future<JsonMap?> editTransform(
                       .split(' ')
                       .asMap()
                       .map((i, k) => MapEntry(k, encoding)),
-                if (response && scope == 'body' && parse) 'parse': 'json',
+                if (response && scope == 'body') 'parse': 'json',
               });
             },
             child: const Text('应用'),

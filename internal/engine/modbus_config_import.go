@@ -395,7 +395,7 @@ func AppendSelectedMTUIRequests(source []byte, requests []config.Request) ([]byt
 		actions[r.Action] = true
 	}
 	var doc yaml.Node
-	if err := yaml.Unmarshal(source, &doc); err != nil {
+	if err := yaml.Unmarshal(config.NormalizeJSONForYAML(source), &doc); err != nil {
 		return nil, err
 	}
 	root := doc.Content[0]

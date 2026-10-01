@@ -18,6 +18,15 @@ func writePrivateRootCollection(t *testing.T, path, id string) {
 	}
 }
 
+func canonicalPrivateRootPath(t *testing.T, path string) string {
+	t.Helper()
+	actual, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return actual
+}
+
 func TestPrivateRootNestedRecoveryAndSiblingSwitch(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "imported", "group", "collection.yaml")
@@ -26,24 +35,27 @@ func TestPrivateRootNestedRecoveryAndSiblingSwitch(t *testing.T) {
 	writePrivateRootCollection(t, sibling, "sibling")
 	// A basename-only reopen would silently load this unrelated collection.
 	writePrivateRootCollection(t, filepath.Join(root, "collection.yaml"), "wrong")
+	canonicalRoot := canonicalPrivateRootPath(t, root)
+	canonicalNested := canonicalPrivateRootPath(t, nested)
+	canonicalSibling := canonicalPrivateRootPath(t, sibling)
 	s, err := Open(nested, "test", Options{PrivateRoot: root})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if s.root != root || s.path != nested || s.collection.Requests[0].ID != "nested" {
+	if s.root != canonicalRoot || s.path != canonicalNested || s.collection.Requests[0].ID != "nested" {
 		t.Fatalf("nested recovery changed root/path/source: %q %q %+v", s.root, s.path, s.collection.Requests)
 	}
 	mustOK(t, s, map[string]any{"op": "options.set", "options": map[string]any{"history": true}})
-	if s.root != root {
+	if s.root != canonicalRoot {
 		t.Fatal("public options changed private root")
 	}
 	plan := mustOK(t, s, map[string]any{"op": "config.switch", "path": "other/collection.yaml"}).(map[string]any)
-	if s.path != nested {
+	if s.path != canonicalNested {
 		t.Fatal("preview switched configuration")
 	}
 	state := mustOK(t, s, map[string]any{"op": "config.switch", "path": "other/collection.yaml", "token": plan["token"], "confirmed": true}).(map[string]any)
-	if state["path"] != sibling || s.root != root || s.collection.Requests[0].ID != "sibling" {
+	if state["path"] != canonicalSibling || s.root != canonicalRoot || s.collection.Requests[0].ID != "sibling" {
 		t.Fatalf("sibling switch failed: %v", state)
 	}
 	// Reopening the switched nested path preserves the same sandbox again.
@@ -52,7 +64,7 @@ func TestPrivateRootNestedRecoveryAndSiblingSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
-	if reopened.root != root || reopened.path != sibling {
+	if reopened.root != canonicalRoot || reopened.path != canonicalSibling {
 		t.Fatal("recovery narrowed the private root")
 	}
 	mustOK(t, reopened, map[string]any{"op": "file.read", "path": "imported/group/collection.yaml"})
@@ -62,12 +74,13 @@ func TestPrivateRootDefaultAndMissingInitialization(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested", "collection.yaml")
 	writePrivateRootCollection(t, nested, "nested")
+	canonicalNested := canonicalPrivateRootPath(t, nested)
 	s, err := Open(nested, "test", Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if s.root != filepath.Dir(nested) || s.path != nested {
+	if s.root != filepath.Dir(canonicalNested) || s.path != canonicalNested {
 		t.Fatal("default dirname boundary changed")
 	}
 	if cmd(t, s, map[string]any{"op": "file.read", "path": "../collection.yaml"})["ok"] != false {
@@ -86,7 +99,7 @@ func TestPrivateRootDefaultAndMissingInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer initialized.Close()
-	if initialized.path != missing || len(initialized.collection.Requests) == 0 {
+	if initialized.path != filepath.Join(filepath.Dir(canonicalNested), "new.yaml") || len(initialized.collection.Requests) == 0 {
 		t.Fatal("missing-file initialization did not preserve nested path")
 	}
 	if _, err := os.Stat(filepath.Join(root, "new.yaml")); !os.IsNotExist(err) {
@@ -141,16 +154,18 @@ func TestPrivateRootCanonicalAliasAndPublicJSONIsolation(t *testing.T) {
 	root := filepath.Join(base, "private")
 	path := filepath.Join(root, "nested", "collection.yaml")
 	writePrivateRootCollection(t, path, "nested")
+	canonicalRoot := canonicalPrivateRootPath(t, root)
+	canonicalPath := canonicalPrivateRootPath(t, path)
 	alias := filepath.Join(base, "alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
 	}
-	for _, suppliedPath := range []string{path, filepath.Join(alias, "nested", "collection.yaml")} {
+	for _, suppliedPath := range []string{canonicalPath, filepath.Join(alias, "nested", "collection.yaml")} {
 		s, err := Open(suppliedPath, "test", Options{PrivateRoot: alias})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s.root != root || s.path != path {
+		if s.root != canonicalRoot || s.path != canonicalPath {
 			t.Fatal("trusted root alias was not canonicalized")
 		}
 		for field, value := range map[string]any{"private_root": base, "PrivateRoot": base, "require_existing": true, "RequireExisting": true} {
@@ -158,7 +173,7 @@ func TestPrivateRootCanonicalAliasAndPublicJSONIsolation(t *testing.T) {
 				t.Fatal("public command accepted a host-only option", field)
 			}
 		}
-		if s.root != root {
+		if s.root != canonicalRoot {
 			t.Fatal("rejected command changed private root")
 		}
 		b, err := json.Marshal(Options{PrivateRoot: alias, RequireExisting: true})

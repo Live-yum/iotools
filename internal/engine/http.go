@@ -86,6 +86,9 @@ func runHTTP(ctx context.Context, r config.Request, emit Emit) error {
 			return e
 		}
 	}
+	if e = codec.ValidateTransformRules(codecs, transforms); e != nil {
+		return e
+	}
 	var reader io.Reader = strings.NewReader(body)
 	if streamReader != nil {
 		reader = streamReader

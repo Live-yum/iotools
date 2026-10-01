@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'engine.dart';
 import 'json.dart';
@@ -18,6 +19,28 @@ class AppSession extends ChangeNotifier {
       preferences['collection']?.toString() ??
       'iotools.yaml';
   final List<JsonMap> events = [];
+  final List<(JsonMap, int)> _earlyEvents = [];
+  int _earlyEventBytes = 0;
+
+  void _clearEarlyEvents() {
+    _earlyEvents.clear();
+    _earlyEventBytes = 0;
+  }
+
+  void _keepEarlyEvent(JsonMap event) {
+    final bytes = utf8.encode(exactEncode(event)).length;
+    if (bytes > 2 * 1024 * 1024) {
+      dropped++;
+      return;
+    }
+    _earlyEvents.add((event, bytes));
+    _earlyEventBytes += bytes;
+    while (_earlyEvents.length > 128 || _earlyEventBytes > 2 * 1024 * 1024) {
+      _earlyEventBytes -= _earlyEvents.removeAt(0).$2;
+      dropped++;
+    }
+  }
+
   JsonMap? originalResultRequest, resultRequest;
   String? originalRequestId;
   JsonMap? resultOverrides;
@@ -73,6 +96,7 @@ class AppSession extends ChangeNotifier {
     }
     _opening = true;
     final openingEpoch = ++_epoch;
+    _clearEarlyEvents();
     _timer?.cancel();
     _visualTimer?.cancel();
     void ensureCurrent() {
@@ -280,6 +304,17 @@ class AppSession extends ChangeNotifier {
     state['running'] = true;
     state['run_id'] = resultRunId;
     status = '执行中';
+    error = null;
+    // Events can arrive through an already pending poll before the run reply.
+    // Reconcile only this exact run; they were already broadcast, so do not replay.
+    final early = _earlyEvents
+        .where((entry) => entry.$1['run_id']?.toString() == resultRunId)
+        .map((entry) => entry.$1)
+        .toList();
+    _clearEarlyEvents();
+    for (final event in early) {
+      _applyResultEvent(event);
+    }
     notifyListeners();
   }
 
@@ -289,6 +324,38 @@ class AppSession extends ChangeNotifier {
     status = '正在取消';
     notifyListeners();
     await command({'op': 'cancel', 'run_id': id});
+  }
+
+  bool _applyResultEvent(JsonMap event) {
+    events.add(event);
+    if (events.length > 500) {
+      events.removeAt(0);
+      dropped++;
+    }
+    if (event['kind'] == 'started' &&
+        originalResultRequest?['protocol'] == 'modbus') {
+      final src = mapOf(mapOf(event['data'])['source']);
+      if (src.isNotEmpty) {
+        resultRequest = cloneMap(originalResultRequest!);
+        resultRequest!['endpoint'] = src['endpoint'];
+        resultRequest!['action'] = src['action'];
+        resultRequest!['params'] = {
+          ...mapOf(resultRequest!['params']),
+          'unit': src['unit'],
+        };
+      }
+    }
+    if (event['kind'] == 'done') {
+      state['running'] = false;
+      final d = mapOf(event['data']);
+      status = switch (d['status']) {
+        'cancelled' => '已取消',
+        'failed' => '执行失败',
+        _ => '已完成',
+      };
+      if (d['error'] != null) error = d['error'].toString();
+    }
+    return event['kind'] == 'done';
   }
 
   Future<void> poll() async {
@@ -302,35 +369,11 @@ class AppSession extends ChangeNotifier {
       bool terminal = changed;
       for (final event in rowsOf(batch['events'])) {
         _stream.add(event);
-        if (event['run_id']?.toString() != resultRunId) continue;
-        events.add(event);
-        if (events.length > 500) {
-          events.removeAt(0);
-          dropped++;
+        if (event['run_id']?.toString() != resultRunId) {
+          _keepEarlyEvent(event);
+          continue;
         }
-        if (event['kind'] == 'started' &&
-            originalResultRequest?['protocol'] == 'modbus') {
-          final src = mapOf(mapOf(event['data'])['source']);
-          if (src.isNotEmpty) {
-            resultRequest = cloneMap(originalResultRequest!);
-            resultRequest!['endpoint'] = src['endpoint'];
-            resultRequest!['action'] = src['action'];
-            resultRequest!['params'] = {
-              ...mapOf(resultRequest!['params']),
-              'unit': src['unit'],
-            };
-          }
-        }
-        if (event['kind'] == 'done') {
-          terminal = true;
-          final d = mapOf(event['data']);
-          status = switch (d['status']) {
-            'cancelled' => '已取消',
-            'failed' => '执行失败',
-            _ => '已完成',
-          };
-          if (d['error'] != null) error = d['error'].toString();
-        }
+        terminal = _applyResultEvent(event) || terminal;
         changed = true;
       }
       state['running'] = batch['running'] == true;
@@ -387,6 +430,7 @@ class AppSession extends ChangeNotifier {
 
   Future<void> pause() async {
     _epoch++;
+    _clearEarlyEvents();
     final wasRunning = running;
     paused = true;
     await engine.pause();
@@ -398,6 +442,7 @@ class AppSession extends ChangeNotifier {
 
   Future<void> resume() async {
     final epoch = ++_epoch;
+    _clearEarlyEvents();
     if (!ready) {
       if (!disposed) {
         paused = false;
@@ -440,6 +485,7 @@ class AppSession extends ChangeNotifier {
     else
       _collectionSources.remove(currentCollection);
     _epoch++;
+    _clearEarlyEvents();
     state = next;
     drafts
       ..clear()
@@ -469,6 +515,7 @@ class AppSession extends ChangeNotifier {
   @override
   void dispose() {
     disposed = true;
+    _clearEarlyEvents();
     _timer?.cancel();
     _visualTimer?.cancel();
     _stream.close();

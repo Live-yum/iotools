@@ -388,6 +388,7 @@ void main() {
     tester,
   ) async {
     final host = FakeModbusHost();
+    host.request['params']['count'] = 2;
     await mount(tester, host);
     await tapText(tester, '操作');
     await tapText(tester, '写入类型数值 / 寄存器');
@@ -401,7 +402,29 @@ void main() {
     await tapText(tester, '预览编码与目标');
     expect(host.runs.single['params']['value'], '18446744073709551615');
     expect(host.runs.single['params']['value_type'], 'u64');
+    expect(host.runs.single['params'].containsKey('count'), isFalse);
+    expect(host.request['params']['count'], 2);
     expect(host.runs.single['action'], 'write-typed');
+    expect(host.saved, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    host.dispose();
+  });
+  testWidgets('u16 write from a two-word read leaves width to the shared encoder', (
+    tester,
+  ) async {
+    final host = FakeModbusHost();
+    host.request['params']['count'] = 2;
+    await mount(tester, host);
+    await tapText(tester, '操作');
+    await tapText(tester, '写入类型数值 / 寄存器');
+    await tester.enterText(find.byKey(const ValueKey('精确数值')), '17');
+    await tapText(tester, '预览编码与目标');
+    final request = host.runs.single;
+    expect(request['action'], 'write-typed');
+    expect(request['params']['value_type'], 'u16');
+    expect(request['params']['value'], '17');
+    expect(request['params'].containsKey('count'), isFalse);
+    expect(host.request['params']['count'], 2);
     expect(host.saved, isEmpty);
     await tester.pumpWidget(const SizedBox());
     host.dispose();

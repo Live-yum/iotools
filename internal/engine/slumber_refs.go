@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"fmt"
+	"github.com/Live-yum/iotools/internal/config"
 	"go.yaml.in/yaml/v3"
 	"io"
 	"os"
@@ -24,7 +25,7 @@ func (r *collectionReferences) parse(data []byte) (*yaml.Node, error) {
 		return nil, fmt.Errorf("集合引用超过4MiB单文件/16MiB总量")
 	}
 	var doc yaml.Node
-	d := yaml.NewDecoder(bytes.NewReader(data))
+	d := yaml.NewDecoder(bytes.NewReader(config.NormalizeJSONForYAML(data)))
 	if e := d.Decode(&doc); e != nil {
 		return nil, e
 	}

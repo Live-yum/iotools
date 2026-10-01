@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
+import 'package:iotools_mobile/core/session.dart';
 import 'package:iotools_mobile/features/modbus/modbus_models.dart';
 
 /// Real Flutter app → MethodChannel → JNI → shared Go → TCP wire fixture.
@@ -50,6 +51,7 @@ requests:
           tester,
           () => find.text('Flutter Modbus 整体验收').evaluate().isNotEmpty,
         );
+        final session = tester.widget<WorkspaceShell>(find.byType(WorkspaceShell)).session;
         _sameCounters(initialCounters, await _metrics(), 'startup');
         await _tap(tester, 'Flutter Modbus 整体验收');
         await _tap(tester, '工具');
@@ -69,8 +71,7 @@ requests:
         await _tap(tester, '仅应用窗口');
         _sameCounters(initialCounters, await _metrics(), 'local navigation');
         await _tap(tester, '操作');
-        await _tap(tester, '预览并读取当前窗口');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, '预览并读取当前窗口', 'read-holding');
         final firstRead = await _metrics();
         expect(
           firstRead['modbus_reads'],
@@ -102,17 +103,15 @@ requests:
         expect(find.textContaining('127.0.0.1:48415'), findsWidgets);
         expect(find.textContaining('registers'), findsWidgets);
         await binding.takeScreenshot('flutter-modbus-02-write-target-review');
-        await _tap(tester, '确认执行');
         wrote = true;
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, '确认执行', 'write-typed');
         final changed = await _metrics();
         expect(
           changed['modbus_writes'],
           (firstRead['modbus_writes'] as int) + 1,
         );
         expect(changed['modbus_reads'], firstRead['modbus_reads']);
-        await _tap(tester, '预览并读取当前窗口');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, '预览并读取当前窗口', 'read-holding');
         await _tap(tester, '寄存器');
         await _wait(tester, () => find.text('17').evaluate().isNotEmpty);
         expect(find.text('17'), findsWidgets);
@@ -127,8 +126,7 @@ requests:
         // Restore the disposable fixture through the same explicit Flutter review.
         await _tap(tester, '操作');
         await _writeDialog(tester, '7');
-        await _tap(tester, '确认执行');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, '确认执行', 'write-typed');
         restored = true;
         final beforeLifecycle = await _metrics();
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
@@ -174,7 +172,7 @@ requests:
             'token': preview['token'],
             'confirmed': true,
           });
-          await _idle(tester, engine);
+          await _cleanupIdle(tester, engine);
         }
         await engine.command({
           'op': 'config.save',
@@ -251,9 +249,26 @@ Future<void> _writeDialog(WidgetTester tester, String value) async {
   await _enter(tester, '精确数值', value);
   await _tap(tester, '预览编码与目标');
   await _wait(tester, () => find.text('确认执行写操作').evaluate().isNotEmpty);
+  final countRow = find.byWidgetPredicate((widget) => widget is Column &&
+      widget.children.any((child) => child is Text && child.data == '数量'));
+  expect(find.descendant(of: countRow, matching: find.byWidgetPredicate(
+      (widget) => widget is SelectableText && widget.data == '1')), findsOneWidget,
+      reason: 'u16 写入预览必须为 1 个字，不沿用读取窗口的 2 个字');
 }
 
-Future<void> _idle(WidgetTester tester, Engine engine) async {
+Future<void> _executeAndWait(
+  WidgetTester tester, AppSession session, String label, String action,
+) async {
+  final operation = ModbusOperationWait(session);
+  try {
+    await _tap(tester, label);
+    await operation.wait(tester, action: action);
+  } finally {
+    await operation.dispose();
+  }
+}
+
+Future<void> _cleanupIdle(WidgetTester tester, Engine engine) async {
   final end = DateTime.now().add(const Duration(seconds: 30));
   while (true) {
     await tester.pump(const Duration(milliseconds: 150));

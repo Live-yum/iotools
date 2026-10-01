@@ -289,3 +289,50 @@ func Transform(raw []byte, codecs map[string]Config, rules []Rule) ([]byte, erro
 	}
 	return json.MarshalIndent(root, "", "  ")
 }
+
+// ValidateTransformRules rejects an invalid response plan before a request can
+// leave the client. Data-dependent decryption/JSON checks still run on response.
+func ValidateTransformRules(codecs map[string]Config, rules []Rule) error {
+	for index, r := range rules {
+		if r.Scope == "" {
+			r.Scope = "fields"
+		}
+		if r.Scope != "body" && r.Scope != "fields" {
+			return errors.New("转换 scope 无效")
+		}
+		if r.Type != "decode" && r.Type != "decrypt" && r.Type != "parse_json" && r.Type != "encode" && r.Type != "encrypt" {
+			return errors.New("转换 type 无效")
+		}
+		if r.Type == "parse_json" {
+			if r.Crypto != "" || r.Scope != "fields" {
+				return errors.New("parse_json 要求 fields 且不能设置 crypto")
+			}
+		} else {
+			c, ok := codecs[r.Crypto]
+			if !ok {
+				return errors.New("转换引用不存在的 crypto")
+			}
+			if e := c.Validate(); e != nil {
+				return e
+			}
+			if (r.Type == "encrypt" || r.Type == "decrypt") && !c.IsAES() {
+				return errors.New("encrypt/decrypt 仅适用于 AES")
+			}
+		}
+		if r.Scope == "body" {
+			if index != 0 || r.Parse != "json" || len(r.Paths) > 0 || r.SkipMissing || r.SkipBlank || r.SkipNull || (r.TextEncoding != "" && r.TextEncoding != "utf8" && r.TextEncoding != "utf8-sig") {
+				return errors.New("body 转换必须为首步并设置 parse: json，不能设置 paths/skip")
+			}
+		} else {
+			if len(r.Paths) == 0 || r.Parse != "" || r.TextEncoding != "" {
+				return errors.New("fields 转换要求 paths，不能设置 parse/text_encoding")
+			}
+			for _, p := range r.Paths {
+				if _, e := path(p); e != nil {
+					return e
+				}
+			}
+		}
+	}
+	return nil
+}

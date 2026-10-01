@@ -92,7 +92,7 @@ func (s *Session) parseCollection(data []byte) (*config.Collection, error) {
 			return errors.New("collection reference limit exceeded")
 		}
 		var doc yaml.Node
-		if e := yaml.Unmarshal(data, &doc); e != nil {
+		if e := yaml.Unmarshal(config.NormalizeJSONForYAML(data), &doc); e != nil {
 			return e
 		}
 		seen := map[*yaml.Node]bool{}
