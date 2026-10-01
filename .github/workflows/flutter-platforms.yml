@@ -75,8 +75,7 @@ jobs:
           flutter analyze
           flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
-      - name: Prepare pinned Linux CJK and emoji fonts
-        if: matrix.target == 'linux'
+      - name: Prepare pinned desktop CJK and emoji fonts
         run: python3 scripts/flutter-platforms/prepare-native-fonts.py
       - name: Real Linux desktop UI and Go engine acceptance
         if: matrix.target == 'linux'
@@ -94,6 +93,10 @@ jobs:
         run: |
           cd mobile
           flutter test integration_test/native_smoke_test.dart -d windows --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Real sandboxed macOS UI and Go engine acceptance
+        if: matrix.target == 'macos'
+        timeout-minutes: 12
+        run: bash scripts/flutter-platforms/test-macos.sh '${{ matrix.arch }}'
       - name: Compile Linux Flutter application
         if: matrix.target == 'linux'
         run: cd mobile && flutter build linux --release --target-platform '${{ matrix.flutter_target }}' --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"

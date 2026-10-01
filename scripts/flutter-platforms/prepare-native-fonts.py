@@ -1,4 +1,4 @@
-"""Bundle offline CJK/emoji fonts for Linux engines without system fallbacks."""
+"""Bundle offline CJK/emoji fonts for every native desktop application."""
 from pathlib import Path
 import json
 from font_assets import prepare_fonts

@@ -47,28 +47,39 @@ const { chromium } = require('playwright');
     // Flutter intentionally places this accessible control at (-1,-1).
     // A focused keyboard activation is the supported assistive-technology path.
     await page.locator('flt-semantics-placeholder').press('Enter', { timeout: 30000 });
-    await page.getByText('浏览器精确写入', { exact: true }).click({ timeout: 30000 });
+    // Flutter merges this visible card's text into its accessible group name.
+    // Role locators still require real visibility/actionability and use a click.
+    const requestCard = () => page.getByRole('group', { name: /HTTP\s+浏览器精确写入\s+POST/ });
+    await requestCard().waitFor({ state: 'visible', timeout: 30000 });
+    await page.screenshot({ path: path.join(output, '00-config-card.png'), fullPage: true });
+    await requestCard().click();
     await page.getByRole('button', { name: '执行', exact: true }).click();
     await page.getByText('确认执行写操作', { exact: true }).waitFor();
-    const review = await page.locator('body').innerText();
-    assert(review.includes('18446744073709551615'));
+    const review = await page.locator('body').evaluate(body => [
+      body.innerText,
+      ...Array.from(body.querySelectorAll('[aria-label]'), element => element.getAttribute('aria-label')),
+      ...Array.from(body.querySelectorAll('input, textarea'), element => element.value),
+    ].join('\n'));
+    assert(review.includes('"number":18446744073709551615'));
+    assert(review.includes('"string":"18446744073709551615"'));
     assert.equal(received.length, 0);
     await page.screenshot({ path: path.join(output, '01-exact-review.png'), fullPage: true });
     await page.getByRole('button', { name: '取消', exact: true }).click();
     assert.equal(received.length, 0);
     await page.getByRole('button', { name: '执行', exact: true }).click();
     await page.getByRole('button', { name: '确认执行', exact: true }).click();
-    await page.getByText('已完成', { exact: true }).waitFor({ timeout: 15000 });
+    await page.getByText('已完成', { exact: true }).first().waitFor({ timeout: 15000 });
     assert.equal(received.length, 1);
     assert(received[0].includes('"number":18446744073709551615'));
     assert(received[0].includes('"string":"18446744073709551615"'));
-    await page.getByText('浏览器真实响应😀', { exact: false }).first().waitFor();
+    await page.getByText('浏览器真实响应😀', { exact: false })
+      .or(page.getByLabel('浏览器真实响应😀', { exact: false })).first().waitFor();
     await page.screenshot({ path: path.join(output, '02-real-response.png'), fullPage: true });
     await page.reload();
     // Flutter intentionally places this accessible control at (-1,-1).
     // A focused keyboard activation is the supported assistive-technology path.
     await page.locator('flt-semantics-placeholder').press('Enter', { timeout: 30000 });
-    await page.getByText('浏览器精确写入', { exact: true }).waitFor({ timeout: 30000 });
+    await requestCard().waitFor({ state: 'visible', timeout: 30000 });
     assert.equal(received.length, 1, 'reload must not replay a confirmed write');
     assert.deepEqual(errors, []);
     assert.deepEqual(external, [], 'all UI, fonts and CanvasKit resources must be local');

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -38,6 +39,14 @@ Future<void> takeProtocolScreenshot(WidgetTester tester, IntegrationTestWidgetsF
   final image = await boundary.toImage(pixelRatio: 1);
   try {
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (Platform.isMacOS) {
+      // A sandboxed app cannot write screenshots into the host checkout.
+      // Return image bytes through the integration-test driver instead.
+      final report = binding.reportData ??= <String, dynamic>{};
+      final screenshots = report['nativeScreenshots'] ??= <String, String>{};
+      screenshots[name] = base64Encode(bytes!.buffer.asUint8List());
+      return;
+    }
     final root = Directory('build/flutter-evidence')..createSync(recursive: true);
     final safe = name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
     await File('${root.path}/native-$safe.png').writeAsBytes(bytes!.buffer.asUint8List());

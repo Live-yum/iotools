@@ -296,12 +296,12 @@
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = ();
-			inputPaths = ("$(IOTOOLS_NATIVE_LIBRARY)");
+			inputPaths = ("$(IOTOOLS_NATIVE_LIBRARY)", "$(PROJECT_DIR)/../native/fonts/NotoSansSC.ttf", "$(PROJECT_DIR)/../native/fonts/NotoEmoji.ttf");
 			name = "Embed iotools core";
-			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libiotools_native.dylib");
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libiotools_native.dylib", "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/iotools-fonts/NotoSansSC.ttf", "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/iotools-fonts/NotoEmoji.ttf");
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\ntest -f \"$IOTOOLS_NATIVE_LIBRARY\"\nmkdir -p \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\ncp \"$IOTOOLS_NATIVE_LIBRARY\" \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libiotools_native.dylib\"\n/usr/bin/codesign --force --sign - --timestamp=none \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libiotools_native.dylib\"\n";
+			shellScript = "set -eu\ntest -f \"$IOTOOLS_NATIVE_LIBRARY\"\nmkdir -p \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH\"\ncp \"$IOTOOLS_NATIVE_LIBRARY\" \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libiotools_native.dylib\"\n/usr/bin/ditto \"$PROJECT_DIR/../native/fonts\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/iotools-fonts\"\n/usr/bin/codesign --force --sign - --timestamp=none \"$TARGET_BUILD_DIR/$FRAMEWORKS_FOLDER_PATH/libiotools_native.dylib\"\n";
 		};
 
 		3399D490228B24CF009A79C7 /* ShellScript */ = {

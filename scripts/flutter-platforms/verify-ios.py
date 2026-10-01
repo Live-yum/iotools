@@ -73,13 +73,31 @@ def verify_bundle(app, kind, evidence):
     }
 
 
-def test_simulator(app, info, evidence, report, save):
-    devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
-    choices = [(runtime, device) for runtime, rows in devices.items() if ".iOS-" in runtime
-               for device in rows if device.get("isAvailable") and device["name"].startswith("iPhone")]
-    require(choices, "No existing available iPhone simulator; install an iOS simulator runtime in Xcode")
+def select_simulator(devices, sdk_version):
+    sdk = re.fullmatch(r"(\d+)\.(\d+)(?:\.(\d+))?", sdk_version)
+    require(sdk, f"Unexpected selected iPhone simulator SDK version: {sdk_version}")
+    sdk_release = tuple(int(part) for part in sdk.groups()[:2])
+    choices = []
+    for runtime, rows in devices.items():
+        version = re.fullmatch(r"com\.apple\.CoreSimulator\.SimRuntime\.iOS-(\d+)-(\d+)(?:-(\d+))?", runtime)
+        # simctl can expose runtimes from other installed Xcodes. Only use this
+        # selected SDK's major/minor release, even if a newer runtime is booted.
+        if not version or tuple(int(part) for part in version.groups()[:2]) != sdk_release:
+            continue
+        for device in rows:
+            if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                choices.append((runtime, device))
+    require(choices, f"No available iPhone simulator matching selected SDK {sdk_version}; install its runtime in the selected Xcode")
     choices.sort(key=lambda row: (row[1].get("state") == "Booted", row[0], row[1]["name"]), reverse=True)
-    runtime, selected = choices[0]
+    return choices[0]
+
+
+def test_simulator(app, info, evidence, report, save):
+    sdk_version = run("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version").strip()
+    report["simulator_sdk"] = sdk_version
+    save()
+    devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))["devices"]
+    runtime, selected = select_simulator(devices, sdk_version)
     udid = selected["udid"]
     if selected["state"] != "Booted":
         run("xcrun", "simctl", "boot", udid)

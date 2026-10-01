@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:iotools_mobile/core/json.dart';
 import 'package:iotools_mobile/core/offline_fonts.dart';
+import 'package:iotools_mobile/core/runtime.dart';
 import 'action_interaction.dart';
 import 'app_test.dart' show waitFor, tapKey, tapText, openRequest;
 import 'runtime_adapter.dart';
@@ -14,6 +15,18 @@ void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('actual native desktop UI: exact HTTP write, cancel, hidden and no replay', (tester) async {
     await loadOfflineFonts();
+    // Exercise the installed app's real platform plugin/private-data path too;
+    // protocol fixtures below still use their isolated disposable collection.
+    final installedRuntime = createRuntime();
+    try {
+      final installedSettings = mapOf(await installedRuntime.platform.invoke('settings.get'));
+      expect(installedSettings['platform'], Platform.operatingSystem);
+      expect(await Directory(installedSettings['root'] as String).exists(), true);
+      await installedRuntime.engine.open();
+      expect(mapOf(await installedRuntime.engine.command({'op': 'config.get'}))['source'], isA<String>());
+    } finally {
+      await installedRuntime.engine.close();
+    }
     final runtime = protocolTestRuntime();
     final engine = runtime.engine, platform = runtime.platform;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -42,12 +55,18 @@ requests:
       json:
         number: 18446744073709551615
         string: "18446744073709551615"
+        text: "配置中文😀"
 '''});
       await engine.close();
       await tester.pumpWidget(protocolTestApp(engine, platform));
       await waitFor(tester, () => find.text('桌面精确 HTTP 写入').evaluate().isNotEmpty);
       await takeProtocolScreenshot(tester, binding, 'desktop-01-home');
       await openRequest(tester, '桌面精确 HTTP 写入');
+      await tapText(tester, 'YAML');
+      final editor = tester.widget<TextField>(find.byKey(const ValueKey('yaml_editor')));
+      expect(editor.controller!.text, contains('配置中文😀'));
+      await takeProtocolScreenshot(tester, binding, 'desktop-04-chinese-yaml');
+      await tapText(tester, '表单');
       await tapKey(tester, 'run_request');
       await waitFor(tester, () => find.byKey(const ValueKey('confirm_action')).evaluate().isNotEmpty);
       final review = tester.widget<SelectableText>(find.byKey(const ValueKey('review_json'))).data!;
@@ -70,6 +89,7 @@ requests:
       expect(received, hasLength(1));
       expect(received.single, contains('"number":18446744073709551615'));
       expect(received.single, contains('"string":"18446744073709551615"'));
+      expect(received.single, contains('配置中文😀'));
       expect(find.textContaining('原生桌面真实响应'), findsWidgets);
       await takeProtocolScreenshot(tester, binding, 'desktop-03-real-response');
       pauseTestLifecycle(binding);

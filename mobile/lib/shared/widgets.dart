@@ -9,6 +9,18 @@ const cyan = Color(0xff24d5ed),
     surface = Color(0xff102333);
 const controlGap = 10.0;
 
+const offlineFontFallback = ['NotoSansSC', 'NotoEmoji'];
+bool get usesOfflineFonts =>
+    kIsWeb || const [TargetPlatform.linux, TargetPlatform.windows,
+      TargetPlatform.macOS].contains(defaultTargetPlatform);
+
+/// Keep CJK and emoji readable when an editor/result chooses a monospace face.
+TextStyle codeTextStyle({double fontSize = 13}) => TextStyle(
+  fontFamily: 'monospace',
+  fontFamilyFallback: usesOfflineFonts ? offlineFontFallback : null,
+  fontSize: fontSize,
+);
+
 /// Preserve deliberately placed spacers while separating adjacent controls.
 List<Widget> spacedChildren(List<Widget> children, {double gap = controlGap}) {
   bool spacer(Widget child) =>
@@ -60,11 +72,11 @@ class ActionWrap extends StatelessWidget {
 
 ThemeData appTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
-  final bundledFont = kIsWeb || defaultTargetPlatform == TargetPlatform.linux;
+  final bundledFont = usesOfflineFonts;
   return ThemeData(
     useMaterial3: true,
     fontFamily: bundledFont ? 'NotoSansSC' : null,
-    fontFamilyFallback: bundledFont ? const ['NotoEmoji'] : null,
+    fontFamilyFallback: bundledFont ? offlineFontFallback : null,
     brightness: brightness,
     colorScheme:
         ColorScheme.fromSeed(
@@ -297,7 +309,7 @@ class DataView extends StatelessWidget {
     if (text.length > 16000) return PagedText(text);
     return SelectableText(
       text,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+      style: codeTextStyle(),
     );
   }
 }
@@ -467,7 +479,7 @@ class _PagedTextState extends State<PagedText> {
         ),
         SelectableText(
           widget.text.substring(start, end),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          style: codeTextStyle(),
         ),
       ],
     );

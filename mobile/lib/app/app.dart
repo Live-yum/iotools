@@ -869,7 +869,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
               expands: true,
               minLines: null,
               maxLines: null,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+              style: codeTextStyle(fontSize: 14),
               keyboardType: TextInputType.multiline,
               decoration: const InputDecoration(
                 labelText: '完整集合 YAML',

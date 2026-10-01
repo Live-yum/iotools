@@ -113,3 +113,10 @@ if(NOT EXISTS "${IOTOOLS_NATIVE_LIBRARY}")
   message(FATAL_ERROR "Build the iotools native core and set IOTOOLS_NATIVE_LIBRARY first")
 endif()
 install(FILES "${IOTOOLS_NATIVE_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
+
+# Include CJK and emoji even when the Windows language packs omit them.
+set(IOTOOLS_FONTS "${CMAKE_CURRENT_SOURCE_DIR}/../native/fonts")
+if(NOT EXISTS "${IOTOOLS_FONTS}/NotoSansSC.ttf" OR NOT EXISTS "${IOTOOLS_FONTS}/NotoEmoji.ttf")
+  message(FATAL_ERROR "Run scripts/flutter-platforms/prepare-native-fonts.py first")
+endif()
+install(DIRECTORY "${IOTOOLS_FONTS}/" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/iotools-fonts" COMPONENT Runtime)
