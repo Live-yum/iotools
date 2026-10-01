@@ -1,0 +1,3 @@
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="12.5%">
+ <bitmap android:src="@drawable/iotools_avatar" android:gravity="fill" android:filter="true"/>
+</inset>

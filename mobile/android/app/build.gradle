@@ -17,7 +17,7 @@ android {
   buildConfigField 'String', 'GIT_SHA', '"' + sourceSha + '"'
   testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
  }
- buildTypes { debug { debuggable true }; release { signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+ buildTypes { debug { debuggable true; crunchPngs false }; release { crunchPngs false; signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
  packaging { jniLibs { useLegacyPackaging = true } }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

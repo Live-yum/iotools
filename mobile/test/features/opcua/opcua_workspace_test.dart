@@ -145,6 +145,75 @@ Future<void> tap(WidgetTester tester, String key) async {
 
 void main() {
   testWidgets(
+    'delayed local preview releases IME and preserves cancelled draft',
+    (tester) async {
+      final fake = FakeUa();
+      final gate = Completer<void>();
+      var previewCalls = 0;
+      Future<dynamic> delayed(UaMap command) async {
+        if (command['op'] == 'preview' &&
+            uaMap(command['request'])['action'] == 'write') {
+          previewCalls++;
+          await gate.future;
+        }
+        return fake.command(command);
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpcuaWorkspace(
+            request: fake.request,
+            command: delayed,
+            events: fake.events.stream,
+            readOnly: false,
+            onPrepare: (_) {},
+          ),
+        ),
+      );
+      await tap(tester, 'ua-tab-attributes');
+      await tap(tester, 'ua-refresh');
+      await tap(tester, 'ua-write');
+      final field = find.byKey(const ValueKey('ua-write-value-Int32'));
+      await tester.enterText(field, '99');
+      final editable = find.descendant(
+        of: field,
+        matching: find.byType(EditableText),
+      );
+      expect(tester.widget<EditableText>(editable).focusNode.hasFocus, true);
+      final previewButton = find.byKey(const ValueKey('ua-preview-write'));
+      await tester.ensureVisible(previewButton);
+      await tester.tap(previewButton);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(tester.widget<EditableText>(editable).focusNode.hasFocus, false);
+      expect(previewCalls, 1);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.byKey(const ValueKey('ua-preview-write')),
+            )
+            .enabled,
+        false,
+      );
+      expect(fake.runs('write'), 0);
+      gate.complete();
+      await tester.pumpAndSettle();
+      await tap(tester, 'ua-review-cancel');
+      expect(tester.widget<EditableText>(editable).controller.text, '99');
+      expect(fake.runs('write'), 0);
+      await tester.enterText(field, '2147483648');
+      await tap(tester, 'ua-preview-write');
+      expect(find.textContaining('Int32 范围'), findsOneWidget);
+      expect(previewCalls, 1);
+      await tester.enterText(field, '99');
+      await tap(tester, 'ua-preview-write');
+      expect(previewCalls, 2);
+      await tap(tester, 'ua-review-cancel');
+      expect(fake.runs('write'), 0);
+      await tester.pumpWidget(const SizedBox());
+      await fake.events.close();
+    },
+  );
+  testWidgets(
     'cached navigation is local; typed cancel and invalid value do not run',
     (tester) async {
       final fake = FakeUa();

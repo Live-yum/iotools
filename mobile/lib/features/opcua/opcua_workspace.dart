@@ -1481,6 +1481,10 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
                 onPressed: submitting
                     ? null
                     : () async {
+                        // Finish the native IME connection before replacing this
+                        // editor with a nested review dialog. The draft remains
+                        // in its controllers when validation or review is cancelled.
+                        FocusScope.of(ctx).unfocus();
                         set(() {
                           submitting = true;
                           error = null;

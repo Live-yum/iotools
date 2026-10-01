@@ -127,6 +127,10 @@ public final class AotAcceptanceTest {
                 .put("process_64_bit", android.os.Process.is64Bit()));
             writeReport();
 
+            stage = "核对头像图标与裁切安全区";
+            report.put("launcher_icon", LauncherIconEvidence.verify(target, evidence));
+            writeReport();
+
             stage = "创建临时私有集合";
             temporary = new File(privateRoot, "aot-acceptance-" + suffix + ".yaml");
             assertTrue("临时集合必须新建且不得覆盖", temporary.createNewFile());

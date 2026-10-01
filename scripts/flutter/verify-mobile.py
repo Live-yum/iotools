@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prove the mobile build is Flutter and contains no old terminal/native UI."""
 from pathlib import Path
-import sys,zipfile,struct,re,xml.etree.ElementTree as ET
+import sys,zipfile,struct,re,hashlib,xml.etree.ElementTree as ET
 from release_apk_gate import check_apk
 root=Path(__file__).resolve().parents[2]
 for p in (root/'mobile').rglob('*'):
@@ -16,6 +16,8 @@ assert {p.name for p in java}==allowed, 'Unexpected legacy Java UI class in Flut
 assert 'extends FlutterActivity' in next(p for p in java if p.name=='MainActivity.java').read_text()
 gradle=(root/'mobile/android/app/build.gradle').read_text()
 assert not re.search(r'^\s*(?:implementation|api|releaseImplementation)\s+[\"\'](?:androidx\.test[.:]|junit:|org\.hamcrest:)',gradle,re.M),'Test-only Android dependencies must not enter release runtime'
+avatar=root/'mobile/android/app/src/main/res/drawable-nodpi/iotools_avatar.png'
+assert hashlib.sha256(avatar.read_bytes()).hexdigest()=='3527d1e406ee0f5f0d572c6f77fcf592d3cf34378bfa9dc5ec61c8fb2e87380b','Requested avatar source changed'
 manifest=ET.parse(root/'mobile/android/app/src/main/AndroidManifest.xml').getroot()
 android='{http://schemas.android.com/apk/res/android}'
 renderer=[x for x in manifest.findall('application/meta-data') if x.get(android+'name')=='io.flutter.embedding.android.EnableImpeller']
@@ -23,6 +25,10 @@ assert len(renderer)==1 and renderer[0].get(android+'value')=='false','Debug and
 if len(sys.argv)>1:
  with zipfile.ZipFile(sys.argv[1]) as apk:
   names=set(apk.namelist())
+  avatar_data=avatar.read_bytes()
+  avatar_entries=[n for n in names if n.startswith('res/') and apk.getinfo(n).file_size==len(avatar_data) and apk.read(n)==avatar_data]
+  assert len(avatar_entries)==1,'Requested original avatar resource missing, changed or duplicated'
+
   assert any(x.endswith('/libflutter.so') for x in names),'Flutter engine missing'
   assert any(x.startswith('assets/flutter_assets/') for x in names),'Flutter assets missing'
   abis=[abi for abi in ('arm64-v8a','x86_64') if f'lib/{abi}/libflutter.so' in names]

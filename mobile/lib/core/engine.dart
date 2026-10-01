@@ -64,14 +64,33 @@ class MethodChannelEngine implements Engine {
   );
   @override
   Future<Object?> command(JsonMap command) async {
-    await _lifecycle;
-    final raw = await channel.invokeMethod('command', {
-      'json': exactEncode(command),
-    });
-    if (raw is String && raw.length > 262144) {
-      return unwrap(await compute(_decodeLargeReply, raw));
+    const fixtureDiagnostics = bool.fromEnvironment('IOTOOLS_TEST_FIXTURES');
+    final trace = fixtureDiagnostics && command['op'] == 'preview';
+    final elapsed = trace ? (Stopwatch()..start()) : null;
+    if (trace) debugPrint('OPC_PREVIEW dart-start');
+    try {
+      await _lifecycle;
+      if (trace)
+        debugPrint(
+          'OPC_PREVIEW platform-dispatch ${elapsed!.elapsedMilliseconds}ms',
+        );
+      final raw = await channel.invokeMethod('command', {
+        'json': exactEncode(command),
+      });
+      if (trace)
+        debugPrint(
+          'OPC_PREVIEW platform-reply ${elapsed!.elapsedMilliseconds}ms',
+        );
+      if (raw is String && raw.length > 262144) {
+        return unwrap(await compute(_decodeLargeReply, raw));
+      }
+      return unwrap(raw);
+    } finally {
+      if (trace)
+        debugPrint(
+          'OPC_PREVIEW dart-complete ${elapsed!.elapsedMilliseconds}ms',
+        );
     }
-    return unwrap(raw);
   }
 
   @override
