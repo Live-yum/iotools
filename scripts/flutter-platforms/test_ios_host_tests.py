@@ -76,8 +76,8 @@ class DescriptorTests(unittest.TestCase):
             products, app, tests, descriptor = self.make_products(directory)
             original = descriptor.read_bytes()
             found = host.descriptor_products(descriptor, products)
-            self.assertEqual(found["host"]["bundle"], str(app))
-            self.assertEqual(found["tests"]["bundle"], str(tests))
+            self.assertEqual(found["host"]["bundle"], str(app.resolve()))
+            self.assertEqual(found["tests"]["bundle"], str(tests.resolve()))
             self.assertEqual(found["tests"]["sha256"], host.digest(tests / "RunnerTests"))
             self.assertEqual(descriptor.read_bytes(), original)
             copy_path = Path(directory) / "evidence/generated.xctestrun"
@@ -85,6 +85,31 @@ class DescriptorTests(unittest.TestCase):
             copy_path.write_bytes(original)
             with self.assertRaisesRegex(RuntimeError, "escapes|missing"):
                 host.descriptor_products(copy_path, products)
+
+    def test_symlinked_temporary_root_matches_canonical_products_without_allowing_escape(self):
+        # macOS exposes /var as /private/var. Reproduce that alias explicitly on
+        # every host instead of requiring this test itself to run on macOS.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            real = root / "private/var"
+            real.mkdir(parents=True)
+            alias = root / "var"
+            alias.symlink_to(real, target_is_directory=True)
+            products, app, tests, descriptor = self.make_products(alias)
+            original = descriptor.read_bytes()
+            found = host.descriptor_products(descriptor, products)
+            self.assertNotEqual(app, app.resolve())
+            self.assertEqual(found["host"]["bundle"], str(app.resolve()))
+            self.assertEqual(found["tests"]["bundle"], str(tests.resolve()))
+            self.assertEqual(descriptor.read_bytes(), original)
+            foreign_products, foreign_app, _, _ = self.make_products(root / "foreign")
+            escaped = products / "escape"
+            escaped.symlink_to(foreign_products, target_is_directory=True)
+            descriptor.write_bytes(plistlib.dumps({"RunnerTests": dict(
+                target(), TestHostPath="__TESTROOT__/escape/Debug-iphonesimulator/Runner.app")}))
+            with self.assertRaisesRegex(RuntimeError, "escapes"):
+                host.descriptor_products(descriptor, products)
+            self.assertTrue(foreign_app.is_dir())
 
     def test_wrong_host_identity_escape_missing_and_foreign_products_fail(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -199,7 +224,7 @@ class PhaseTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 65 if failure == action else 0)
                 def launch(app, deadline):
                     launched.append(app)
-                    self.assertEqual(app, root / "mobile/build/ios-host-tests/Build/Products/Debug-iphonesimulator/Runner.app")
+                    self.assertEqual(app, (root / "mobile/build/ios-host-tests/Build/Products/Debug-iphonesimulator/Runner.app").resolve())
                     self.assertEqual(deadline, 1200)
                     clock[0] += 100
                 with patch.dict(os.environ, {"IOTOOLS_SHA": revision, "DEVELOPER_DIR": host.PINNED_DEVELOPER}), \
