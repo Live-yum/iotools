@@ -20,6 +20,8 @@ public class MainActivity extends Activity {
  private final Handler handler=new Handler(Looper.getMainLooper());
  private boolean active,ready,wanted=true,starting,seenRunning,stopping;
  private int cols=80,rows=24;
+ private boolean outputPending;
+ private int outputSequence;
  private static final int IMPORT=21,EXPORT=22,IMPORT_FILE=23,EXPORT_FILE=24;
  private File exportSource;
  private File config;
@@ -29,9 +31,11 @@ public class MainActivity extends Activity {
   if(!active)return;
   if(!ready){handler.postDelayed(this,16);return;}
   String copy=NativeRuntime.clipboard();if(!copy.isEmpty())((ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("iotools明确复制",new String(android.util.Base64.decode(copy,android.util.Base64.DEFAULT),StandardCharsets.UTF_8)));
-  byte[] bytes=NativeRuntime.read();
-  if(outputObserver!=null&&bytes.length>0)outputObserver.accept(bytes);
-  if(bytes.length>0)web.evaluateJavascript("receiveTerminal("+JSONObject.quote(android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))+")",null);
+  if(!outputPending){
+   byte[] bytes=NativeRuntime.read();
+   if(outputObserver!=null&&bytes.length>0)outputObserver.accept(bytes);
+   if(bytes.length>0){outputPending=true;int sequence=++outputSequence;web.evaluateJavascript("receiveTerminal("+JSONObject.quote(android.util.Base64.encodeToString(bytes,android.util.Base64.NO_WRAP))+","+sequence+")",null);}
+  }
   int state=NativeRuntime.state();
   if(state==1)seenRunning=true;else if(seenRunning){seenRunning=false;if(!stopping)wanted=false;stopping=false;status.setText("终端已停止 · 点启动重新打开");}
   if(ready&&wanted&&state==0&&!starting)startTerminal();
@@ -68,6 +72,7 @@ public class MainActivity extends Activity {
    @JavascriptInterface public void ready(int c,int r){runOnUiThread(()->{ready=true;resize(c,r);if(NativeRuntime.state()==1)NativeRuntime.resume();else startTerminal();});}
    @JavascriptInterface public void input(String text){runOnUiThread(()->send(text));}
    @JavascriptInterface public void resize(int c,int r){runOnUiThread(()->MainActivity.this.resize(c,r));}
+   @JavascriptInterface public void outputDone(int sequence){runOnUiThread(()->{if(sequence==outputSequence)outputPending=false;});}
   },"IOTools");
   web.loadUrl("https://appassets.androidplatform.net/assets/index.html");
  }

@@ -31,8 +31,6 @@ public class StandaloneTest {
   if(!error.isEmpty()){
    screenshot("failed-renderer");
    byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
-   String encoded=android.util.Base64.encodeToString(captured,android.util.Base64.NO_WRAP);
-   shell("sh -c 'echo "+encoded+" | base64 -d > /data/local/tmp/iotools-screenshots/native-fixture.ansi'");
    fail("Offline renderer error: "+error+" captured native fixture bytes="+captured.length);
   }
   return decoded;
@@ -96,6 +94,12 @@ public class StandaloneTest {
    onView(withText("启动")).perform(click());awaitText(scenario,"客服验收");assertEquals(1,requests.get());screenshot("04-reopened");
    scenario.onActivity(a->a.setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE));
    Thread.sleep(1000);awaitText(scenario,"客服验收");screenshot("05-landscape");
-  }finally{NativeRuntime.stop();server.close();serving.join(2000);}
+  }finally{
+   byte[] captured; synchronized(nativeBytes){captured=nativeBytes.toByteArray();}
+   String encoded=android.util.Base64.encodeToString(captured,android.util.Base64.NO_WRAP);
+   for(int offset=0;offset<encoded.length();offset+=768)System.out.println("NATIVE_FIXTURE_BASE64 "+offset+" "+encoded.substring(offset,Math.min(encoded.length(),offset+768)));
+   System.out.println("NATIVE_FIXTURE_BYTES "+captured.length);
+   NativeRuntime.stop();server.close();serving.join(2000);
+  }
  }
 }

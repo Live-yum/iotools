@@ -44,6 +44,7 @@ jobs:
       - name: Bundle offline terminal assets and licenses
         run: |
           bash scripts/android/prepare-assets.sh
+          node scripts/android/terminal-transport-test.cjs
           go run ./scripts/notices android/app/src/main/assets/THIRD_PARTY_LICENSES
       - name: Build debug-signed standalone APK
         run: gradle -p android --no-daemon assembleDebug assembleDebugAndroidTest
