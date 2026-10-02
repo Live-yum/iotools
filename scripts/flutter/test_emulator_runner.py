@@ -98,6 +98,28 @@ exit 99''')
         for renderer in (0,13):
             with self.subTest(renderer_exit=renderer):
                 self.assertEqual(self.run_case(renderer=renderer)[0],0)
+    def test_both_suites_start_without_debugger_pause_and_keep_runtime_gates(self):
+        code,trace=self.run_case()
+        self.assertEqual(code,0)
+        launches=[line for line in trace.splitlines() if line.startswith('drive ')]
+        self.assertEqual(len(launches),2)
+        for launch in launches:
+            self.assertEqual(launch.split().count('--no-start-paused'),1)
+            self.assertIn(' --no-enable-impeller ',launch)
+            self.assertIn('--dart-define=IOTOOLS_TEST_FIXTURES=true',launch)
+            self.assertNotIn('--verbose',launch)
+        self.assertIn('main outcome:\ndriver_exit=0\napp_outcome=passed',trace)
+        self.assertIn('opcua outcome:\ndriver_exit=0\napp_outcome=passed',trace)
+        self.assertIn('verify scripts/flutter/verify-aot-device.py',trace)
+    def test_initialization_warning_without_app_tests_remains_timeout(self):
+        log=('VMServiceFlutterDriver: Isolate found with number: 2056069086544503\n'
+             'VMServiceFlutterDriver: The isolate 2056069086544503 is taking unusually long '
+             'time to initialize. It still reports None as pause event which is incorrect.')
+        code,trace=self.run_case(drive=124,drive_log=log)
+        self.assertEqual(code,124)
+        self.assertIn('main outcome:\ndriver_exit=124\napp_outcome=missing_or_wrong_completion',trace)
+        self.assertIn('opcua outcome:\ndriver_exit=0\napp_outcome=passed',trace)
+        self.assertIn('verify scripts/flutter/verify-aot-device.py',trace)
     def test_pre_action_metadata_does_not_require_uninstalled_emulator(self):
         workflow=WORKFLOW.read_text()
         before,marker,remaining=workflow.partition('      - name: Detect already granted emulator acceleration\n        run: |\n')
