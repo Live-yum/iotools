@@ -3,6 +3,7 @@ import 'action_interaction.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:iotools_mobile/core/engine.dart';
@@ -136,6 +137,7 @@ requests:
         await _tap(tester, 'ua-tab-attributes');
         await _tap(tester, 'ua-refresh');
         await _idle(tester, engine);
+        await revealOpcuaAttribute(tester, 'ua-attribute-Value');
         await _wait(
           tester,
           () => find
@@ -143,6 +145,7 @@ requests:
               .evaluate()
               .isNotEmpty,
         );
+        await revealOpcuaAttribute(tester, 'ua-attribute-ValueRank');
         expect(
           find.byKey(const ValueKey('ua-attribute-ValueRank')),
           findsOneWidget,
@@ -195,6 +198,11 @@ requests:
         );
         await _tap(tester, 'ua-refresh');
         await _idle(tester, engine);
+        await revealOpcuaAttribute(
+          tester,
+          'ua-attribute-Value-value',
+          fromStart: true,
+        );
         await _wait(
           tester,
           () => _selectable(tester, 'ua-attribute-Value-value') == '99',
@@ -444,6 +452,57 @@ Future<void> _wait(WidgetTester tester, bool Function() predicate) async {
       );
     await _pump(tester, const Duration(milliseconds: 100));
   }
+}
+
+/// Reveal a lazy attribute using the same drag gestures as the actual UI.
+/// Kept public so the full 27-attribute widget fixture exercises this helper.
+Future<void> revealOpcuaAttribute(
+  WidgetTester tester,
+  String key, {
+  bool fromStart = false,
+}) async {
+  final end = DateTime.now().add(const Duration(seconds: 35));
+  final target = find.byKey(ValueKey(key));
+  final body = find.byKey(const ValueKey('ua-scroll-attributes'));
+  await tester.ensureVisible(body);
+  await _pump(tester);
+  final scrollable = find
+      .descendant(of: body, matching: find.byType(Scrollable))
+      .first;
+  final position = tester.state<ScrollableState>(scrollable).position;
+  // A refresh can rebuild the list at the top or retain its old offset. Reset
+  // only after refresh; sequential targets continue from the current viewport.
+  if (fromStart && target.evaluate().isEmpty && position.pixels > 0) {
+    await tester.drag(
+      scrollable,
+      Offset(0, position.pixels + position.viewportDimension),
+    );
+    await _pump(tester, const Duration(milliseconds: 50));
+  }
+  final viewport = tester.renderObject<RenderViewport>(
+    find.descendant(of: body, matching: find.byType(Viewport)).first,
+  );
+  final cache =
+      (viewport.cacheExtent ?? RenderAbstractViewport.defaultCacheExtent) *
+      (viewport.cacheExtentStyle == CacheExtentStyle.viewport
+          ? position.viewportDimension
+          : 1);
+  // Adjacent viewport-plus-cache windows overlap, so even a short card cannot
+  // be skipped. A large non-animated drag avoids many tiny physical frames.
+  final delta = (position.viewportDimension + 2 * cache) * .9;
+  for (var scrolls = 0; scrolls < 60; scrolls++) {
+    if (DateTime.now().isAfter(end)) {
+      throw TestFailure('Timed out scrolling to OPC attribute $key');
+    }
+    if (target.evaluate().isNotEmpty) {
+      await tester.ensureVisible(target);
+      await _pump(tester);
+      return;
+    }
+    await tester.drag(scrollable, Offset(0, -delta));
+    await _pump(tester, const Duration(milliseconds: 50));
+  }
+  throw TestFailure('OPC attribute $key was not found after 60 scrolls');
 }
 
 Future<void> _tap(WidgetTester tester, String key) async {

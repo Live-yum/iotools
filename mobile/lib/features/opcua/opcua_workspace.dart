@@ -393,34 +393,54 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
   ];
   Widget _body(UaNode node) => LayoutBuilder(
     builder: (context, constraints) {
-      final main = SingleChildScrollView(
+      final main = CustomScrollView(
         key: ValueKey('ua-scroll-$section'),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ..._content(node),
-            for (final result in node.largeResults)
-              _card('大型结果 · ${result['kind']}', [
-                _pair('原始字节数', result['original_bytes']),
-                if (result['result_unavailable_reason'] != null)
-                  _pair('无法加载', result['result_unavailable_reason']),
-                if (result['result_id'] != null)
-                  _button(
-                    '明确加载完整结果',
-                    () => guard(() async {
-                      final full = await widget.command({
-                        'op': 'result.get',
-                        'result_id': result['result_id'],
-                      });
-                      if (mounted)
-                        await _details('完整 OPC UA 结果', uaMap(full)['data']);
-                    }),
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            sliver: section == 'attributes'
+                ? _attributes(node)
+                : SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _content(node),
+                    ),
                   ),
-              ]),
-            if (node.truncated) const Text('结果超出缓存边界或已截断。请缩小范围；未显示的数据不代表不存在。'),
-          ],
-        ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final result in node.largeResults)
+                    _card('大型结果 · ${result['kind']}', [
+                      _pair('原始字节数', result['original_bytes']),
+                      if (result['result_unavailable_reason'] != null)
+                        _pair('无法加载', result['result_unavailable_reason']),
+                      if (result['result_id'] != null)
+                        _button(
+                          '明确加载完整结果',
+                          () => guard(() async {
+                            final full = await widget.command({
+                              'op': 'result.get',
+                              'result_id': result['result_id'],
+                            });
+                            if (mounted)
+                              await _details(
+                                '完整 OPC UA 结果',
+                                uaMap(full)['data'],
+                              );
+                          }),
+                        ),
+                    ]),
+                  if (node.truncated)
+                    const Text('结果超出缓存边界或已截断。请缩小范围；未显示的数据不代表不存在。'),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
       if (constraints.maxWidth < 840 ||
           ['subscriptions', 'discovery'].contains(section))
@@ -451,8 +471,6 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
 
   List<Widget> _content(UaNode node) {
     switch (section) {
-      case 'attributes':
-        return _attributes(node);
       case 'subscriptions':
         return _subscriptions(node);
       case 'discovery':
@@ -598,37 +616,49 @@ class _OpcuaWorkspaceState extends State<OpcuaWorkspace>
     return result;
   }
 
-  List<Widget> _attributes(UaNode node) => [
-    if (node.attributes.isEmpty) const Text('刷新会读取全部 27 个标准属性，每一项保留自己的状态与时间。'),
-    for (final entry in node.attributes.entries)
-      _card(entry.key, [
-        _pair('属性 ID', entry.value['attribute_id']),
-        _pair('状态', entry.value['status']),
-        _pair('类型', entry.value['value_type_name']),
-        _pair(
-          '值',
-          entry.value['value'],
-          key: 'ua-attribute-${entry.key}-value',
-        ),
-        _pair('源时间', entry.value['source_timestamp']),
-        _pair('服务器时间', entry.value['server_timestamp']),
-        Wrap(
-          children: [
-            _button(
-              '读取此属性',
-              () => guard(() async {
-                final r = uaOperation(node.request, node.id, 'read');
-                r['params'] = {...uaMap(r['params']), 'attribute': entry.key};
-                await _execute(r, node: node);
-              }),
-            ),
-            if (uaWritable.contains(entry.key))
-              _button('编辑值', () => _write(node, entry.key)),
-          ],
-        ),
-        _button('完整属性详情', () => _details(entry.key, entry.value)),
-      ], key: ValueKey('ua-attribute-${entry.key}')),
-  ];
+  Widget _attributes(UaNode node) {
+    if (node.attributes.isEmpty) {
+      return const SliverToBoxAdapter(
+        child: Text('刷新会读取全部 27 个标准属性，每一项保留自己的状态与时间。'),
+      );
+    }
+    final entries = node.attributes.entries.toList(growable: false);
+    // Each card owns six SelectableText clients. Build only the viewport and
+    // its cache, while the controller retains every attribute and typed draft.
+    return SliverList.builder(
+      itemCount: entries.length,
+      itemBuilder: (context, index) => _attribute(node, entries[index]),
+    );
+  }
+
+  Widget _attribute(UaNode node, MapEntry<String, UaMap> entry) => _card(
+    entry.key,
+    [
+      _pair('属性 ID', entry.value['attribute_id']),
+      _pair('状态', entry.value['status']),
+      _pair('类型', entry.value['value_type_name']),
+      _pair('值', entry.value['value'], key: 'ua-attribute-${entry.key}-value'),
+      _pair('源时间', entry.value['source_timestamp']),
+      _pair('服务器时间', entry.value['server_timestamp']),
+      Wrap(
+        children: [
+          _button(
+            '读取此属性',
+            () => guard(() async {
+              final r = uaOperation(node.request, node.id, 'read');
+              r['params'] = {...uaMap(r['params']), 'attribute': entry.key};
+              await _execute(r, node: node);
+            }),
+          ),
+          if (uaWritable.contains(entry.key))
+            _button('编辑值', () => _write(node, entry.key)),
+        ],
+      ),
+      _button('完整属性详情', () => _details(entry.key, entry.value)),
+    ],
+    key: ValueKey('ua-attribute-${entry.key}'),
+  );
+
   List<Widget> _subscriptions(UaNode node) => [
     const Text('最多 16 个独立订阅。切换节点和关闭页面保留订阅，进入后台全部停止，返回不自动重连。'),
     const SizedBox(height: 12),
