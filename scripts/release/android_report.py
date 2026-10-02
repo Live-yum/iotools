@@ -35,7 +35,7 @@ def main():
         abis = ['arm64-v8a'] if abi == 'arm64-v8a' else ['arm64-v8a', 'x86_64']
         for arch in abis:
             require(os.environ['IOTOOLS_SHA'].encode() in apk.read(f'lib/{arch}/libiotools.so'), 'Native core source revision absent')
-    signature = Path(f'android-evidence/{abi}-signature.txt').read_text()
+    signature = Path(f'android-evidence/{abi}-signature.txt').read_text(encoding="utf-8")
     require('CN=Android Debug' in signature, 'Unexpected APK signer; review signing scope before release')
     certs = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)', signature)
     require(len(certs) == 1 and len(certs[0]) == 64, 'Missing single signing certificate fingerprint')

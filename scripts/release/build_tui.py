@@ -35,21 +35,21 @@ def main():
     args = p.parse_args()
     sha = os.environ['IOTOOLS_SHA']
     goos = 'darwin' if args.target == 'macos' else args.target
-    require(subprocess.check_output(['go', 'env', 'GOHOSTOS'], text=True).strip() == goos, 'Use a native OS runner')
-    require(subprocess.check_output(['go', 'env', 'GOHOSTARCH'], text=True).strip() == args.arch, 'Use a native architecture runner')
+    require(subprocess.check_output(['go', 'env', 'GOHOSTOS'], text=True, encoding="utf-8").strip() == goos, 'Use a native OS runner')
+    require(subprocess.check_output(['go', 'env', 'GOHOSTARCH'], text=True, encoding="utf-8").strip() == args.arch, 'Use a native architecture runner')
     bundle = ROOT / 'dist' / ('tui-' + args.target + '-' + args.arch)
     bundle.mkdir(parents=True, exist_ok=False)
     binary = bundle / ('iotools.exe' if args.target == 'windows' else 'iotools')
     env = {**os.environ, 'GOOS': goos, 'GOARCH': args.arch, 'CGO_ENABLED': '0'}
     run('go', 'build', '-trimpath', '-ldflags', '-s -w -X main.version=' + sha, '-o', str(binary), './cmd/iotools', env=env)
     if args.target == 'macos':
-        architecture = subprocess.check_output(['xcrun', 'lipo', '-archs', str(binary)], text=True)
-        dependencies = subprocess.check_output(['otool', '-L', str(binary)], text=True)
+        architecture = subprocess.check_output(['xcrun', 'lipo', '-archs', str(binary)], text=True, encoding="utf-8")
+        dependencies = subprocess.check_output(['otool', '-L', str(binary)], text=True, encoding="utf-8")
         imports = check_macos_dependencies(architecture, dependencies, args.arch)
     else:
         run('go', 'run', './scripts/verifybinary', str(binary))
         imports = 'Existing ELF/PE standalone verifier passed'
-    version = subprocess.check_output([str(binary), '--version'], text=True)
+    version = subprocess.check_output([str(binary), '--version'], text=True, encoding="utf-8")
     require(sha in version, 'Built executable does not expose exact source SHA')
     run(str(binary), '--file', 'examples/local.yaml', '--validate')
     smoke = bundle / 'smoke.yaml'
@@ -61,7 +61,7 @@ def main():
         shutil.copyfile(ROOT / name, bundle / name)
     for name in ('docs', 'examples'):
         shutil.copytree(ROOT / name, bundle / name)
-    (bundle / 'SHA256SUMS').write_text(f'{digest(binary)}  {binary.name}\n')
+    (bundle / 'SHA256SUMS').write_text(f'{digest(binary)}  {binary.name}\n', encoding='utf-8')
     archive = bundle.with_suffix('.zip')
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
         for file in sorted(bundle.rglob('*')):
@@ -70,7 +70,7 @@ def main():
     write_json(bundle.with_suffix('.json'), {'source_sha': sha, 'platform': args.target + '-' + args.arch,
                'file': archive.name, 'sha256': digest(archive), 'bytes': archive.stat().st_size,
                'binary_sha256': digest(binary), 'standalone_runtime_verified': True, 'smoke_passed': True,
-               'dependencies': imports, 'toolchain': subprocess.check_output(['go', 'version'], text=True).strip(),
+               'dependencies': imports, 'toolchain': subprocess.check_output(['go', 'version'], text=True, encoding="utf-8").strip(),
                'scope': 'Native build, architecture/runtime checks and CLI smoke. macOS interactive TUI UI not separately accepted.'})
 
 

@@ -37,11 +37,11 @@ macOS 没有 Developer ID 公证，桌面 app 保持原有 sandbox/ad-hoc 签名
 
 本次不重新请求或改变 KVM 权限，不运行 Android emulator。iOS simulator 不运行 XCTest。它们的历史 runtime 验收保留原 SHA，绝不把历史包重命名为最终包、或声称最终提交完整重跑。iOS 历史五例也不覆盖全部协议界面、实际文件保存重导入、签名 iPhone 和物理设备。
 
-TUI 原生构建、协议/单元测试和 CLI smoke 在五种目标运行；macOS Mach-O 要求单一正确架构和仅系统库。Flutter 原生 C ABI、Dart 测试、Windows 最终包 GUI 检查及各主机 Web 网关检查随新包进行。全部 Go 可执行/共享库检查嵌入 SHA 和 `go version -m` 的目标/链接版本；iOS 链接 Runner 只核对嵌入 Go SHA 及现有 Mach-O/FFI/生产隔离检查，不伪称独立 Go buildinfo 支持。
+TUI 原生构建、协议/单元测试和 CLI smoke 在五种目标运行；macOS Mach-O 要求单一正确架构和仅系统库。Flutter 原生 C ABI、Dart 测试、Windows 最终包 GUI 检查及各主机 Web 网关检查随新包进行。全部 Go 可执行/共享库检查嵌入 SHA 和 `go version -m` 的目标/VCS revision（Go -trimpath 不保留 -ldflags 字段）；iOS 链接 Runner 只核对嵌入 Go SHA 及现有 Mach-O/FFI/生产隔离检查，不伪称独立 Go buildinfo 支持。
 
 Flutter 固定 `3.35.7` 与完整 SDK SHA；Go 从 go.mod 固定；Android 保留 Java 17 / Gradle 8.11.1 / NDK 28.1.13356709；iOS simulator 使用已安装的 Xcode 26.2 / 17C52。设备构建保留现有系统 Xcode 选择。托管镜像、Java patch 和系统工具可更新，不声称整个编译环境逐字节可复现。
 
-Flutter 对 iOS pbxproj 的已知生成变化仅允许历史记录的确切前后 SHA256；保存实际生成文件、diff 与 hash。除此之外任何 tracked 变化都失败。若托管工具产生新的变化，先审阅实际证据，不能放宽门禁后冒称历史等价。
+CocoaPods 每次生成新的工程对象 ID。门禁仅归一化新增对象 ID 与无语义格式差异，保留原对象、全部构建设置、脚本、引用和数组顺序，按审阅过的 iOS/macOS 完整工程语义摘要验收；workspace 只接受确定的 Pods 引用插入。原始文件、完整 diff、原始与归一化 hash 都保存。实测来源为 dry run 37007184755 和仅配置诊断 37008357632。除此之外任何 tracked 变化都失败，不以历史工程的随机 ID 哈希冒称跨运行字节一致。
 
 ## 本地门禁测试
 

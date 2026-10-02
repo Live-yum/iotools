@@ -5,7 +5,6 @@ cd "$(dirname "$0")/../.."
 : "${ANDROID_HOME:?Android SDK required}"
 : "${FLUTTER_ROOT:?Pinned Flutter required}"
 export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.1.13356709"
-test -d "$ANDROID_NDK_HOME"
 mkdir -p android-evidence release-android
 (
  cd mobile
@@ -16,6 +15,14 @@ mkdir -p android-evidence release-android
  printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$FLUTTER_ROOT" > android/local.properties
  gradle -p android wrapper --gradle-version 8.11.1
 )
+# The original build initializes Gradle/SDK before requiring the pinned NDK.
+printf 'Pinned NDK: %s\n' "$ANDROID_NDK_HOME"
+if ! test -d "$ANDROID_NDK_HOME"; then
+ find "$ANDROID_HOME/ndk" -maxdepth 2 -name source.properties -print 2>/dev/null || true
+ echo "Required original NDK 28.1.13356709 is unavailable after Gradle initialization" >&2
+ exit 1
+fi
+cat "$ANDROID_NDK_HOME/source.properties"
 python3 scripts/flutter/android_dependency_audit.py --deps android-evidence/pub-dependencies.json --output android-evidence/dependency-resolution.json
 python3 scripts/flutter/test_android_dependency_audit.py
 python3 scripts/flutter/test_release_apk_gate.py

@@ -54,6 +54,16 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(r.identity(self.base, root=self.root)['source_sha'], self.base)
         with self.assertRaisesRegex(RuntimeError, 'Only the reviewed'):
             r.identity(self.base, 'v0.4.0', self.root)
+    def test_utf8_version_file_is_read_explicitly(self):
+        path=self.root/'mobile/pubspec.yaml'
+        path.write_text('# 中文应用\nversion: 0.3.0+3\n',encoding='utf-8')
+        read=Path.read_text
+        def guarded(path,*args,**kwargs):
+            if path.name=='pubspec.yaml':self.assertEqual(kwargs.get('encoding'),'utf-8')
+            return read(path,*args,**kwargs)
+        with patch.object(Path,'read_text',guarded):
+            self.assertEqual(r.identity(self.base,root=self.root)['tag'],'v0.3.0')
+
     def test_wrong_checkout_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'Checkout'):
             r.identity(SHA, root=self.root)
@@ -190,6 +200,37 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(r.verify_final_ci(api,SHA)['head_sha'],SHA)
 
 
+class PbxTests(unittest.TestCase):
+    def test_new_ids_and_object_order_do_not_change_semantics(self):
+        from pbx_gate import normalized_digest
+        old='{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;children=();};};rootObject=AAAAAAAAAAAAAAAAAAAAAAAA;}'
+        generated='{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;children=(BBBBBBBBBBBBBBBBBBBBBBBB,);};BBBBBBBBBBBBBBBBBBBBBBBB={isa=PBXFileReference;path="Pods.xcodeproj";};};rootObject=AAAAAAAAAAAAAAAAAAAAAAAA;}'
+        renamed=generated.replace('BBBBBBBBBBBBBBBBBBBBBBBB','CCCCCCCCCCCCCCCCCCCCCCCC')
+        self.assertEqual(normalized_digest(old,generated),normalized_digest(old,renamed))
+        for changed in [generated.replace('Pods.xcodeproj','evil.xcodeproj'),generated.replace('isa=PBXGroup','isa=PBXFileReference'),generated.replace('children=(', 'other=(')]:
+            self.assertNotEqual(normalized_digest(old,generated),normalized_digest(old,changed))
+
+    def test_original_ids_cannot_disappear_and_new_reference_cycles_rejected(self):
+        from pbx_gate import normalized_digest
+        old='{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;};};}'
+        for bad in ['{objects={};}', '{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;};BBBBBBBBBBBBBBBBBBBBBBBB={isa=PBXGroup;children=(BBBBBBBBBBBBBBBBBBBBBBBB,);};};}']:
+            with self.assertRaises(ValueError):normalized_digest(old,bad)
+
+    def test_duplicate_keys_and_trailing_tokens_rejected(self):
+        from pbx_gate import parse
+        for bad in ['{a=1;a=2;}', '{a=1;} unexpected']:
+            with self.assertRaises(ValueError):parse(bad)
+
+    def test_quoted_formatting_normalizes_but_scripts_and_list_order_remain(self):
+        from pbx_gate import normalized_digest
+        old='{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;};};}'
+        one='{objects={AAAAAAAAAAAAAAAAAAAAAAAA={isa=PBXGroup;children=(a,b,);shellScript="echo safe\\n";};};}'
+        two=one.replace('isa=PBXGroup','isa="PBXGroup"')
+        self.assertEqual(normalized_digest(old,one),normalized_digest(old,two))
+        self.assertNotEqual(normalized_digest(old,one),normalized_digest(old,one.replace('a,b','b,a')))
+        self.assertNotEqual(normalized_digest(old,one),normalized_digest(old,one.replace('echo safe','echo unsafe')))
+
+
 class PackageTests(unittest.TestCase):
     def test_macos_system_deps_and_arch(self):
         result=check_macos_dependencies('arm64\n','iotools:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n','arm64')
@@ -218,6 +259,18 @@ class PackageTests(unittest.TestCase):
             record={'source_sha':SHA,'bytes':p.stat().st_size,'sha256':r.digest(p),'kind':'simulator','status':'passed_for_stated_scope'}
             with self.assertRaisesRegex(RuntimeError,'compiled-only'):
                 r.validate_build_report('ios-simulator-arm64-debug-developer',record,p,SHA)
+    def test_trimpath_buildinfo_uses_vcs_revision_not_unrecorded_ldflags(self):
+        info = "binary: go1.27.1\n\tbuild\t-trimpath=true\n\tbuild\tGOOS=linux\n\tbuild\tGOARCH=amd64\n\tbuild\tvcs.revision=" + SHA + "\n"
+        with tempfile.TemporaryDirectory() as folder:
+            asset=Path(folder)/"tui.zip"
+            with zipfile.ZipFile(asset,"w") as archive:
+                archive.writestr("bundle/iotools",b"ELF"+SHA.encode())
+            with patch.object(r.subprocess,"check_output",return_value=info):
+                self.assertEqual(r.embedded_revision(asset,"tui-linux-amd64",SHA)[0]["embedded_source_sha"],SHA)
+            for bad in [info.replace(SHA,"b"*40),info.replace("GOOS=linux","GOOS=windows"),info.replace("GOARCH=amd64","GOARCH=arm64")]:
+                with patch.object(r.subprocess,"check_output",return_value=bad),self.assertRaisesRegex(RuntimeError,"identity/target"):
+                    r.embedded_revision(asset,"tui-linux-amd64",SHA)
+
     def test_embedded_go_sha_required(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'test.zip'
