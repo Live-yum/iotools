@@ -205,8 +205,9 @@ func (s *Session) workflowOptions(runID string, interactive bool) engine.HTTPWor
 	}
 	// Read-only protection covers automatic history writes as well as commands.
 	// Keep the preference intact so disabling read-only resumes future recording.
-	if s.options.History && !s.options.ReadOnly {
+	if s.options.History {
 		options.HistoryPath = filepath.Join(s.root, "history.sqlite")
+		options.HistoryReadOnly = s.options.ReadOnly
 	}
 	if !interactive {
 		return options

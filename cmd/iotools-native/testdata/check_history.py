@@ -270,6 +270,28 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertEqual(self.count_sql(), 1, "skipped responses must never be backfilled")
         self.assertFalse(any(e["kind"] == "history_status" for e in events))
 
+    def test_readonly_cached_response_and_curl_keep_reads_without_writes(self):
+        s = self.session(history=True)
+        upstream = self.request('/upstream', id='upstream')
+        consumer = self.request("/consumer?token={{ response('upstream', trigger='never') | jq('.token') }}", id='consumer')
+        s.command(op='request.save', request=upstream)
+        done, _ = s.run(upstream)
+        self.assertEqual(done['status'], 'completed')
+        database = self.root / 'history.sqlite'
+        before, mode = database.read_bytes(), database.stat().st_mode
+        hits = list(self.server.hits)
+        s.command(op='options.set', options={'history': True, 'read_only': True})
+        curl = s.command(op='http.curl', request=consumer)['curl']
+        self.assertIn('SYNTHETIC_RESPONSE_TOKEN', curl)
+        self.assertEqual(self.server.hits, hits)
+        done, events = s.run(consumer)
+        self.assertEqual(done['status'], 'completed')
+        self.assertEqual(self.server.hits, hits + ['/consumer?token=SYNTHETIC_RESPONSE_TOKEN'])
+        self.assertEqual(len(s.rows()), 1)
+        self.assertEqual(database.read_bytes(), before)
+        self.assertEqual(database.stat().st_mode, mode)
+        self.assertEqual([e['data']['reason'] for e in events if e['kind'] == 'history_status'], ['read_only'])
+
     def test_readonly_history_existing_rows_remain_readable_without_writes(self):
         s = self.session(history=True)
         done, _ = s.run(self.request())

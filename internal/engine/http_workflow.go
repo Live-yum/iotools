@@ -25,6 +25,7 @@ type HTTPWorkflowOptions struct {
 	AllowInsecureTLS      bool
 	AuthorizeInsecureTLS  func(context.Context, config.Request) (bool, error)
 	HistoryPath           string
+	HistoryReadOnly       bool
 	AllowChainWrites      bool
 	AuthorizeChainWrite   func(context.Context, config.Request) (bool, error)
 	AuthorizeRequestWrite func(context.Context, config.Request) (bool, error)
@@ -90,12 +91,14 @@ func RunCollection(ctx context.Context, c *config.Collection, r config.Request, 
 	}
 	w := &httpWorkflow{ctx: ctx, collection: c, profile: profile, rootDir: rootDir, collectionKey: collectionKey, vars: vars, varsCache: map[string]any{}, varsActive: map[string]bool{}, active: map[string]bool{}, executed: map[string]bool{}, responses: map[string]*HTTPHistoryEntry{}, allowWrites: allowWrites, options: options}
 	if options.HistoryPath != "" {
-		history, e := OpenHTTPHistory(options.HistoryPath)
+		history, e := openWorkflowHistory(options.HistoryPath, options.HistoryReadOnly)
 		if e != nil {
 			return e
 		}
-		w.history = history
-		defer history.Close()
+		if history != nil {
+			w.history = history
+			defer history.Close()
+		}
 	}
 	return w.run(r, false, emit)
 }
@@ -310,7 +313,7 @@ func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
 	if hasResponse {
 		w.responses[r.ID] = entry
 		w.executed[r.ID] = true
-		if w.history != nil && r.Params["persist"] != false {
+		if w.history != nil && !w.options.HistoryReadOnly && r.Params["persist"] != false {
 			if err := w.history.Add(w.ctx, *entry); err != nil {
 				return errors.Join(e, fmt.Errorf("HTTP completed but history save failed: %w", err))
 			}

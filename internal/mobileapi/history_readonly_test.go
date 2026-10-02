@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,5 +139,57 @@ func TestHTTPHistoryExplicitOffAndPersistFalseKeepPrecedence(t *testing.T) {
 				t.Fatalf("saved history preference changed: %v", status)
 			}
 		})
+	}
+}
+
+func TestReadOnlyHTTPWorkflowReusesCachedResponseWithoutWritingOrRetriggering(t *testing.T) {
+	var upstreamHits, consumerHits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/upstream" {
+			upstreamHits.Add(1)
+			_, _ = w.Write([]byte(`{"token":"cached-fixture-token"}`))
+			return
+		}
+		consumerHits.Add(1)
+		if r.URL.Query().Get("token") != "cached-fixture-token" {
+			t.Error("cached response token was not resolved")
+		}
+		_, _ = w.Write([]byte("consumer response must not be recorded"))
+	}))
+	defer server.Close()
+	s := testSession(t,
+		config.Request{ID: "upstream", Protocol: "http", Action: "GET", Endpoint: server.URL + "/upstream"},
+		config.Request{ID: "consumer", Protocol: "http", Action: "GET", Endpoint: server.URL + `/consumer?token={{ response('upstream', trigger='never') | jq('.token') }}`},
+	)
+	mustOK(t, s, map[string]any{"op": "options.set", "options": map[string]any{"history": true}})
+	runHistoryReadOnlyFixture(t, s, "upstream")
+	path := filepath.Join(s.root, "history.sqlite")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustOK(t, s, map[string]any{"op": "options.set", "options": map[string]any{"history": true, "read_only": true}})
+	curl := mustOK(t, s, map[string]any{"op": "http.curl", "request_id": "consumer"}).(map[string]any)
+	if !strings.Contains(curl["curl"].(string), "cached-fixture-token") || consumerHits.Load() != 0 || upstreamHits.Load() != 1 {
+		t.Fatalf("read-only curl must only read cached data: %v", curl)
+	}
+	checkHistoryReadOnlyStatus(t, runHistoryReadOnlyFixture(t, s, "consumer"), true)
+	if upstreamHits.Load() != 1 || consumerHits.Load() != 1 {
+		t.Fatal("cached upstream unexpectedly retriggered")
+	}
+	if rows := mustOK(t, s, map[string]any{"op": "history.list"}).([]any); len(rows) != 1 {
+		t.Fatalf("read-only consumer wrote history: %v", rows)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("cached read changed database: %v", err)
+	}
+	afterMode, err := os.Stat(path)
+	if err != nil || mode.Mode() != afterMode.Mode() {
+		t.Fatalf("cached read changed file mode: %v", err)
 	}
 }
