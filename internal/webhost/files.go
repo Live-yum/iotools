@@ -329,11 +329,11 @@ func copyBounded(ctx context.Context, to string, from io.Reader, maximum int64) 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	maximum, e := limit(r.URL.Query().Get("limit"), maxFile)
 	if e != nil {
-		fail(w, 400, e.Error())
+		rejectUnreadRequest(w, r, 400, e.Error())
 		return
 	}
 	if r.ContentLength > maximum {
-		fail(w, 413, "上传文件超过上限")
+		rejectUnreadRequest(w, r, 413, "上传文件超过上限")
 		return
 	}
 	bundle := r.URL.Query().Get("bundle") == "1"
@@ -343,7 +343,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	directory, e := os.MkdirTemp(s.root, prefix)
 	if e != nil {
-		fail(w, 500, "无法创建导入目录")
+		rejectUnreadRequest(w, r, 500, "无法创建导入目录")
 		return
 	}
 	done := false
