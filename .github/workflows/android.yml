@@ -57,7 +57,11 @@ jobs:
       - name: Flutter static analysis and widget tests
         run: |
           cd mobile
-          flutter pub get
+          flutter pub get --enforce-lockfile
+          mkdir -p ../android-evidence
+          flutter pub deps --json > ../android-evidence/pub-dependencies.json
+          python3 ../scripts/flutter/test_android_dependency_audit.py
+          python3 ../scripts/flutter/android_dependency_audit.py --deps ../android-evidence/pub-dependencies.json --output ../android-evidence/dependency-resolution.json
           flutter analyze
           flutter test --reporter expanded
           printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$RUNNER_TEMP/flutter" > android/local.properties
@@ -115,6 +119,7 @@ jobs:
           mkdir -p android-dist android-evidence/aot-test
           apk=mobile/build/app/outputs/flutter-apk/app-release.apk
           python3 scripts/flutter/verify-mobile.py "$apk" --aot
+          python3 scripts/flutter/android_dependency_audit.py --deps android-evidence/pub-dependencies.json --maven android-evidence/release-runtime-dependencies.txt --apk "$apk" --output android-evidence/dependency-packaging.json
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$tools/apksigner" verify --verbose --print-certs "$apk" | tee android-evidence/aot-signature.txt
           "$tools/aapt" dump permissions "$apk" | tee android-evidence/aot-permissions.txt

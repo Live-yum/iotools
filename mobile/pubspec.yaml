@@ -14,6 +14,10 @@ dependencies:
   ffi: ^2.1.4
   file_selector: ^1.0.3
   path_provider: ^2.1.5
+  # Android uses our MethodChannelPlatform, not path_provider feature calls.
+  # Keep its supported Java implementation; isolate unused external Dart JNI.
+  # See docs/android-dependency-isolation.md. This is not a proven crash fix.
+  path_provider_android: 2.2.23
   path: ^1.9.1
   archive: ^4.0.7
   http: ^1.6.0
