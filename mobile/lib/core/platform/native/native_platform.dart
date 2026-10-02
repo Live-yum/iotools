@@ -49,7 +49,7 @@ class NativePlatformServices implements PlatformServices {
       'platform': Platform.operatingSystem,
       'version': const String.fromEnvironment(
         'IOTOOLS_VERSION',
-        defaultValue: '0.3.0',
+        defaultValue: '0.3.1',
       ),
       'sha': const String.fromEnvironment(
         'IOTOOLS_SHA',

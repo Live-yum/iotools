@@ -1,15 +1,15 @@
-# v0.3.0 发布流程与验证边界
+# v0.3.1 发布流程与验证边界
 
-版本来自 `mobile/pubspec.yaml` 的 `0.3.0+3`。此流程只接受 `v0.3.0`，不推断后续版本的发布资格。
+版本来自 `mobile/pubspec.yaml` 的 `0.3.1+4`。此流程只接受 `v0.3.1`，不推断后续版本的发布资格。
 
 ## 流程
 
-1. `feat/unified-portable-tui` 的 push 自动执行完整 dry run；不创建 tag/release。PR 同时运行发布门禁单元测试。
+1. PR 的最终候选先通过 Android、TUI、HTTP 历史/Windows 图标、完整八项 Flutter 平台验收。然后在既有 **Verified multi-platform release** 中选择候选分支，保持 publish=false，手动执行完整 dry run；不创建 tag/release。PR 同时运行发布门禁单元测试。
 2. 正常审阅、CI 通过并合并到 `main` 后，在 **Verified multi-platform release** 手动运行中选择 `main`、勾选 `publish`。默认不勾选，只构建。
 3. 所有任务检出同一完整提交 SHA，重新编译。任何失败、缺包、重复包、错 SHA、错架构、哈希不符或未审阅的源码变化都阻止汇总和发布。
-4. 发布器再次确认该提交已进入 main、普通 main TUI CI 成功且没有该 SHA 的失败检查，再创建/核对 `v0.3.0` tag。已存在且指向其他提交的 tag、已存在的 release 均拒绝覆盖。
+4. 发布器再次确认该提交已进入 main、普通 main TUI CI 成功且没有该 SHA 的失败检查，再创建/核对 `v0.3.1` tag。已存在且指向其他提交的 tag、已存在的 release 均拒绝覆盖。
 5. 先创建 draft，上传全部文件，逐个重新下载并核对大小/SHA256，再次确认 tag 和 CI，才转为公开 release。上传失败只留下 draft；不自动删除、替换或盲目重试。维护者应先检查失败状态再决定恢复方式。
-6. 也支持由已存在的 `v0.3.0` tag push 启动，同样要求已合并 main。工作流自己的 token 创建 tag 不需要再次触发构建：已验证的全部包恰好来自此 tag 的提交。
+6. 也支持由已存在的 `v0.3.1` tag push 启动，同样要求已合并 main。工作流自己的 token 创建 tag 不需要再次触发构建：已验证的全部包恰好来自此 tag 的提交。
 
 发布任务才有 `contents: write`；其他任务只有只读权限。构建产物按目标隔离，不平铺多个 `manifest.json`。上传的 `release-evidence-*` 诊断不作为用户安装包。
 
@@ -26,16 +26,15 @@ Android 使用原有 Gradle debug/test 签名方式，不创建正式发行者�
 
 macOS 没有 Developer ID 公证，桌面 app 保持原有 sandbox/ad-hoc 签名。Windows 没有 Authenticode 发行者签名。iOS device 不是可直接安装的 IPA；没有使用 Apple 账户或新增凭据。不要绕过系统安全警告。
 
-## 历史证据和本次构建
+## 本次候选验收和发布源码
 
-发布 preflight 从 GitHub API 校验固定历史 run、完整 SHA、workflow 路径、job 和关键步骤。整个仓库只排除明确列出的发布脚本及历史 CI/验收 harness 文件，对其他 Git blob/mode（含应用、锁文件、桥接、编译配置、构建脚本、测试及资源）做等价检查；每个被排除的实际变化也记录前后 blob。文件排除不是“同一提交”的声明。
+preflight 读取候选 SHA 的最新运行，要求 Android、TUI、HTTP 历史/图标和完整八项 Flutter 平台工作流全部成功。必须的 job/步骤不能跳过，Windows 要检查实际 EXE 四种尺寸图标，iOS 必须完成原有五项 XCTest 和 1200 秒总限。不能用旧成功运行遮盖同 SHA 的新失败或 pending 运行。
 
-- Android `5c66d28c18575bedd16b21c28d030e0d61437129` / run `36973280392` 的 `apk` 成功
-- iOS `fb719cc73760e6bcba9216d7a56dd1de886e578d` / run `36977115253` 的 `ios` 成功
-- TUI `8db14221104175fd265b4d08f51b905f0bc999a0` / run `36955539788` 的三种原有目标成功
-- Desktop/Web/unsigned device 同源 `8db142…` / run `36955539838` 的七个相关 job 成功；该 run 的旧 iOS job 失败，**不算成功**，只由独立 iOS 历史记录说明后续范围
+正式合并提交可以引用直接父提交的验收，但只在应用、版本、锁文件、原生桥接、编译配置、测试、平台工作流和其他构建输入 Git blob/mode 完全一致时允许。v0.3.1 不排除任何文件，要求完整 Git 树完全一致，包括发布脚本和测试 harness。源码摘要、前后 Git tree SHA 和空排除清单写入 manifest。发现当前 SHA 已有必需运行失败或 pending，就停止，不退回父提交的旧绿结果。
 
-本次不重新请求或改变 KVM 权限，不运行 Android emulator。iOS simulator 不运行 XCTest。它们的历史 runtime 验收保留原 SHA，绝不把历史包重命名为最终包、或声称最终提交完整重跑。iOS 历史五例也不覆盖全部协议界面、实际文件保存重导入、签名 iPhone 和物理设备。
+v0.3.0 的 8db/5c66/fb719 运行不作为此版本的新代码验收。验收记录保留真实 SHA 和 run 链接；正式 19 包由最终 main/tag SHA 重建，不把父提交测试二进制改名交付。发布器在上传前验证记录及最终 SHA 检查；下载核对完整 22 资产后，公开前再次验证父提交验收、tag 和最终 SHA 检查。父验收在上传期间变红或 pending 时保留 draft，不公开 release。
+
+不新增 KVM 权限、长期签名密钥或账户。Android 使用现有软件模拟器验收路径。iOS 五例覆盖普通启动、真实 Go ABI/生命周期、导出边界与系统选择器展示，不宣称覆盖全部协议 UI、保存重导入、签名真机和工业硬件。
 
 TUI 原生构建、协议/单元测试和 CLI smoke 在五种目标运行；macOS Mach-O 要求单一正确架构和仅系统库。Flutter 原生 C ABI、Dart 测试、Windows 最终包 GUI 检查及各主机 Web 网关检查随新包进行。全部 Go 可执行/共享库检查嵌入 SHA 和 `go version -m` 的目标/VCS revision（Go -trimpath 不保留 -ldflags 字段）；iOS 链接 Runner 只核对嵌入 Go SHA 及现有 Mach-O/FFI/生产隔离检查，不伪称独立 Go buildinfo 支持。
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed source, asset and draft-publication gates for the v0.3.0 release.
+"""Fail-closed source, asset and draft-publication gates for the v0.3.1 release.
 
 No runtime acceptance is manufactured for the release SHA. Historical results
 retain their original SHAs; only the explicitly inventoried source inputs match.
@@ -20,43 +20,34 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 REPOSITORY = 'Live-yum/iotools'
-VERSION = 'v0.3.0'
+VERSION = 'v0.3.1'
 FLUTTER_REVISION = 'adc901062556672b4138e18a4dc62a4be8f4b3c2'
 PLATFORMS = ('linux-amd64', 'linux-arm64', 'windows-amd64', 'macos-amd64', 'macos-arm64')
 EXPECTED = {f'{kind}-{platform}': '.zip' for kind in ('tui', 'flutter', 'web') for platform in PLATFORMS}
 EXPECTED.update({'android-arm64-v8a-aot-test-signed': '.apk', 'android-universal-arm64-x86_64-aot-test-signed': '.apk',
                  'ios-device-arm64-unsigned': '.zip', 'ios-simulator-arm64-debug-developer': '.zip'})
-# All other tracked files, including native bridges, locks, compiler configuration,
-# test fixtures and build/package/font scripts, must have identical Git blobs/modes.
-EXCLUDED_FILES = {
-    # Historical permission/harness-only deltas (never executed by this workflow).
-    '.github/workflows/android-kvm-once-20261002.yml',
-    'scripts/ci_trials/kvm_once_20261002.py', 'scripts/ci_trials/test_kvm_once_20261002.py',
-    '.github/workflows/ios-launch-diagnostic.yml',
-    'scripts/flutter-platforms/verify-ios.py', 'scripts/flutter-platforms/test_ios_host_tests.py',
-    # Reviewed release orchestration/verifier additions, not application sources.
-    '.github/workflows/release.yml', '.github/workflows/release-validation.yml', 'docs/releasing.md',
-    'scripts/release/release.py', 'scripts/release/build_tui.py', 'scripts/release/build_android.sh',
-    'scripts/release/android_report.py', 'scripts/release/test_release.py', 'scripts/release/pbx_gate.py',
-}
+# v0.3.1 uses current-candidate acceptance, so no historical harness or release
+# builder exclusions are needed. A parent must have the exact complete Git tree.
+EXCLUDED_FILES = set()
 HISTORY = [
-    {'name': 'android', 'sha': '5c66d28c18575bedd16b21c28d030e0d61437129', 'run_id': 36973280392,
-     'workflow': '.github/workflows/android-kvm-once-20261002.yml', 'jobs': ['apk'], 'whole_run_success': True,
-     'steps': ['Real emulator UI, protocol, editing and lifecycle tests',
-               'Restore and verify the original KVM ACL even if testing fails']},
-    {'name': 'ios', 'sha': 'fb719cc73760e6bcba9216d7a56dd1de886e578d', 'run_id': 36977115253,
-     'workflow': '.github/workflows/ios-launch-diagnostic.yml', 'jobs': ['ios'], 'whole_run_success': True,
-     'steps': ['Required real iOS host XCTest acceptance']},
-    {'name': 'tui', 'sha': '8db14221104175fd265b4d08f51b905f0bc999a0', 'run_id': 36955539788,
-     'workflow': '.github/workflows/ci.yml', 'whole_run_success': True,
+    {'name': 'android', 'workflow': '.github/workflows/android.yml', 'jobs': ['apk'],
+     'whole_run_success': True, 'steps': ['Real emulator UI, protocol, editing and lifecycle tests']},
+    {'name': 'tui', 'workflow': '.github/workflows/ci.yml', 'whole_run_success': True,
      'jobs': ['Native ubuntu-24.04', 'Native ubuntu-24.04-arm', 'Native windows-latest'],
      'steps': ['Native unit, TUI and real loopback protocol tests', 'Binary smoke test']},
-    {'name': 'desktop-web-device', 'sha': '8db14221104175fd265b4d08f51b905f0bc999a0', 'run_id': 36955539838,
-     'workflow': '.github/workflows/flutter-platforms.yml', 'whole_run_success': False,
+    {'name': 'http-history-windows-icons', 'workflow': '.github/workflows/history-regression.yml',
+     'whole_run_success': True,
+     'jobs': ['history (ubuntu-22.04, linux)', 'history (windows-2022, windows)'],
+     'steps': ['Native ABI verification', 'Flutter static and widget contracts',
+               'Generate and verify platform icon alpha', 'Real desktop HTTP history UI'],
+     'job_steps': {'history (windows-2022, windows)': ['Verify embedded Windows icon transparency']}},
+    {'name': 'flutter-platforms', 'workflow': '.github/workflows/flutter-platforms.yml',
+     'whole_run_success': True,
      'jobs': ['native (windows-2022, windows, amd64)', 'native (macos-15, macos, arm64)',
               'native (macos-15-intel, macos, amd64)', 'native (ubuntu-22.04, linux, amd64, linux-x64)',
-              'native (ubuntu-22.04-arm, linux, arm64, linux-arm64)', 'web-contract', 'ios-device'],
-     'steps': [], 'excluded_failed_job': 'ios (failure; replaced only by separate historical iOS run above)'},
+              'native (ubuntu-22.04-arm, linux, arm64, linux-arm64)', 'web-contract', 'ios-device', 'ios'],
+     'steps': [], 'job_steps': {'ios': ['Required real iOS host XCTest acceptance'],
+     'native (windows-2022, windows, amd64)': ['Verify Windows Release icon transparency', 'Exact packaged Windows Release GUI and JVM independence']}},
 ]
 
 
@@ -113,15 +104,18 @@ def compare_sources(candidate, baseline, root=ROOT):
     require(not unsafe, f'Historical runtime source/build inputs differ from {baseline}: {unsafe}')
     require(inputs_digest(before) == inputs_digest(after), 'Source input digest mismatch')
     return {'baseline_sha': baseline, 'candidate_sha': candidate, 'identical_input_sha256': inputs_digest(after),
+            'baseline_tree': git('rev-parse', baseline + '^{tree}', root=root),
+            'candidate_tree': git('rev-parse', candidate + '^{tree}', root=root),
             'excluded_differences': {p: {'before': before.get(p), 'after': after.get(p)} for p in changed},
-            'claim': 'same application/build-input Git blobs, not same commit or same binary'}
+            'claim': ('same source commit; packages rebuilt independently' if candidate == baseline else
+                      'same application/build-input Git blobs across commits; packages rebuilt independently')}
 
 
 def identity(sha, version=VERSION, root=ROOT):
     require(re.fullmatch('[0-9a-f]{40}', sha), 'Expected full source commit SHA')
-    require(version == VERSION, 'Only the reviewed v0.3.0 release is supported')
+    require(version == VERSION, 'Only the reviewed v0.3.1 release is supported')
     require(git('rev-parse', 'HEAD', root=root) == sha, 'Checkout is not the declared source SHA')
-    require(re.search(r'(?m)^version: 0\.3\.0\+3\s*$', (root / 'mobile/pubspec.yaml').read_text(encoding="utf-8")),
+    require(re.search(r'(?m)^version: 0\.3\.1\+4\s*$', (root / 'mobile/pubspec.yaml').read_text(encoding="utf-8")),
             'Tag and Flutter application version disagree')
     return {'source_sha': sha, 'tag': version, 'source_inputs_sha256': inputs_digest(inventory(sha, root))}
 
@@ -229,12 +223,13 @@ def verify_historical(api, spec):
         found = [job for job in jobs if job['name'] == name]
         require(len(found) == 1 and found[0]['status'] == 'completed' and found[0]['conclusion'] == 'success', f'Historical job not successful: {name}')
         job = found[0]
-        for step in spec['steps']:
+        required_steps = spec['steps'] + spec.get('job_steps', {}).get(name, [])
+        for step in required_steps:
             matches = [row for row in job['steps'] if row['name'] == step]
             require(len(matches) == 1 and matches[0]['conclusion'] == 'success', f'Historical gate missing/failed: {step}')
-        selected.append({'id': job['id'], 'name': name, 'conclusion': job['conclusion'], 'required_steps': spec['steps']})
+        selected.append({'id': job['id'], 'name': name, 'conclusion': job['conclusion'], 'required_steps': required_steps})
     return {**spec, 'url': run['html_url'], 'run_attempt': run['run_attempt'], 'run_conclusion': run['conclusion'], 'verified_jobs': selected,
-            'scope': 'historical runtime results only; no final-commit Android/iOS runtime rerun claimed'}
+            'scope': 'runtime acceptance at the recorded SHA; final packages are rebuilt from the tag commit'}
 
 
 def resolve_tag(api, version):
@@ -257,7 +252,7 @@ def publication_context(api, sha, event, ref, publish):
         if ref.startswith('refs/tags/'):
             require(ref == 'refs/tags/' + VERSION and resolve_tag(api, VERSION) == sha, 'Tag event does not match exact source commit')
         else:
-            require(ref == 'refs/heads/feat/unified-portable-tui' and not publish, 'Only the reviewed PR branch may trigger a dry build')
+            require(False, 'Branch push cannot trigger a release build; use an explicit dry-run dispatch')
     elif publish:
         require(ref == 'refs/heads/main', 'Manual publishing is allowed only from main')
     if publish:
@@ -270,19 +265,57 @@ def publication_context(api, sha, event, ref, publish):
         require(api.optional('/releases/tags/' + VERSION) is None, 'Release already exists; no overwrite or silent retry')
 
 
+class MissingAcceptance(RuntimeError):
+    pass
+
+
+def acceptance_for_source(api, sha):
+    """Use every latest required workflow on one exact source commit."""
+    rows = api.request(f'/actions/runs?head_sha={sha}&per_page=100')['workflow_runs']
+    require(len(rows) < 100, 'Acceptance run pagination requires review')
+    accepted, missing = [], []
+    for template in HISTORY:
+        matches = [row for row in rows if row['head_sha'] == sha and row['path'] == template['workflow']]
+        if not matches:
+            missing.append(template['workflow'])
+            continue
+        # Never pick an older successful run over a newer failed/pending one.
+        latest = max(matches, key=lambda row: row['id'])
+        spec = {**template, 'sha': sha, 'run_id': latest['id']}
+        accepted.append(verify_historical(api, spec))
+    if missing:
+        raise MissingAcceptance(f'Missing current-source acceptance at {sha}: {missing}')
+    return accepted
+
+
+def verify_acceptance(api, sha, root=ROOT):
+    # A merge commit can inherit a completely verified, identical PR tree.
+    # Only the commit itself or its direct parents qualify, never an arbitrary
+    # old successful build or a source revision with changed app/build inputs.
+    candidates = git('rev-list', '--parents', '-n', '1', sha, root=root).split()
+    errors = []
+    for candidate in candidates:
+        try:
+            comparison = compare_sources(sha, candidate, root)
+        except RuntimeError as error:
+            errors.append(str(error))
+            continue
+        try:
+            accepted = acceptance_for_source(api, candidate)
+        except MissingAcceptance as error:
+            errors.append(str(error))
+            continue
+        # A failed/pending latest run is NOT eligible for parent fallback.
+        return accepted, comparison
+    raise RuntimeError('No complete current-source runtime acceptance: ' + '; '.join(errors))
+
+
 def preflight(args):
     result = identity(args.sha)
     api = GitHub()
     publication_context(api, args.sha, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], args.publish)
-    comparisons, historical = [], []
-    for spec in HISTORY:
-        try:
-            git('cat-file', '-e', spec['sha'] + '^{commit}')
-        except subprocess.CalledProcessError:
-            subprocess.run(['git', 'fetch', '--no-tags', 'origin', spec['sha']], cwd=ROOT, check=True)
-        comparisons.append(compare_sources(args.sha, spec['sha']))
-        historical.append(verify_historical(api, spec))
-    result.update(historical=historical, source_equivalence=comparisons,
+    accepted, comparison = verify_acceptance(api, args.sha)
+    result.update(historical=accepted, source_equivalence=[comparison],
                   excluded_files=sorted(EXCLUDED_FILES),
                   flutter_revision=FLUTTER_REVISION, run_id=os.environ['GITHUB_RUN_ID'],
                   run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], publish_requested=args.publish)
@@ -417,8 +450,7 @@ def assemble(folder, output, proof, sha):
         row = json.loads(receipt.read_text(encoding="utf-8"))
         shutil.copyfile(receipt.parent / row['file'], output / row['file'])
     manifest = {**proof, 'schema': 1, 'assets': receipts, 'runtime_verification':
-                'Exact source rebuilt; historical Android/iOS source-equivalent runtime results retain original commits. '
-                'Final commit is not claimed to have rerun the full runtime suite. See each package scope.'}
+                'Every package is rebuilt from the tag commit. Latest complete Android, TUI, HTTP/UI/icon and all-eight-platform runtime gates are recorded at the same source commit or an identical direct-parent tree. See original SHAs and package scopes.'}
     write_json(output / 'manifest.json', manifest)
     notes = release_notes(manifest)
     (output / 'RELEASE_NOTES.zh-CN.md').write_text(notes, encoding='utf-8')
@@ -433,6 +465,11 @@ def release_notes(manifest):
 
 源码提交：{manifest['source_sha']}。19 个平台包均由此提交重新构建，未把旧 CI 包改名充当发布包。
 
+## 本次修复
+- Flutter HTTP 历史默认开启，保留已经保存的关闭选择；响应可能包含敏感信息，可在设置关闭。请求 persist: false 仍不记录，只读保护也不会写历史。
+- 请求完成后，正在显示的历史页自动刷新；切换集合不会混入旧列表。
+- Windows 图标保留透明背景与原有黑色帽子，四种图标尺寸从生成 PNG 到实际 EXE 资源逐一校验。
+
 ## 选择与启动
 - TUI：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon。完整解压后运行 iotools（Windows 为 iotools.exe）；首次可加 --init。macOS 二进制未做 Developer ID 公证。
 - Flutter 桌面：同上五种目标。完整解压并保留 DLL/lib/data，运行 iotools 或 iotools.app。Linux 需要图形会话、GTK 3，基于 Ubuntu 22.04；macOS 13+，仅 ad-hoc 签名、未公证；Windows 无 Authenticode 发行者签名。
@@ -443,9 +480,9 @@ def release_notes(manifest):
 
 ## 校验与边界
 下载 SHA256SUMS、manifest.json 和所需包。Linux 可运行 sha256sum -c SHA256SUMS（只下载部分包时只核对对应行）；macOS 用 shasum -a 256；Windows 用 Get-FileHash -Algorithm SHA256。清单记录完整源码 SHA、各包哈希、构建运行和静态检查范围。SHA256 用于完整性核对，不替代发行者签名。
-本次重新编译、包完整性/依赖/签名状态检查和轻量 smoke 通过后才发布。历史运行时依据与本次应用、锁文件、桥接和提交的编译配置输入相同；提交 SHA 和二进制并不相同。Android 保留历史双架构通用包和单 ARM64 包的编译选项，仍然不是历史运行中测试过的同一二进制。Flutter SDK 与声明的 Go/NDK/Gradle/Xcode 版本受检；托管 runner、Java 补丁和系统 SDK 可能更新，不声称整个编译环境逐字节相同。未声称最终提交重跑完整 Android UI/协议验收或 iOS XCTest；未扩大 KVM 权限。
+本次重新编译、包完整性/依赖/签名状态检查和轻量 smoke 通过后才发布。下列验收覆盖本次应用、锁文件、桥接、版本和编译配置；运行验收提交是此源码提交或应用输入完全相同的直接父提交。最终包由标签提交重新编译，不能把验证二进制视为发布包。Android 保留双架构通用包和单 ARM64 包的编译选项。Flutter SDK 与声明的 Go/NDK/Gradle/Xcode 版本受检；托管 runner、Java 补丁和系统 SDK 可能更新，不声称整个编译环境逐字节相同。每条验收保留真实提交和运行链接；不把父提交的运行改称标签提交重新运行。未扩大 KVM 权限。
 {links}
-iOS 历史 XCTest 只覆盖普通启动、真实 Go ABI/生命周期、导出边界及系统选择器展示；文件保存/重新导入、全协议界面及签名 iPhone 仍待独立验收。物理串口和真实工业设备也不在此发布保证范围内。
+iOS 五项 XCTest 只覆盖普通启动、真实 Go ABI/生命周期、导出边界及系统选择器展示；文件保存/重新导入、全协议界面及签名 iPhone 仍待独立验收。物理串口和真实工业设备也不在此发布保证范围内。
 系统若阻止未签名/未公证应用，请使用自己的受信签名构建；不要绕过系统安全警告。完整包内附相应许可证。
 '''
 
@@ -472,6 +509,12 @@ def verify_final_ci(api, sha):
     return {'run_id': latest['id'], 'url': latest['html_url'], 'head_sha': sha, 'conclusion': 'success'}
 
 
+def verify_recorded_acceptance(api, sha, manifest):
+    accepted, comparison = verify_acceptance(api, sha)
+    require(accepted == manifest['historical'] and [comparison] == manifest['source_equivalence'],
+            'Runtime acceptance changed after preflight; review before publishing')
+
+
 def publish(args):
     folder = Path(args.folder)
     manifest = json.loads((folder / 'manifest.json').read_text(encoding="utf-8"))
@@ -490,8 +533,7 @@ def publish(args):
         require(digest(folder / name) == hash_value, 'Local publication checksum mismatch')
         checksums[name] = hash_value
     require(set(checksums) == expected - {'SHA256SUMS'}, 'Incomplete checksum manifest')
-    for spec in HISTORY:
-        verify_historical(api, spec)
+    verify_recorded_acceptance(api, args.sha, manifest)
     verify_final_ci(api, args.sha)
     if resolve_tag(api, VERSION) is None:
         api.request('/git/refs', 'POST', {'ref': 'refs/tags/' + VERSION, 'sha': args.sha})
@@ -512,6 +554,7 @@ def publish(args):
         remote = api.request(f'/releases/assets/{asset["id"]}', raw=True)
         require(hashlib.sha256(remote).hexdigest() == digest(folder / asset['name']), 'Remote asset checksum mismatch')
     require(resolve_tag(api, VERSION) == args.sha, 'Tag moved during release upload')
+    verify_recorded_acceptance(api, args.sha, manifest)
     verify_final_ci(api, args.sha)
     result = api.request(f'/releases/{release["id"]}', 'PATCH', {'draft': False})
     require(result['draft'] is False and result['tag_name'] == VERSION, 'Release publication not confirmed')

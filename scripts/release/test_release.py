@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Hermetic fail-closed tests. No real API calls, signing, uploads or publication."""
 import copy
+import argparse
+import os
 import hashlib
 import json
 from pathlib import Path
@@ -41,7 +43,7 @@ class SourceTests(unittest.TestCase):
         r.git('config', 'user.email', 'test@example.invalid', root=self.root)
         r.git('config', 'user.name', 'Test', root=self.root)
         (self.root/'mobile').mkdir()
-        (self.root/'mobile/pubspec.yaml').write_text('version: 0.3.0+3\n')
+        (self.root/'mobile/pubspec.yaml').write_text('version: 0.3.1+4\n')
         (self.root/'go.mod').write_text('module fixture\ngo 1.27.1\n')
         self.base = self.commit()
     def tearDown(self):
@@ -56,13 +58,13 @@ class SourceTests(unittest.TestCase):
             r.identity(self.base, 'v0.4.0', self.root)
     def test_utf8_version_file_is_read_explicitly(self):
         path=self.root/'mobile/pubspec.yaml'
-        path.write_text('# 中文应用\nversion: 0.3.0+3\n',encoding='utf-8')
+        path.write_text('# 中文应用\nversion: 0.3.1+4\n',encoding='utf-8')
         read=Path.read_text
         def guarded(path,*args,**kwargs):
             if path.name=='pubspec.yaml':self.assertEqual(kwargs.get('encoding'),'utf-8')
             return read(path,*args,**kwargs)
         with patch.object(Path,'read_text',guarded):
-            self.assertEqual(r.identity(self.base,root=self.root)['tag'],'v0.3.0')
+            self.assertEqual(r.identity(self.base,root=self.root)['tag'],'v0.3.1')
 
     def test_wrong_checkout_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'Checkout'):
@@ -71,12 +73,18 @@ class SourceTests(unittest.TestCase):
         (self.root/'mobile/pubspec.yaml').write_text('version: 0.4.0+4\n')
         with self.assertRaisesRegex(RuntimeError, 'version disagree'):
             r.identity(self.base, root=self.root)
-    def test_release_only_diff_is_explicit(self):
+    def test_release_or_harness_changes_are_not_equivalence_exceptions(self):
+        for name in ('scripts/release/build_android.sh', 'scripts/release/release.py',
+                     'scripts/flutter-platforms/verify-ios.py'):
+            self.assertTrue(r.is_input(name))
         p = self.root/'scripts/release/release.py';p.parent.mkdir(parents=True);p.write_text('# fixture\n')
-        sha = self.commit()
-        proof = r.compare_sources(sha, self.base, self.root)
-        self.assertEqual(list(proof['excluded_differences']), ['scripts/release/release.py'])
-        self.assertNotEqual(proof['candidate_sha'], proof['baseline_sha'])
+        with self.assertRaisesRegex(RuntimeError, 'inputs differ'):
+            r.compare_sources(self.commit(), self.base, self.root)
+    def test_complete_tree_digest_is_recorded(self):
+        proof = r.compare_sources(self.base, self.base, self.root)
+        self.assertEqual(proof['candidate_tree'], proof['baseline_tree'])
+        self.assertEqual(proof['excluded_differences'], {})
+        self.assertEqual(r.EXCLUDED_FILES, set())
     def test_new_unreviewed_workflow_rejected(self):
         p=self.root/'.github/workflows/unreviewed.yml';p.parent.mkdir(parents=True);p.write_text('bad')
         with self.assertRaisesRegex(RuntimeError, 'inputs differ'):
@@ -102,47 +110,133 @@ class SourceTests(unittest.TestCase):
 
 
 class HistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.spec = {**r.HISTORY[0], 'sha': '2' * 40, 'run_id': 1}
     def api(self, spec=None):
-        spec = spec or r.HISTORY[0]
+        spec = spec or self.spec
         return FakeAPI({f'/actions/runs/{spec["run_id"]}': {'repository': {'full_name': r.REPOSITORY},
                         'head_sha': spec['sha'], 'path': spec['workflow'], 'status': 'completed',
                         'conclusion':'success', 'html_url':'https://github.com/Live-yum/iotools/actions/runs/1', 'run_attempt':1},
                         'jobs': [{'id': index, 'name': name, 'status':'completed', 'conclusion':'success',
-                                  'steps':[{'name':step,'conclusion':'success'} for step in spec['steps']]}
+                                  'steps':[{'name':step,'conclusion':'success'} for step in
+                                           spec['steps'] + spec.get('job_steps', {}).get(name, [])]}
                                  for index,name in enumerate(spec['jobs'])]})
-    def test_exact_historical_success(self):
-        result=r.verify_historical(self.api(),r.HISTORY[0])
-        self.assertEqual(result['sha'],r.HISTORY[0]['sha'])
-    def test_wrong_historical_sha_rejected(self):
-        a=self.api();a.answers[f'/actions/runs/{r.HISTORY[0]["run_id"]}']['head_sha']=SHA
-        with self.assertRaisesRegex(RuntimeError,'SHA mismatch'):r.verify_historical(a,r.HISTORY[0])
+    def test_exact_runtime_success(self):
+        result=r.verify_historical(self.api(),self.spec)
+        self.assertEqual(result['sha'],self.spec['sha'])
+    def test_wrong_runtime_sha_rejected(self):
+        a=self.api();a.answers['/actions/runs/1']['head_sha']=SHA
+        with self.assertRaisesRegex(RuntimeError,'SHA mismatch'):r.verify_historical(a,self.spec)
     def test_wrong_workflow_rejected(self):
-        a=self.api();a.answers[f'/actions/runs/{r.HISTORY[0]["run_id"]}']['path']='.github/workflows/android.yml'
-        with self.assertRaisesRegex(RuntimeError,'workflow path'):r.verify_historical(a,r.HISTORY[0])
+        a=self.api();a.answers['/actions/runs/1']['path']='.github/workflows/wrong.yml'
+        with self.assertRaisesRegex(RuntimeError,'workflow path'):r.verify_historical(a,self.spec)
     def test_failed_job_rejected(self):
         a=self.api();a.answers['jobs'][0]['conclusion']='failure'
-        with self.assertRaisesRegex(RuntimeError,'job not successful'):r.verify_historical(a,r.HISTORY[0])
+        with self.assertRaisesRegex(RuntimeError,'job not successful'):r.verify_historical(a,self.spec)
     def test_skipped_required_gate_rejected(self):
         a=self.api();a.answers['jobs'][0]['steps'][0]['conclusion']='skipped'
-        with self.assertRaisesRegex(RuntimeError,'gate missing/failed'):r.verify_historical(a,r.HISTORY[0])
-    def test_scoped_platform_does_not_claim_failed_ios_green(self):
-        spec=r.HISTORY[-1];a=self.api(spec);a.answers[f'/actions/runs/{spec["run_id"]}']['conclusion']='failure'
-        result=r.verify_historical(a,spec)
-        self.assertEqual(result['run_conclusion'],'failure')
-        self.assertNotIn('ios',[j['name'] for j in result['verified_jobs']])
+        with self.assertRaisesRegex(RuntimeError,'gate missing/failed'):r.verify_historical(a,self.spec)
+    def test_full_platform_run_must_succeed_including_ios(self):
+        spec={**r.HISTORY[-1], 'sha': SHA, 'run_id': 1};a=self.api(spec)
+        self.assertEqual(len(spec['jobs']), 8)
+        self.assertIn('ios', spec['jobs'])
+        a.answers['/actions/runs/1']['conclusion']='failure'
+        with self.assertRaisesRegex(RuntimeError,'not successful'):r.verify_historical(a,spec)
+    def test_required_ios_and_windows_icon_steps_cannot_skip(self):
+        for template in r.HISTORY[2:]:
+            spec={**template, 'sha': SHA, 'run_id': 1}
+            for name, required in spec.get('job_steps', {}).items():
+                a=self.api(spec)
+                job=next(j for j in a.answers['jobs'] if j['name']==name)
+                next(s for s in job['steps'] if s['name']==required[0])['conclusion']='skipped'
+                with self.assertRaisesRegex(RuntimeError,'gate missing/failed'):r.verify_historical(a,spec)
+    def test_latest_failed_run_not_hidden_by_older_green(self):
+        spec=self.spec;api=self.api()
+        api.answers['/actions/runs?head_sha='+spec['sha']+'&per_page=100']={'workflow_runs':[
+            {'id':1,'head_sha':spec['sha'],'path':spec['workflow']},
+            {'id':2,'head_sha':spec['sha'],'path':spec['workflow']}]}
+        api.answers['/actions/runs/2']={**api.answers['/actions/runs/1'],'conclusion':'failure'}
+        with self.assertRaisesRegex(RuntimeError,'not successful'):r.acceptance_for_source(api,spec['sha'])
+    def test_missing_workflow_is_not_success(self):
+        api=FakeAPI({'/actions/runs?head_sha='+SHA+'&per_page=100':{'workflow_runs':[]}})
+        with self.assertRaises(r.MissingAcceptance):r.acceptance_for_source(api,SHA)
+    def test_failed_current_run_never_falls_back_to_parent(self):
+        with patch.object(r,'git',return_value=SHA+' '+'2'*40), patch.object(r,'compare_sources',return_value={}), \
+             patch.object(r,'acceptance_for_source',side_effect=RuntimeError('pending or failed')) as check:
+            with self.assertRaisesRegex(RuntimeError,'pending or failed'):r.verify_acceptance(FakeAPI({}),SHA)
+            self.assertEqual(check.call_count,1)
+    def test_missing_current_suite_can_use_identical_direct_parent(self):
+        with patch.object(r,'git',return_value=SHA+' '+'2'*40), patch.object(r,'compare_sources',return_value={'same':True}), \
+             patch.object(r,'acceptance_for_source',side_effect=[r.MissingAcceptance('none'), ['accepted']]):
+            self.assertEqual(r.verify_acceptance(FakeAPI({}),SHA), (['accepted'],{'same':True}))
+    def test_changed_parent_application_inputs_cannot_qualify(self):
+        with patch.object(r,'git',return_value=SHA+' '+'2'*40), \
+             patch.object(r,'compare_sources',side_effect=[{},RuntimeError('application inputs changed')]), \
+             patch.object(r,'acceptance_for_source',side_effect=r.MissingAcceptance('none')) as check:
+            with self.assertRaisesRegex(RuntimeError,'application inputs changed'):r.verify_acceptance(FakeAPI({}),SHA)
+            self.assertEqual(check.call_count,1)
+
+
+class PublishRevalidationTests(unittest.TestCase):
+    def test_parent_acceptance_drift_after_upload_never_publicizes_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            proof = {**IDENTITY, 'publish_requested': True, 'run_id': '7', 'run_attempt': '1',
+                     'historical': [{'sha': '2' * 40}], 'source_equivalence': [{'same': True}]}
+            for key in r.EXPECTED:
+                (folder / r.filename(key)).write_bytes(('package-' + key).encode())
+            r.write_json(folder / 'manifest.json', proof)
+            (folder / 'RELEASE_NOTES.zh-CN.md').write_text('fixture notes', encoding='utf-8')
+            (folder / 'SHA256SUMS').write_text(''.join(
+                f'{r.digest(path)}  {path.name}\n' for path in sorted(folder.iterdir())))
+            class API:
+                def __init__(self):
+                    self.tag = None
+                    self.calls = []
+                    self.uploads = []
+                    self.files = {}
+                def optional(self, path):
+                    return None if self.tag is None else {'object': {'type': 'commit', 'sha': self.tag}}
+                def request(self, path, method='GET', data=None, raw=False):
+                    self.calls.append((method, path))
+                    if path == '/git/refs':
+                        self.tag = data['sha']; return {}
+                    if path == '/releases':
+                        return {'id': 1, 'draft': True, 'upload_url': 'https://uploads.github.com/repos/Live-yum/iotools/releases/1/assets{?name,label}'}
+                    if method == 'POST' and path.startswith('https://uploads.'):
+                        idx = len(self.uploads) + 1
+                        self.files[idx] = data.read_bytes()
+                        self.uploads.append({'id': idx, 'name': data.name, 'state': 'uploaded', 'size': data.stat().st_size})
+                        return {}
+                    if path == '/releases/1/assets?per_page=100': return self.uploads
+                    if path.startswith('/releases/assets/'): return self.files[int(path.rsplit('/',1)[1])]
+                    raise AssertionError('Unexpected API action: '+method+' '+path)
+            api = API()
+            with patch.object(r, 'GitHub', return_value=api), patch.object(r, 'identity', return_value=IDENTITY), \
+                 patch.object(r, 'publication_context'), patch.object(r, 'verify_final_ci'), \
+                 patch.object(r, 'verify_acceptance', side_effect=[
+                    (proof['historical'], proof['source_equivalence'][0]),
+                    ([{'sha': '2' * 40, 'run_attempt': 2}], proof['source_equivalence'][0])]), \
+                 patch.dict(os.environ, {'GITHUB_RUN_ID':'7','GITHUB_RUN_ATTEMPT':'1','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main'}):
+                with self.assertRaisesRegex(RuntimeError, 'acceptance changed'):
+                    r.publish(argparse.Namespace(folder=str(folder), sha=SHA))
+            self.assertEqual(len(api.uploads), 22)
+            self.assertIn(('POST','/releases'), api.calls)
+            self.assertFalse(any(method == 'PATCH' for method, _ in api.calls))
 
 
 class PublicationTests(unittest.TestCase):
     def context_api(self):
         return FakeAPI({'/git/ref/heads/main':{'object':{'sha':SHA}},
                         '/compare/'+SHA+'...'+SHA:{'status':'identical'}})
-    def test_dry_branch_push_allowed(self):
-        r.publication_context(FakeAPI({}),SHA,'push','refs/heads/feat/unified-portable-tui',False)
+    def test_branch_push_requires_explicit_dry_dispatch(self):
+        with self.assertRaisesRegex(RuntimeError,'dry-run dispatch'):
+            r.publication_context(FakeAPI({}),SHA,'push','refs/heads/feat/unified-portable-tui',False)
     def test_dry_dispatch_has_no_tag_side_effect(self):
         api=FakeAPI({});r.publication_context(api,SHA,'workflow_dispatch','refs/heads/feature',False)
         self.assertEqual(api.calls,[])
     def test_branch_push_cannot_publish(self):
-        with self.assertRaisesRegex(RuntimeError,'dry build'):
+        with self.assertRaisesRegex(RuntimeError,'dry-run dispatch'):
             r.publication_context(FakeAPI({}),SHA,'push','refs/heads/feat/unified-portable-tui',True)
     def test_manual_feature_publication_rejected(self):
         with self.assertRaisesRegex(RuntimeError,'main'):
