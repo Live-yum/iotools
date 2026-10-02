@@ -212,7 +212,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(ctx)
 	if r.Host != s.host || (r.Header.Get("Origin") != "" && r.Header.Get("Origin") != s.origin) || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		fail(w, 403, "请从本机网关的原始地址打开应用")
+		rejectRequest(w, r, "请从本机网关的原始地址打开应用")
 		return
 	}
 	if r.URL.Path == "/api/bootstrap" {
@@ -229,7 +229,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	owner, c := s.authenticate(r)
 	if c == nil {
-		fail(w, 403, "本机会话已失效，请刷新页面")
+		rejectRequest(w, r, "本机会话已失效，请刷新页面")
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/download/") {
@@ -241,7 +241,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Iotools-CSRF")), []byte(c.csrf)) != 1 {
-		fail(w, 403, "本机请求校验失败")
+		rejectRequest(w, r, "本机请求校验失败")
 		return
 	}
 	switch r.URL.Path {
