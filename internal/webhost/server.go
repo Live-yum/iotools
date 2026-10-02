@@ -192,6 +192,10 @@ func (s *Server) reapLocked(now time.Time) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Keep net/http's original body (and its Expect/continue bookkeeping)
+	// intact; only the handler's private request needs read tracking.
+	r = r.WithContext(r.Context())
+	trackRequestBody(r)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
@@ -201,7 +205,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	closed := s.closed
 	s.mu.Unlock()
 	if closed {
-		fail(w, http.StatusServiceUnavailable, "网关已关闭")
+		failRequest(w, r, http.StatusServiceUnavailable, "网关已关闭")
 		return
 	}
 	// Also cancel in-flight file copies when Close is called by an embedding
@@ -217,7 +221,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/bootstrap" {
 		if r.Method != http.MethodGet {
-			fail(w, 405, "不支持的请求方法")
+			failRequest(w, r, 405, "不支持的请求方法")
 			return
 		}
 		s.bootstrap(w, r)
@@ -234,7 +238,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/download/") {
 		if r.Method != http.MethodGet {
-			fail(w, 405, "不支持的请求方法")
+			failRequest(w, r, 405, "不支持的请求方法")
 			return
 		}
 		s.download(w, r, owner)
@@ -256,12 +260,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/files/download":
 		s.prepareDownload(w, r, owner)
 	default:
-		fail(w, 404, "本机接口不存在")
+		failRequest(w, r, 404, "本机接口不存在")
 	}
 }
 func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	cookie, _ := r.Cookie("iotools_client")
 	var id string
 	var c *client
@@ -270,13 +273,15 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		c = s.clients[id]
 	}
 	if s.closed {
-		fail(w, 503, "网关已关闭")
+		s.mu.Unlock()
+		failRequest(w, r, 503, "网关已关闭")
 		return
 	}
 	if c == nil {
 		s.reapLocked(time.Now())
 		if len(s.clients) >= maxClients {
-			fail(w, 429, "本机浏览器会话过多，请关闭网关后重新启动")
+			s.mu.Unlock()
+			failRequest(w, r, 429, "本机浏览器会话过多，请关闭网关后重新启动")
 			return
 		}
 		id = randomToken()
@@ -284,8 +289,10 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		s.clients[id] = c
 	}
 	c.last = time.Now()
+	csrf := c.csrf
+	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "iotools_client", Value: id, Path: "/api/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
-	success(w, map[string]any{"csrf": c.csrf, "capabilities": capabilities(), "version": s.version})
+	success(w, map[string]any{"csrf": csrf, "capabilities": capabilities(), "version": s.version})
 }
 func (s *Server) authenticate(r *http.Request) (string, *client) {
 	cookie, e := r.Cookie("iotools_client")
@@ -338,7 +345,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request, owner string) {
 		History  bool   `json:"history"`
 	}
 	if e := decode(r, maxCommand, &input); e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	require := input.Path != ""
@@ -347,7 +354,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	file, e := s.private(input.Path, false)
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	s.mu.Lock()
@@ -368,7 +375,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	if s.closed || len(s.sessions) >= maxClients {
 		s.mu.Unlock()
-		fail(w, 429, "本机会话过多")
+		failRequest(w, r, 429, "本机会话过多")
 		return
 	}
 	id := randomToken()
@@ -379,7 +386,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request, owner string) {
 		s.mu.Lock()
 		delete(s.sessions, id)
 		s.mu.Unlock()
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	s.mu.Lock()
@@ -387,7 +394,7 @@ func (s *Server) open(w http.ResponseWriter, r *http.Request, owner string) {
 		delete(s.sessions, id)
 		s.mu.Unlock()
 		engine.Close()
-		fail(w, 503, "网关已关闭")
+		failRequest(w, r, 503, "网关已关闭")
 		return
 	}
 	s.sessions[id] = &session{owner: owner, engine: engine, last: time.Now()}
@@ -406,7 +413,7 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request, owner string) {
 	v := s.sessions[id]
 	if v == nil || v.owner != owner || v.engine == nil {
 		s.mu.Unlock()
-		fail(w, 404, "本机会话已关闭")
+		failRequest(w, r, 404, "本机会话已关闭")
 		return
 	}
 	v.last = time.Now()
@@ -416,7 +423,7 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request, owner string) {
 			Action string `json:"action"`
 		}
 		if e := decode(r, 1024, &input); e != nil {
-			fail(w, 400, e.Error())
+			failRequest(w, r, 400, e.Error())
 			return
 		}
 		switch input.Action {
@@ -437,7 +444,7 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request, owner string) {
 				v.engine.Close()
 			}
 		default:
-			fail(w, 400, "未知生命周期操作")
+			failRequest(w, r, 400, "未知生命周期操作")
 			return
 		}
 		success(w, nil)
@@ -445,7 +452,7 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request, owner string) {
 	}
 	b, e := body(r, maxCommand)
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -475,7 +482,7 @@ func (s *Server) relativeReply(raw string) string {
 }
 func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" && r.Method != "HEAD" {
-		fail(w, 405, "不支持的请求方法")
+		failRequest(w, r, 405, "不支持的请求方法")
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/")
@@ -483,26 +490,26 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 		name = "index.html"
 	}
 	if !fs.ValidPath(name) || strings.HasPrefix(name, "api/") {
-		http.NotFound(w, r)
+		notFound(w, r)
 		return
 	}
 	f, e := s.assets.Open(path.Clean(name))
 	if e != nil {
-		http.NotFound(w, r)
+		notFound(w, r)
 		return
 	}
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil || !st.Mode().IsRegular() {
-		http.NotFound(w, r)
+		notFound(w, r)
 		return
 	}
 	seeker, ok := f.(io.ReadSeeker)
 	if !ok {
-		http.NotFound(w, r)
+		notFound(w, r)
 		return
 	}
-	http.ServeContent(w, r, name, st.ModTime(), seeker)
+	http.ServeContent(&contentResponseWriter{ResponseWriter: w, request: r}, r, name, st.ModTime(), seeker)
 }
 func (s *Server) private(handle string, existing bool) (string, error) {
 	if !portablePath(handle) {

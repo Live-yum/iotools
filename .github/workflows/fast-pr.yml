@@ -1,6 +1,9 @@
 name: Fast pull request checks
 on:
   pull_request:
+  # Exercise the same fail-closed fast gates before advancing the release PR.
+  push:
+    branches: ['feat/gateway-rejection-validation']
   workflow_dispatch:
 permissions:
   contents: read

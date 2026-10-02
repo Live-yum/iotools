@@ -46,7 +46,7 @@ func (s *Server) platform(w http.ResponseWriter, r *http.Request) {
 		Args   map[string]any `json:"args"`
 	}
 	if e := decode(r, maxCommand, &in); e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	var data any
@@ -89,7 +89,7 @@ func (s *Server) platform(w http.ResponseWriter, r *http.Request) {
 		err = errors.New("当前平台不支持此操作")
 	}
 	if err != nil {
-		fail(w, 400, err.Error())
+		failRequest(w, r, 400, err.Error())
 		return
 	}
 	success(w, data)
@@ -329,11 +329,11 @@ func copyBounded(ctx context.Context, to string, from io.Reader, maximum int64) 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	maximum, e := limit(r.URL.Query().Get("limit"), maxFile)
 	if e != nil {
-		rejectUnreadRequest(w, r, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	if r.ContentLength > maximum {
-		rejectUnreadRequest(w, r, 413, "上传文件超过上限")
+		failRequest(w, r, 413, "上传文件超过上限")
 		return
 	}
 	bundle := r.URL.Query().Get("bundle") == "1"
@@ -343,7 +343,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	directory, e := os.MkdirTemp(s.root, prefix)
 	if e != nil {
-		rejectUnreadRequest(w, r, 500, "无法创建导入目录")
+		failRequest(w, r, 500, "无法创建导入目录")
 		return
 	}
 	done := false
@@ -359,7 +359,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	p := filepath.Join(directory, name)
 	_, e = copyBounded(r.Context(), p, r.Body, maximum)
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	var data any
@@ -372,11 +372,11 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		data, e = fileInfo(s.root, p)
 	}
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	if e = r.Context().Err(); e != nil {
-		fail(w, 400, "导入已取消")
+		failRequest(w, r, 400, "导入已取消")
 		return
 	}
 	done = true
@@ -460,16 +460,16 @@ func (s *Server) prepareDownload(w http.ResponseWriter, r *http.Request, owner s
 		Limit any     `json:"limit"`
 	}
 	if e := decode(r, 64<<20, &args); e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	maximum, e := limit(args.Limit, maxFile)
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	if (args.Path == nil) == (args.Text == nil) {
-		fail(w, 400, "请选择文件或文本导出")
+		failRequest(w, r, 400, "请选择文件或文本导出")
 		return
 	}
 	t := ticket{owner: owner, name: safeName(args.Name), expiry: time.Now().Add(time.Minute), maximum: maximum}
@@ -502,7 +502,7 @@ func (s *Server) prepareDownload(w http.ResponseWriter, r *http.Request, owner s
 		if t.temporary {
 			os.Remove(t.path)
 		}
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	s.mu.Lock()
@@ -513,10 +513,10 @@ func (s *Server) prepareDownload(w http.ResponseWriter, r *http.Request, owner s
 			os.Remove(t.path)
 		}
 		if closed {
-			fail(w, 503, "导出已取消或网关已关闭")
+			failRequest(w, r, 503, "导出已取消或网关已关闭")
 			return
 		}
-		fail(w, 429, "待下载文件过多")
+		failRequest(w, r, 429, "待下载文件过多")
 		return
 	}
 	id := randomToken()
@@ -536,31 +536,31 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request, owner string) 
 		defer os.Remove(t.path)
 	}
 	if !ok || t.owner != owner || time.Now().After(t.expiry) {
-		fail(w, 404, "下载票据已过期或已使用")
+		failRequest(w, r, 404, "下载票据已过期或已使用")
 		return
 	}
 	rel, e := filepath.Rel(s.root, t.path)
 	if e != nil {
-		fail(w, 400, "无效下载文件")
+		failRequest(w, r, 400, "无效下载文件")
 		return
 	}
 	p, e := s.private(filepath.ToSlash(rel), true)
 	if e != nil {
-		fail(w, 400, e.Error())
+		failRequest(w, r, 400, e.Error())
 		return
 	}
 	f, e := os.Open(p)
 	if e != nil {
-		fail(w, 404, "下载文件不存在")
+		failRequest(w, r, 404, "下载文件不存在")
 		return
 	}
 	defer f.Close()
 	st, e := f.Stat()
 	if e != nil || !st.Mode().IsRegular() || st.Size() > t.maximum {
-		fail(w, 400, "无效下载文件或内容已超过导出上限")
+		failRequest(w, r, 400, "无效下载文件或内容已超过导出上限")
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": t.name}))
-	http.ServeContent(w, r, t.name, st.ModTime(), f)
+	http.ServeContent(&contentResponseWriter{ResponseWriter: w, request: r}, r, t.name, st.ModTime(), f)
 }

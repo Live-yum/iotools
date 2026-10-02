@@ -1,0 +1,29 @@
+name: Read-only iOS host diagnostics
+on:
+  push:
+    branches: ['feat/gateway-rejection-validation']
+    paths:
+      - 'scripts/ci/diagnose_ios_host.py'
+      - '.github/workflows/ios-host-diagnostics.yml'
+permissions:
+  contents: read
+env:
+  IOTOOLS_SHA: ${{ github.sha }}
+jobs:
+  diagnostics:
+    runs-on: macos-15
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Record fixed Xcode and simulator service observations
+        run: python3 scripts/ci/diagnose_ios_host.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ios-host-diagnostics-${{ github.sha }}
+          path: platform-evidence/ios-host-diagnostics/
+          if-no-files-found: error
+          retention-days: 14
