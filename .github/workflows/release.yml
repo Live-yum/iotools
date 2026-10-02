@@ -1,0 +1,466 @@
+# Exact-source builds; excluded historical failures are never promoted to green.
+name: Verified multi-platform release
+'on':
+  push:
+    branches:
+    - feat/unified-portable-tui
+    tags:
+    - v0.3.0
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish v0.3.0 after every exact-source asset passes (main only)
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: iotools-v0.3.0-release
+  cancel-in-progress: false
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  IOTOOLS_SHA: ${{ github.sha }}
+defaults:
+  run:
+    shell: bash
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Test release fail-closed gates
+      run: python3 -m unittest discover -s scripts/release -p "test_*.py" -v
+    - name: Verify source equivalence, historical gates and publication context
+      id: gate
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PUBLISH: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+      run: |-
+        args=()
+        if test "$PUBLISH" = true; then args+=(--publish); fi
+        python3 scripts/release/release.py preflight --sha "$IOTOOLS_SHA" "${args[@]}"
+        echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-source-proof
+        path: release-proof.json
+        if-no-files-found: error
+        retention-days: 14
+  tui:
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-24.04
+          target: linux
+          arch: amd64
+        - os: ubuntu-24.04-arm
+          target: linux
+          arch: arm64
+        - os: windows-2022
+          target: windows
+          arch: amd64
+        - os: macos-15
+          target: macos
+          arch: arm64
+        - os: macos-15-intel
+          target: macos
+          arch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Native Go module, unit and protocol regression
+      run: |-
+        go mod verify
+        go vet ./...
+        go test -count=1 -timeout 5m ./...
+    - name: Build and smoke exact-source portable TUI
+      run: python3 scripts/release/build_tui.py '${{ matrix.target }}' '${{ matrix.arch }}'
+    - name: Stage tui-${{ matrix.target }}-${{ matrix.arch }}
+      run: python3 scripts/release/release.py stage --sha "$IOTOOLS_SHA" --key "tui-${{ matrix.target }}-${{ matrix.arch }}" --asset
+        "dist/tui-${{ matrix.target }}-${{ matrix.arch }}.zip" --report "dist/tui-${{ matrix.target }}-${{ matrix.arch }}.json"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-asset-tui-${{ matrix.target }}-${{ matrix.arch }}
+        path: release-stage/
+        if-no-files-found: error
+        retention-days: 14
+    - name: Keep build diagnostics without promoting them to release packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-evidence-tui-${{ matrix.target }}-${{ matrix.arch }}
+        path: |-
+          platform-evidence/
+          android-evidence/
+        if-no-files-found: ignore
+        retention-days: 14
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-22.04
+          target: linux
+          arch: amd64
+          flutter_target: linux-x64
+        - os: ubuntu-22.04-arm
+          target: linux
+          arch: arm64
+          flutter_target: linux-arm64
+        - os: windows-2022
+          target: windows
+          arch: amd64
+        - os: macos-15
+          target: macos
+          arch: arm64
+        - os: macos-15-intel
+          target: macos
+          arch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Linux build dependencies
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libblkid-dev xvfb
+        fonts-noto-cjk
+    - uses: msys2/setup-msys2@v2
+      if: runner.os == 'Windows'
+      with:
+        msystem: MINGW64
+        install: mingw-w64-x86_64-gcc
+        update: false
+    - name: Select Windows C compiler
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        'C:\msys64\mingw64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+        'CC=gcc' | Out-File -FilePath $env:GITHUB_ENV -Append
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'scripts/flutter-platforms/verify-windows-release.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+        if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+        & scripts/flutter-platforms/verify-windows-release.ps1 -ValidateHelpers
+    - name: Install pinned official Flutter
+      run: |
+        git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+    - name: Native core and real C ABI
+      run: |
+        bash scripts/flutter-platforms/build-native.sh '${{ matrix.target }}' '${{ matrix.arch }}'
+    - name: Verify real ABI and isolate transport
+      run: |
+        python3 cmd/iotools-native/testdata/check_abi.py "$IOTOOLS_NATIVE_LIBRARY"
+        cd mobile
+        flutter pub get --enforce-lockfile
+        flutter analyze
+        flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
+        flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+    - name: Prepare pinned desktop CJK and emoji fonts
+      run: python3 scripts/flutter-platforms/prepare-native-fonts.py
+    - name: Compile Linux Flutter application
+      if: matrix.target == 'linux'
+      run: cd mobile && flutter build linux --release --target-platform '${{ matrix.flutter_target }}' --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+    - name: Compile Windows Flutter application
+      if: matrix.target == 'windows'
+      run: cd mobile && flutter build windows --release --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+    - name: Bundle application-local Windows runtime
+      if: matrix.target == 'windows'
+      shell: pwsh
+      run: |
+        $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+        $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+        if (!$crt) { throw 'Official Visual C++ redistributable directory not found' }
+        $out = 'mobile\build\windows\x64\runner\Release'
+        foreach ($name in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') { Copy-Item (Join-Path $crt.FullName $name) $out }
+        python scripts/flutter-platforms/prepare-windows-notices.py $crt.FullName
+    - name: Compile sandboxed macOS Flutter application
+      if: matrix.target == 'macos'
+      run: bash scripts/flutter-platforms/build-macos.sh '${{ matrix.arch }}'
+    - name: Package real native bundle and dependency report
+      run: python3 scripts/flutter-platforms/package-native.py '${{ matrix.target }}' '${{ matrix.arch }}'
+    - name: Exact packaged Windows Release GUI and JVM independence
+      if: matrix.target == 'windows'
+      timeout-minutes: 6
+      shell: pwsh
+      run: |
+        $zip = Get-Item "platform-dist/iotools-flutter-windows-amd64-$env:IOTOOLS_SHA.zip"
+        & scripts/flutter-platforms/verify-windows-release.ps1 -Archive $zip.FullName
+    - name: Stage flutter-${{ matrix.target }}-${{ matrix.arch }}
+      run: python3 scripts/release/release.py stage --sha "$IOTOOLS_SHA" --key "flutter-${{ matrix.target }}-${{ matrix.arch }}" --asset
+        "platform-dist/iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-$IOTOOLS_SHA.zip" --report "platform-dist/manifest.json"
+    - name: Build and verify host-native offline Web gateway
+      run: |
+        python3 -B scripts/flutter-platforms/test_web_gateway_security.py
+        bash scripts/flutter-platforms/build-web.sh '${{ matrix.target }}' '${{ matrix.arch }}'
+        suffix=''
+        if test '${{ matrix.target }}' = windows; then suffix=.exe; fi
+        python3 scripts/flutter-platforms/verify-web-gateway.py "platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}/iotools-web$suffix"
+    - name: Stage web-${{ matrix.target }}-${{ matrix.arch }}
+      run: python3 scripts/release/release.py stage --sha "$IOTOOLS_SHA" --key "web-${{ matrix.target }}-${{ matrix.arch }}" --asset
+        "platform-dist/iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-$IOTOOLS_SHA.zip" --report "platform-dist/web-${{
+        matrix.target }}-${{ matrix.arch }}-manifest.json"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-asset-native-${{ matrix.target }}-${{ matrix.arch }}
+        path: release-stage/
+        if-no-files-found: error
+        retention-days: 14
+    - name: Keep build diagnostics without promoting them to release packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-evidence-native-${{ matrix.target }}-${{ matrix.arch }}
+        path: |-
+          platform-evidence/
+          android-evidence/
+        if-no-files-found: ignore
+        retention-days: 14
+    needs: preflight
+  android:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: 8.11.1
+    - name: Install pinned official Flutter
+      run: |-
+        git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
+    - name: Build two normal-entry Release AOT APKs without emulator or KVM changes
+      run: bash scripts/release/build_android.sh
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-asset-android
+        path: release-stage/
+        if-no-files-found: error
+        retention-days: 14
+    - name: Keep build diagnostics without promoting them to release packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-evidence-android
+        path: |-
+          platform-evidence/
+          android-evidence/
+        if-no-files-found: ignore
+        retention-days: 14
+  ios-device:
+    needs: preflight
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Install pinned official Flutter
+      run: |-
+        git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
+    - name: Record installed device Xcode and SDK
+      run: |-
+        mkdir -p platform-evidence/release-toolchains
+        xcodebuild -version > platform-evidence/release-toolchains/xcode.txt
+        xcrun --sdk iphoneos --show-sdk-version > platform-evidence/release-toolchains/iphoneos-sdk.txt
+    - name: Prepare locked Flutter dependencies and icons
+      run: |-
+        cd mobile
+        flutter pub get --enforce-lockfile
+        flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+    - name: Build and statically verify isolated unsigned device release
+      run: |-
+        python3 -B scripts/flutter-platforms/test_ios_device_release.py
+        python3 -B scripts/flutter-platforms/test_ios_release_gate.py
+        bash scripts/flutter-platforms/build-native.sh ios-device arm64
+        python3 scripts/flutter-platforms/prepare-ios-device-release.py
+        python3 scripts/flutter-platforms/verify-ios.py device
+    - name: Stage ios-device-arm64-unsigned
+      run: python3 scripts/release/release.py stage --sha "$IOTOOLS_SHA" --key "ios-device-arm64-unsigned" --asset "platform-dist/ios-device-$IOTOOLS_SHA.zip"
+        --report "platform-dist/ios-device-$IOTOOLS_SHA-manifest.json"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-asset-ios-device
+        path: release-stage/
+        if-no-files-found: error
+        retention-days: 14
+    - name: Keep build diagnostics without promoting them to release packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-evidence-ios-device
+        path: |-
+          platform-evidence/
+          android-evidence/
+        if-no-files-found: ignore
+        retention-days: 14
+  ios-simulator:
+    needs: preflight
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - name: Install pinned official Flutter
+      run: |-
+        git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+        echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
+    - name: Prepare locked Flutter dependencies and icons
+      run: |-
+        cd mobile
+        flutter pub get --enforce-lockfile
+        flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+    - name: Select already-installed pinned Xcode
+      run: |-
+        test -d /Applications/Xcode_26.2.app/Contents/Developer
+        export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
+        xcodebuild -version | tee "$RUNNER_TEMP/xcode-version.txt"
+        grep -Fx 'Xcode 26.2' "$RUNNER_TEMP/xcode-version.txt"
+        grep -Fx 'Build version 17C52' "$RUNNER_TEMP/xcode-version.txt"
+        echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+    - name: Compile and statically verify arm64 Debug simulator developer bundle
+      run: |-
+        test "$(uname -m)" = arm64
+        bash scripts/flutter-platforms/build-native.sh ios-simulator arm64
+        (cd mobile && flutter build ios --simulator --debug --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA")
+        python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
+    - name: Stage ios-simulator-arm64-debug-developer
+      run: python3 scripts/release/release.py stage --sha "$IOTOOLS_SHA" --key "ios-simulator-arm64-debug-developer" --asset "platform-dist/ios-simulator-compiled-$IOTOOLS_SHA.zip"
+        --report "platform-dist/ios-simulator-compiled-$IOTOOLS_SHA-manifest.json"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-asset-ios-simulator
+        path: release-stage/
+        if-no-files-found: error
+        retention-days: 14
+    - name: Keep build diagnostics without promoting them to release packages
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-evidence-ios-simulator
+        path: |-
+          platform-evidence/
+          android-evidence/
+        if-no-files-found: ignore
+        retention-days: 14
+  assemble:
+    needs:
+    - preflight
+    - tui
+    - native
+    - android
+    - ios-device
+    - ios-simulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - uses: actions/download-artifact@v4
+      with:
+        name: release-source-proof
+        path: .
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: release-asset-*
+        path: incoming
+        merge-multiple: false
+    - name: Require every asset and verify hashes, scope and exact source identity
+      run: python3 scripts/release/release.py assemble --sha "$IOTOOLS_SHA"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: release-verified-complete
+        path: release-dist/
+        if-no-files-found: error
+        retention-days: 14
+  publish:
+    needs:
+    - preflight
+    - assemble
+    if: needs.preflight.outputs.publish == 'true'
+    permissions:
+      contents: write
+      actions: read
+      checks: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.IOTOOLS_SHA }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/download-artifact@v4
+      with:
+        name: release-verified-complete
+        path: release-dist
+    - name: Draft, upload, independently download/hash, then publish complete release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/release/release.py publish --sha "$IOTOOLS_SHA"

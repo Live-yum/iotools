@@ -1,0 +1,73 @@
+name: Portable TUI acceptance
+on:
+  push:
+    branches: [main, 'feat/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  native:
+    name: Native ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-amd64
+            binary: iotools
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            binary: iotools
+          - os: windows-latest
+            target: windows-amd64
+            binary: iotools.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Native unit, TUI and real loopback protocol tests
+        run: go test -v -count=1 -timeout 5m ./...
+      - name: Race detector (Linux)
+        if: runner.os == 'Linux'
+        run: go test -race -count=1 -timeout 5m ./internal/...
+      - name: Build portable binary
+        env:
+          CGO_ENABLED: '0'
+        run: go build -trimpath -ldflags "-s -w -X main.version=${{ env.IOTOOLS_SHA }}" -o dist/${{ matrix.binary }} ./cmd/iotools
+      - name: Verify standalone runtime dependencies
+        run: go run ./scripts/verifybinary dist/${{ matrix.binary }}
+      - name: Binary smoke test
+        shell: bash
+        run: |
+          dist/${{ matrix.binary }} --version
+          dist/${{ matrix.binary }} --file examples/local.yaml --validate
+          dist/${{ matrix.binary }} --file dist/smoke.yaml --init
+          dist/${{ matrix.binary }} --file dist/smoke.yaml --validate
+          rm dist/smoke.yaml
+      - name: Package licenses and samples
+        shell: bash
+        run: |
+          go run ./scripts/notices dist/THIRD_PARTY_LICENSES
+          cp LICENSE README.md dist/
+          cp -r examples docs dist/
+          (cd dist && sha256sum ${{ matrix.binary }} > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-${{ matrix.target }}-${{ env.IOTOOLS_SHA }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

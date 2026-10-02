@@ -1,0 +1,269 @@
+name: Flutter mobile standalone APK
+on:
+  push:
+    branches: ['feat/android-modern-app', 'feat/flutter-cross-platform']
+    # Keep the full Android/shared-input closure. Desktop/iOS-only CI harnesses
+    # need not rebuild identical Android runtime code; workflow changes do.
+    paths:
+      - 'mobile/**'
+      - 'internal/**'
+      - 'cmd/**'
+      - 'go.*'
+      - 'scripts/android/**'
+      - 'scripts/android-fixtures/**'
+      - 'scripts/flutter/**'
+      - 'scripts/notices/**'
+      - 'scripts/verifybinary/**'
+      - 'scripts/visual/**'
+      - 'docs/android.md'
+      - 'docs/flutter-mobile.md'
+      - 'examples/**'
+      - 'README.md'
+      - 'LICENSE'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths: ['mobile/**', 'internal/mobileapi/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'scripts/flutter/**', 'scripts/android-fixtures/**', 'internal/engine/**', 'internal/config/**', 'internal/crypto/**', 'go.mod', 'go.sum']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Install pinned official Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+          echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/flutter/bin/flutter" --version
+      - name: Flutter static analysis and widget tests
+        run: |
+          cd mobile
+          flutter pub get --enforce-lockfile
+          mkdir -p ../android-evidence
+          flutter pub deps --json > ../android-evidence/pub-dependencies.json
+          python3 ../scripts/flutter/test_android_dependency_audit.py
+          python3 ../scripts/flutter/android_dependency_audit.py --deps ../android-evidence/pub-dependencies.json --output ../android-evidence/dependency-resolution.json
+          flutter analyze
+          flutter test --reporter expanded
+          printf 'sdk.dir=%s\nflutter.sdk=%s\n' "$ANDROID_HOME" "$RUNNER_TEMP/flutter" > android/local.properties
+          gradle -p android wrapper --gradle-version 8.11.1
+      - name: Shared engine and desktop regression
+        run: |
+          go test -race -count=1 -timeout 5m ./...
+          CGO_ENABLED=1 go test -race -tags sqlite_android_test -count=1 -timeout 5m ./internal/engine ./internal/mobileapi
+      - name: Select installed Android NDK
+        run: |
+          ndk="$ANDROID_HOME/ndk/28.1.13356709"
+          test -d "$ndk"
+          cat "$ndk/source.properties"
+          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+      - name: Build actual shared Go engine
+        run: |
+          python3 scripts/flutter/verify-mobile.py
+          python3 scripts/flutter/test_emulator_runner.py
+          python3 scripts/flutter/test_release_apk_gate.py
+          bash scripts/android/build-native.sh
+          bash scripts/flutter/prepare-assets.sh
+      - name: Build debug-signed Flutter APK and platform tests
+        run: |
+          cd mobile
+          flutter build apk --debug --split-per-abi --target-platform android-arm64,android-x64
+          cd android
+          ./gradlew --no-daemon assembleDebugAndroidTest
+      - name: Verify APK signature, alignment and Flutter isolation
+        id: verify_apk
+        run: |
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          mkdir -p android-dist
+          for abi in arm64-v8a x86_64; do
+            apk="mobile/build/app/outputs/flutter-apk/app-$abi-debug.apk"
+            python3 scripts/flutter/verify-mobile.py "$apk"
+            "$tools/apksigner" verify --verbose --print-certs "$apk"
+            "$tools/aapt" dump permissions "$apk"
+            "$tools/zipalign" -c -P 16 -v 4 "$apk"
+            target="iotools-flutter-android-$abi-$IOTOOLS_SHA-debug.apk"
+            cp "$apk" "android-dist/$target"
+            (cd android-dist && sha256sum "$target" > "$target.sha256")
+          done
+          cp docs/flutter-mobile.md LICENSE android-dist/
+          # Keep the normal-entry APK before flutter drive builds its test entrypoint.
+      - name: Build compact AOT normal-entry APK and matching test APK
+        id: build_aot
+        run: |
+          mkdir -p android-evidence/aot-test
+          cd mobile
+          flutter build apk --release --target-platform android-arm64,android-x64 --target lib/main.dart
+          cd android
+          ./gradlew --no-daemon -PiotoolsTestBuildType=release -Ptarget-platform=android-arm64,android-x64 assembleReleaseAndroidTest
+          ./gradlew --no-daemon :app:dependencies --configuration releaseRuntimeClasspath > ../../android-evidence/release-runtime-dependencies.txt
+          cd ../..
+          mkdir -p android-dist android-evidence/aot-test
+          apk=mobile/build/app/outputs/flutter-apk/app-release.apk
+          python3 scripts/flutter/verify-mobile.py "$apk" --aot
+          python3 scripts/flutter/android_dependency_audit.py --deps android-evidence/pub-dependencies.json --maven android-evidence/release-runtime-dependencies.txt --apk "$apk" --output android-evidence/dependency-packaging.json
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$tools/apksigner" verify --verbose --print-certs "$apk" | tee android-evidence/aot-signature.txt
+          "$tools/aapt" dump permissions "$apk" | tee android-evidence/aot-permissions.txt
+          python3 scripts/flutter/check-apk-permissions.py android-evidence/aot-permissions.txt
+          "$tools/zipalign" -c -P 16 -v 4 "$apk" > android-evidence/aot-zipalign.txt
+          target="iotools-flutter-universal-$IOTOOLS_SHA-aot-test-signed.apk"
+          cp "$apk" "android-dist/$target"
+          (cd android-dist && sha256sum "$target" > "$target.sha256" && stat -c '%n %s bytes' "$target")
+          test_apk=$(find mobile/build/app/outputs/apk/androidTest/release -name '*androidTest.apk' -print -quit)
+          test -n "$test_apk"
+          cp "$test_apk" android-evidence/aot-test/instrumentation.apk
+          # The normal-entry delivery APK is immutable before any self-driving debug test runs.
+      - name: Bound exact APK artifact transfers
+        id: aot_parts
+        run: python3 scripts/flutter/prepare-apk-transport.py "android-dist/iotools-flutter-universal-$IOTOOLS_SHA-aot-test-signed.apk"
+      - name: Build independent ARM64 AOT trial package
+        run: |
+          cd mobile
+          flutter build apk --release --split-per-abi --target-platform android-arm64 --target lib/main.dart
+          cd ..
+          apk=mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          python3 scripts/flutter/verify-mobile.py "$apk" --aot-arm64
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$tools/apksigner" verify --verbose --print-certs "$apk" > android-evidence/arm64-aot-signature.txt
+          "$tools/zipalign" -c -P 16 -v 4 "$apk" > android-evidence/arm64-aot-zipalign.txt
+          target="iotools-flutter-arm64-$IOTOOLS_SHA-aot-test-signed.apk"
+          cp "$apk" "android-dist/$target"
+          (cd android-dist && sha256sum "$target" > "$target.sha256" && stat -c '%n %s bytes' "$target")
+          # The universal saved APK remains unchanged and is the x86_64 device-test target.
+      - name: Detect already granted emulator acceleration
+        run: |
+          mkdir -p android-evidence
+          {
+            echo 'experiment=software-graphics; not a proven application fix'
+            echo 'baseline_run=36917378900'
+            echo 'baseline_emulator=37.2.12.0 (build_id 16428233)'
+            echo 'baseline_backend=gfxstream'
+            echo 'baseline_requested_gpu=swiftshader_indirect'
+            echo 'requested_gpu=software'
+          } > android-evidence/emulator-graphics.txt 2>&1
+          if test -r /dev/kvm && test -w /dev/kvm; then
+            echo "Existing KVM access is available; no permissions changed"
+            echo "ANDROID_EMULATOR_ACCEL=-accel on" >> "$GITHUB_ENV"
+            echo "ANDROID_HW_DISABLE=false" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_API=35" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_TARGET=google_apis" >> "$GITHUB_ENV"
+          else
+            echo "No existing KVM access; keeping software emulation"
+            echo "ANDROID_EMULATOR_ACCEL=-accel off" >> "$GITHUB_ENV"
+            echo "ANDROID_HW_DISABLE=true" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_API=29" >> "$GITHUB_ENV"
+            echo "ANDROID_TEST_TARGET=default" >> "$GITHUB_ENV"
+          fi
+      - name: Real emulator UI, protocol, editing and lifecycle tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.ANDROID_TEST_API }}
+          arch: x86_64
+          target: ${{ env.ANDROID_TEST_TARGET }}
+          profile: Nexus 5
+          disable-animations: true
+          disable-linux-hw-accel: ${{ env.ANDROID_HW_DISABLE }}
+          # Official software backend selection replaces deprecated swiftshader_indirect.
+          # Keep the app's Skia renderer, assertions and time budgets unchanged.
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -skin 480x800 -memory 1536 -gpu software ${{ env.ANDROID_EMULATOR_ACCEL }}
+          emulator-boot-timeout: 1200
+          script: bash scripts/flutter/run-emulator-tests.sh
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.verify_apk.outcome == 'success' }}
+        with:
+          name: iotools-flutter-arm64-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/*arm64-v8a*
+            android-dist/flutter-mobile.md
+            android-dist/LICENSE
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.verify_apk.outcome == 'success' }}
+        with:
+          name: iotools-flutter-x86_64-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/*x86_64*
+            android-dist/flutter-mobile.md
+            android-dist/LICENSE
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.build_aot.outcome == 'success' }}
+        with:
+          name: iotools-flutter-aot-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/*universal*
+            android-dist/flutter-mobile.md
+            android-dist/LICENSE
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-arm64-aot-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/*arm64-*-aot-test-signed.apk*
+            android-dist/flutter-mobile.md
+            android-dist/LICENSE
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 0 }}
+        with:
+          name: iotools-aot-transfer-00-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part00
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 1 }}
+        with:
+          name: iotools-aot-transfer-01-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part01
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.aot_parts.outcome == 'success' && steps.aot_parts.outputs.count > 2 }}
+        with:
+          name: iotools-aot-transfer-02-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-dist/aot-transport.part02
+            android-dist/aot-transport.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-evidence-${{ env.IOTOOLS_SHA }}
+          path: |
+            android-evidence/
+            mobile/build/flutter-evidence/
+            mobile/build/app/reports/androidTests/
+            mobile/build/app/outputs/androidTest-results/
+            mobile/android/native-*.txt
+            mobile/android/dependencies-*.txt
+          if-no-files-found: error
+          retention-days: 14

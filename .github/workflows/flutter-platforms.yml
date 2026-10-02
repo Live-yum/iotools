@@ -1,0 +1,305 @@
+name: Flutter native platform acceptance
+on:
+  push:
+    branches: ['feat/flutter-cross-platform']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  IOTOOLS_SHA: ${{ github.sha }}
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux
+            arch: amd64
+            flutter_target: linux-x64
+          - os: ubuntu-22.04-arm
+            target: linux
+            arch: arm64
+            flutter_target: linux-arm64
+          - os: windows-2022
+            target: windows
+            arch: amd64
+          - os: macos-15
+            target: macos
+            arch: arm64
+          - os: macos-15-intel
+            target: macos
+            arch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libblkid-dev xvfb fonts-noto-cjk
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          update: false
+      - name: Select Windows C compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          'C:\msys64\mingw64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+          'CC=gcc' | Out-File -FilePath $env:GITHUB_ENV -Append
+          $tokens = $null; $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'scripts/flutter-platforms/verify-windows-release.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          & scripts/flutter-platforms/verify-windows-release.ps1 -ValidateHelpers
+      - name: Install pinned official Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Native core and real C ABI
+        run: |
+          bash scripts/flutter-platforms/build-native.sh '${{ matrix.target }}' '${{ matrix.arch }}'
+      - name: Verify real ABI and isolate transport
+        run: |
+          python3 cmd/iotools-native/testdata/check_abi.py "$IOTOOLS_NATIVE_LIBRARY"
+          cd mobile
+          flutter pub get
+          flutter analyze
+          flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
+          flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+      - name: Prepare pinned desktop CJK and emoji fonts
+        run: python3 scripts/flutter-platforms/prepare-native-fonts.py
+      - name: Real Linux desktop UI and Go engine acceptance
+        if: matrix.target == 'linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/iotools-fontconfig/empty" "$RUNNER_TEMP/iotools-fontconfig/cache"
+          printf '<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><reset-dirs/><dir>%s/empty</dir><cachedir>%s/cache</cachedir></fontconfig>' "$RUNNER_TEMP/iotools-fontconfig" "$RUNNER_TEMP/iotools-fontconfig" > "$RUNNER_TEMP/iotools-fontconfig/fonts.conf"
+          export FONTCONFIG_FILE="$RUNNER_TEMP/iotools-fontconfig/fonts.conf" FONTCONFIG_PATH="$RUNNER_TEMP/iotools-fontconfig"
+          test -z "$(fc-list)"
+          mkdir -p platform-evidence
+          printf 'Fontconfig exposed zero system fonts during native UI acceptance.\n' > platform-evidence/linux-font-isolation.txt
+          cd mobile
+          xvfb-run -a flutter test integration_test/native_smoke_test.dart -d linux --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Real Windows desktop UI and Go engine acceptance
+        if: matrix.target == 'windows'
+        run: |
+          cd mobile
+          flutter test integration_test/native_smoke_test.dart -d windows --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Real sandboxed macOS UI and Go engine acceptance
+        if: matrix.target == 'macos'
+        timeout-minutes: 12
+        run: bash scripts/flutter-platforms/test-macos.sh '${{ matrix.arch }}'
+      - name: Compile Linux Flutter application
+        if: matrix.target == 'linux'
+        run: cd mobile && flutter build linux --release --target-platform '${{ matrix.flutter_target }}' --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Compile Windows Flutter application
+        if: matrix.target == 'windows'
+        run: cd mobile && flutter build windows --release --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Bundle application-local Windows runtime
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
+          if (!$crt) { throw 'Official Visual C++ redistributable directory not found' }
+          $out = 'mobile\build\windows\x64\runner\Release'
+          foreach ($name in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') { Copy-Item (Join-Path $crt.FullName $name) $out }
+          python scripts/flutter-platforms/prepare-windows-notices.py $crt.FullName
+      - name: Compile sandboxed macOS Flutter application
+        if: matrix.target == 'macos'
+        run: bash scripts/flutter-platforms/build-macos.sh '${{ matrix.arch }}'
+      - name: Package real native bundle and dependency report
+        run: python3 scripts/flutter-platforms/package-native.py '${{ matrix.target }}' '${{ matrix.arch }}'
+      - name: Exact packaged Windows Release GUI and JVM independence
+        if: matrix.target == 'windows'
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          $zip = Get-Item "platform-dist/iotools-flutter-windows-amd64-$env:IOTOOLS_SHA.zip"
+          & scripts/flutter-platforms/verify-windows-release.ps1 -Archive $zip.FullName
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            platform-dist/iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-*.zip
+            platform-dist/manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build and verify host-native offline Web gateway
+        run: |
+          python3 -B scripts/flutter-platforms/test_web_gateway_security.py
+          bash scripts/flutter-platforms/build-web.sh '${{ matrix.target }}' '${{ matrix.arch }}'
+          suffix=''
+          if test '${{ matrix.target }}' = windows; then suffix=.exe; fi
+          python3 scripts/flutter-platforms/verify-web-gateway.py "platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}/iotools-web$suffix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            platform-dist/iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-*.zip
+            platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-evidence-${{ github.sha }}
+          path: |
+            platform-evidence/
+            mobile/build/flutter-evidence/
+            mobile/build/macos-entitlements.plist
+          if-no-files-found: ignore
+          retention-days: 14
+  web-contract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Real browser contracts and offline web compilation
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter test --platform chrome test/platform/gateway_test.dart test/platform/gateway_browser_files_test.dart --concurrency=1
+          flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+          flutter build web --release --csp --no-web-resources-cdn --pwa-strategy=none --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Real Go gateway tests and browser end-to-end acceptance
+        run: |
+          go test -race ./internal/webhost ./cmd/iotools-web
+          bash scripts/flutter-platforms/build-web.sh linux amd64
+          python3 scripts/flutter-platforms/verify-web-gateway.py platform-dist/web-linux-amd64/iotools-web
+          npm install --prefix scripts/flutter-platforms --no-save --package-lock=false playwright@1.63.0
+          node scripts/flutter-platforms/verify-web-browser.js platform-dist/web-linux-amd64/iotools-web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-web-browser-evidence-${{ github.sha }}
+          path: platform-evidence/
+          if-no-files-found: error
+          retention-days: 14
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Prepare dependencies and original icon
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+      - name: Prepare iOS workspace for read-only destination discovery
+        working-directory: mobile
+        run: flutter build ios --simulator --debug --no-codesign --config-only --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Select only an already-installed Xcode with an eligible simulator
+        run: |
+          python3 -B scripts/flutter-platforms/test_ios_xcode_selection.py
+          python3 -B scripts/flutter-platforms/test_ios_simulator_selection.py
+          python3 -B scripts/flutter-platforms/test_ios_notices.py
+          python3 -B scripts/flutter-platforms/test_ios_build_scope.py
+          python3 -B scripts/flutter-platforms/test_ios_host_tests.py
+          python3 scripts/flutter-platforms/select-ios-xcode.py --freeze-xcode-26.2
+      - name: Compile and statically verify the iOS simulator test/developer artifact
+        run: |
+          bash scripts/flutter-platforms/build-native.sh ios-simulator arm64
+          cd mobile
+          flutter build ios --simulator --debug --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+          cd ..
+          python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-flutter-ios-simulator-compiled-${{ github.sha }}
+          path: platform-dist/ios-simulator-compiled-*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Required real iOS host XCTest acceptance
+        run: python3 scripts/flutter-platforms/verify-ios.py simulator
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-flutter-ios-simulator-verified-${{ github.sha }}
+          path: |
+            platform-dist/ios-simulator-${{ github.sha }}.zip
+            platform-dist/ios-simulator-${{ github.sha }}-manifest.json
+            platform-dist/ios-simulator-README.zh-CN.txt
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-ios-evidence-${{ github.sha }}
+          path: platform-evidence/ios/
+          if-no-files-found: ignore
+          retention-days: 14
+  ios-device:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Prepare device dependencies and original icon
+        working-directory: mobile
+        run: |
+          flutter pub get
+          flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+      - name: Compile unsigned iOS device application and verify its scope
+        run: |
+          python3 -B scripts/flutter-platforms/test_ios_device_release.py
+          python3 -B scripts/flutter-platforms/test_ios_release_gate.py
+          bash scripts/flutter-platforms/build-native.sh ios-device arm64
+          python3 scripts/flutter-platforms/prepare-ios-device-release.py
+          python3 scripts/flutter-platforms/verify-ios.py device
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iotools-flutter-ios-device-unsigned-${{ github.sha }}
+          path: platform-dist/ios-device-*
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iotools-flutter-ios-device-evidence-${{ github.sha }}
+          path: platform-evidence/ios/
+          if-no-files-found: ignore
+          retention-days: 14

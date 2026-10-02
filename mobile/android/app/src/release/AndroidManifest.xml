@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+ <!-- The delivered app does not need the task-management permission from test libraries. -->
+ <uses-permission android:name="android.permission.REORDER_TASKS" tools:node="remove"/>
+</manifest>

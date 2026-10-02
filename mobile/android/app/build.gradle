@@ -1,0 +1,38 @@
+plugins { id 'com.android.application'; id 'dev.flutter.flutter-gradle-plugin' }
+android {
+ namespace 'io.github.liveyum.iotools'
+ buildFeatures { buildConfig true }
+ testBuildType = (project.findProperty('iotoolsTestBuildType') ?: 'debug').toString()
+ if (testBuildType == 'release') { sourceSets.androidTest.java.srcDir 'src/androidTestRelease/java' }
+ compileSdk 36
+ ndkVersion '28.1.13356709'
+ defaultConfig {
+  applicationId 'io.github.liveyum.iotools'
+  minSdk 26
+  targetSdk 35
+  versionCode flutter.versionCode
+  versionName flutter.versionName
+  def sourceSha = System.getenv('IOTOOLS_SHA') ?: 'local'
+  if (!(sourceSha ==~ /[a-zA-Z0-9._-]+/)) throw new GradleException('Invalid build revision')
+  buildConfigField 'String', 'GIT_SHA', '"' + sourceSha + '"'
+  testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+ }
+ buildTypes { debug { debuggable true; crunchPngs false }; release { crunchPngs false; signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro' } }
+ packaging { jniLibs { useLegacyPackaging = true } }
+ compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+flutter { source '../..' }
+dependencies {
+ implementation 'com.github.mik3y:usb-serial-for-android:3.11.0'
+ // Match the debug app's Flutter integration_test runtime and instrumentation.
+ // Keep test libraries out of the release runtime and manifest.
+ // Debug keeps one consistent AndroidX stack with integration_test.
+ debugImplementation 'androidx.test:runner:1.6.2'
+ debugImplementation 'androidx.test:rules:1.6.1'
+ debugImplementation 'androidx.test.ext:junit:1.2.1'
+ debugImplementation 'androidx.test.espresso:espresso-core:3.6.1' 
+ androidTestImplementation 'androidx.test:runner:1.6.2'
+ androidTestImplementation 'androidx.test:rules:1.6.1'
+ androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+ androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+}

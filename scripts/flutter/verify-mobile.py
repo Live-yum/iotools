@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Prove the mobile build is Flutter and contains no old terminal/native UI."""
+from pathlib import Path
+import sys,zipfile,struct,re,hashlib,xml.etree.ElementTree as ET
+from release_apk_gate import check_apk
+root=Path(__file__).resolve().parents[2]
+for p in (root/'mobile').rglob('*'):
+ if not p.is_file() or any(x in p.parts for x in ['build','.dart_tool','.gradle']):continue
+ if p.suffix not in ('.dart','.java','.xml','.gradle','.yaml'):continue
+ text=p.read_text()
+ for removed in ('TerminalCanvas','mobiletty','xterm','com.rivo.tview','tcell.Screen','android.webkit.WebView'):
+  assert removed not in text, f'{p}: legacy mobile renderer {removed}'
+java=list((root/'mobile/android/app/src/main/java/io/github/liveyum/iotools').rglob('*.java'))
+allowed={'MainActivity.java','NativeRuntime.java','MobileFiles.java','UsbSerialTransport.java'}
+assert {p.name for p in java}==allowed, 'Unexpected legacy Java UI class in Flutter APK source'
+assert 'extends FlutterActivity' in next(p for p in java if p.name=='MainActivity.java').read_text()
+gradle=(root/'mobile/android/app/build.gradle').read_text()
+assert not re.search(r'^\s*(?:implementation|api|releaseImplementation)\s+[\"\'](?:androidx\.test[.:]|junit:|org\.hamcrest:)',gradle,re.M),'Test-only Android dependencies must not enter release runtime'
+avatar=root/'mobile/android/app/src/main/res/drawable-nodpi/iotools_avatar.png'
+assert hashlib.sha256(avatar.read_bytes()).hexdigest()=='3527d1e406ee0f5f0d572c6f77fcf592d3cf34378bfa9dc5ec61c8fb2e87380b','Requested avatar source changed'
+manifest=ET.parse(root/'mobile/android/app/src/main/AndroidManifest.xml').getroot()
+android='{http://schemas.android.com/apk/res/android}'
+renderer=[x for x in manifest.findall('application/meta-data') if x.get(android+'name')=='io.flutter.embedding.android.EnableImpeller']
+assert len(renderer)==1 and renderer[0].get(android+'value')=='false','Debug and AOT must share the declared supported Skia renderer' 
+if len(sys.argv)>1:
+ with zipfile.ZipFile(sys.argv[1]) as apk:
+  names=set(apk.namelist())
+  avatar_data=avatar.read_bytes()
+  avatar_entries=[n for n in names if n.startswith('res/') and apk.getinfo(n).file_size==len(avatar_data) and apk.read(n)==avatar_data]
+  assert len(avatar_entries)==1,'Requested original avatar resource missing, changed or duplicated'
+
+  assert any(x.endswith('/libflutter.so') for x in names),'Flutter engine missing'
+  assert any(x.startswith('assets/flutter_assets/') for x in names),'Flutter assets missing'
+  abis=[abi for abi in ('arm64-v8a','x86_64') if f'lib/{abi}/libflutter.so' in names]
+  assert abis,'No supported Flutter ABI'
+  for abi in abis:assert f'lib/{abi}/libiotools.so' in names,f'Go engine missing for {abi}'
+  if '--aot' in sys.argv or '--aot-arm64' in sys.argv:
+   check_apk(apk)
+   expected_abis={'arm64-v8a'} if '--aot-arm64' in sys.argv else {'arm64-v8a','x86_64'}
+   assert set(abis)==expected_abis,'AOT package ABI set differs from its declared artifact'
+   assert 'assets/flutter_assets/kernel_blob.bin' not in names,'Development Dart kernel must not enter delivered AOT APK'
+   for abi in abis:
+    assert f'lib/{abi}/libapp.so' in names,f'AOT application missing for {abi}'
+    for library in ('libapp.so','libflutter.so','libiotools.so'):
+     entry=apk.getinfo(f'lib/{abi}/{library}')
+     assert entry.compress_type==zipfile.ZIP_DEFLATED,'Use standard installer extraction for compact native libraries'
+     data=apk.read(entry)
+     assert data[:4]==b'\x7fELF' and data[4]==2,'Expected ELF64'
+     endian='<' if data[5]==1 else '>'
+     phoff=struct.unpack_from(endian+'Q',data,32)[0]
+     phsize,phnum=struct.unpack_from(endian+'HH',data,54)
+     for index in range(phnum):
+      kind,flags,offset,vaddr,paddr,filesz,memsz,align=struct.unpack_from(endian+'IIQQQQQQ',data,phoff+index*phsize)
+      if kind==1:assert align>=16384 and offset%16384==vaddr%16384,f'{abi}/{library} is not 16KiB load-page compatible'
+  integration_plugin_present=False
+  for name in names:
+   if name.endswith('.dex'):
+    data=apk.read(name)
+    integration_plugin_present |= b'Ldev/flutter/plugins/integration_test/IntegrationTestPlugin;' in data
+    for banned in (b'TerminalCanvas',b'Lio/github/liveyum/iotools/NativeUi;',b'Lio/github/liveyum/iotools/AdvancedWorkflows;',b'Lio/github/liveyum/iotools/OpcuaWorkspace;',b'Lio/github/liveyum/iotools/FileFixtureProvider;',b'Lio/github/liveyum/iotools/FixtureGrantReceiver;'):
+     assert banned not in data,f'Removed UI class in APK: {banned}'
+  if '--aot' in sys.argv or '--aot-arm64' in sys.argv:assert not integration_plugin_present,'Development integration_test plugin must not enter normal AOT APK'
+  if '--integration-test' in sys.argv:assert integration_plugin_present,'Debug integration APK must contain the actual screenshot/test plugin'
+ print('APK contains actual Flutter engine and shared Go engine; legacy mobile UI absent')
+print('Flutter source isolation passed')

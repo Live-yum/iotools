@@ -1,0 +1,26 @@
+/dist/
+/iotools
+/iotools.exe
+/iotools.yaml
+*.local.yaml
+*.private.yaml
+.env*
+*.pem
+*.key
+/private/
+/coverage.out
+
+# Android generated outputs
+android/.gradle/
+android/**/build/
+android/local.properties
+android/node_modules/
+android/app/src/main/jniLibs/
+android/app/src/main/assets/vendor/
+android/app/src/main/assets/docs/
+android/app/src/main/assets/LICENSE
+android/native-*.txt
+
+# Multi-platform generated packages and acceptance evidence
+/platform-dist/
+/platform-evidence/

@@ -1,0 +1,85 @@
+version: 1
+profiles:
+  local:
+    http: http://127.0.0.1:8080
+    kafka: 127.0.0.1:9092
+    mqtt: mqtt://127.0.0.1:1883
+    modbus: tcp://127.0.0.1:1502
+    opcua: opc.tcp://127.0.0.1:4840
+requests:
+  - id: http-get
+    name: HTTP · 查看 JSON
+    protocol: http
+    action: GET
+    endpoint: ${http}/health
+  - id: http-post
+    name: HTTP · 发送 JSON
+    protocol: http
+    action: POST
+    endpoint: ${http}/echo
+    params:
+      json: {message: hello from iotools}
+  - id: kafka-topics
+    name: Kafka · 浏览主题
+    protocol: kafka
+    action: topics
+    endpoint: ${kafka}
+  - id: kafka-produce
+    protocol: kafka
+    action: produce
+    endpoint: ${kafka}
+    params: {topic: iotools-demo, key: sensor, value: '{"temperature":21.5}'}
+  - id: kafka-consume
+    protocol: kafka
+    action: consume
+    endpoint: ${kafka}
+    timeout: 60s
+    params: {topic: iotools-demo, offset: earliest, limit: 10}
+  - id: kafka-groups
+    protocol: kafka
+    action: groups
+    endpoint: ${kafka}
+  - id: kafka-lag
+    protocol: kafka
+    action: lag
+    endpoint: ${kafka}
+  - id: mqtt-subscribe
+    name: MQTT · 实时主题消息
+    protocol: mqtt
+    action: subscribe
+    endpoint: ${mqtt}
+    timeout: 5m
+    params: {topics: ['demo/#'], qos: 1, limit: 1000}
+  - id: mqtt-publish
+    protocol: mqtt
+    action: publish
+    endpoint: ${mqtt}
+    params: {topic: demo/temperature, payload: '21.5', retain: true, qos: 1}
+  - id: modbus-registers
+    name: Modbus · 保持寄存器
+    protocol: modbus
+    action: read-holding
+    endpoint: ${modbus}
+    timeout: 30s
+    params: {unit: 1, address: 0, count: 10, samples: 10, interval_ms: 1000, word_order: ABCD}
+  - id: modbus-write
+    protocol: modbus
+    action: write-register
+    endpoint: ${modbus}
+    params: {unit: 1, address: 0, value: 42}
+  - id: opcua-discover
+    name: OPC UA · 发现端点
+    protocol: opcua
+    action: discover
+    endpoint: ${opcua}
+  - id: opcua-browse
+    name: OPC UA · 浏览地址空间
+    protocol: opcua
+    action: browse
+    endpoint: ${opcua}
+    params: {node_id: 'i=85', allow_insecure: true, security_policy: None, security_mode: None}
+  - id: opcua-read
+    protocol: opcua
+    action: read
+    endpoint: ${opcua}
+    params: {node_id: 'i=2258', allow_insecure: true, security_policy: None, security_mode: None}
