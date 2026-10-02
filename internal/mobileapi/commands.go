@@ -18,6 +18,7 @@ import (
 )
 
 type command struct {
+ Policy *engine.HTTPHistoryPolicy `json:"policy,omitempty"`
 	RequestIDs      []string                 `json:"request_ids,omitempty"`
 	SelectionIndex  *int                     `json:"selection_index,omitempty"`
 	ExecuteTriggers bool                     `json:"execute_triggers,omitempty"`
@@ -250,7 +251,7 @@ func (s *Session) command(c command) (any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		return engine.FilterJSON(ctx, c.Query, []byte(c.Data))
-	case "history.status", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
+	case "history.retention.preview", "history.retention.apply", "history.compact", "history.status", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
 		return s.history(c)
 	case "crypto.convert":
 		if len(c.Data) > 4<<20 {
@@ -485,7 +486,7 @@ func (s *Session) selected(c command) (*config.Collection, config.Request, strin
 	return collection, r, profile, nil
 }
 func (s *Session) history(c command) (any, error) {
-	if s.options.ReadOnly && (c.Op == "history.delete" || c.Op == "history.execute") {
+	if s.options.ReadOnly && (c.Op == "history.delete" || c.Op == "history.execute" || c.Op == "history.retention.apply" || c.Op == "history.compact") {
 		return nil, errors.New("只读模式禁止修改历史数据库")
 	}
 	path := filepath.Join(s.root, "history.sqlite")
@@ -498,8 +499,16 @@ func (s *Session) history(c command) (any, error) {
 	}
 	exists := statErr == nil && info.Mode().IsRegular()
 	if c.Op == "history.status" {
-		return map[string]any{"exists": exists, "enabled": s.options.History}, nil
-	}
+        out := map[string]any{"exists": exists, "enabled": s.options.History}
+        if exists {
+            ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+            defer cancel()
+            status, err := engine.HTTPHistoryStorageStatus(ctx, path)
+            if err != nil { return nil, err }
+            out["storage"] = status
+        }
+        return out, nil
+    }
 	if !exists {
 		if c.Op == "history.list" || c.Op == "history.collections" {
 			return []any{}, nil
@@ -509,6 +518,20 @@ func (s *Session) history(c command) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	switch c.Op {
+    case "history.retention.preview":
+        if c.Policy == nil { return nil, errors.New("policy is required") }
+        plan, err := engine.PreviewHTTPHistoryRetention(ctx, path, *c.Policy)
+        if err == nil { s.historyPreview = &plan }
+        return plan, err
+    case "history.retention.apply":
+        if e := s.idle(); e != nil { return nil, e }
+        if s.historyPreview == nil || c.Token != s.historyPreview.Token { return nil, errors.New("请先预览当前历史策略") }
+        plan := *s.historyPreview
+        s.historyPreview = nil
+        return engine.ApplyHTTPHistoryRetention(ctx, path, plan, c.Confirmed)
+    case "history.compact":
+        if e := s.idle(); e != nil { return nil, e }
+        return engine.CompactHTTPHistory(ctx, path, c.Confirmed)
 	case "history.list":
 		return engine.ListHTTPHistory(ctx, path, s.path, c.RequestID)
 	case "history.get":

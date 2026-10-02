@@ -47,3 +47,13 @@ CocoaPods 每次生成新的工程对象 ID。门禁仅归一化新增对象 ID 
 `python3 -m unittest discover -s scripts/release -p 'test_*.py' -v`
 
 这些测试覆盖拒绝错 SHA、缺包/重复包、篡改哈希、错误 job、源码/编译配置变化、发布上下文、tag 冲突、跨域重定向凭据隔离和 TUI Mach-O 边界。它们不替代真实平台构建；最终以 dry run 与正式发布 run 的各任务结果为准。
+
+## v0.3.2 候选与供应链检查
+
+普通 PR 首先运行 Fast pull request checks（Go unit/vet、真实 govulncheck v1.1.4、Python 发布门禁）。Android 和 Linux/Windows HTTP 历史按相关路径运行；完整 Flutter 八平台矩阵由 PR 的 `release-candidate` 标签或手动触发。发布候选必须在同一完整源码 SHA 上完成全部原有 Android/TUI/HTTP/UI/icon/八平台门禁，加上快速安全检查。跳过的矩阵、旧绿色运行、不同源码与失败的新运行不能用于发布。仅将昂贵检查移出普通 PR 快速反馈路径，不降低发布条件。
+
+所有外部 Actions 固定官方仓库解析出的完整 commit SHA；Dependabot 每周提出 Action/Go/pub 更新，仍须审查和测试。当前动作身份核对于 2026-10-02，通过官方 GitHub Git refs 解析 annotated tag 到最终 commit。
+
+发布追加 `source-sbom.cdx.json`（CycloneDX 1.6 源码锁定依赖清单，明确包括开发依赖且非完整二进制运行时清单）与 `build-provenance.json`（未签名构建记录）。19 个平台包加五份元数据共 24 个文件，都纳入 SHA256SUMS 和远端重新下载验证。构建记录包含源码 SHA、全树输入摘要、Actions run/attempt 和各产物摘要；不能将它称为已认证来源或声称 SLSA 等级。
+
+未添加 OIDC `id-token: write`、attestations 权限、持久访问或发布签名。若未来需要可信签名/证明，必须先单独确认权限和签名方案。v0.3.1 已发布内容不回写。

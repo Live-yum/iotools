@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed source, asset and draft-publication gates for the v0.3.1 release.
+"""Fail-closed source, asset and draft-publication gates for the v0.3.2 release.
 
 No runtime acceptance is manufactured for the release SHA. Historical results
 retain their original SHAs; only the explicitly inventoried source inputs match.
@@ -18,196 +18,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-ROOT = Path(__file__).resolve().parents[2]
-REPOSITORY = 'Live-yum/iotools'
-VERSION = 'v0.3.1'
-FLUTTER_REVISION = 'adc901062556672b4138e18a4dc62a4be8f4b3c2'
-PLATFORMS = ('linux-amd64', 'linux-arm64', 'windows-amd64', 'macos-amd64', 'macos-arm64')
-EXPECTED = {f'{kind}-{platform}': '.zip' for kind in ('tui', 'flutter', 'web') for platform in PLATFORMS}
-EXPECTED.update({'android-arm64-v8a-aot-test-signed': '.apk', 'android-universal-arm64-x86_64-aot-test-signed': '.apk',
-                 'ios-device-arm64-unsigned': '.zip', 'ios-simulator-arm64-debug-developer': '.zip'})
-# v0.3.1 uses current-candidate acceptance, so no historical harness or release
-# builder exclusions are needed. A parent must have the exact complete Git tree.
-EXCLUDED_FILES = set()
-HISTORY = [
-    {'name': 'android', 'workflow': '.github/workflows/android.yml', 'jobs': ['apk'],
-     'whole_run_success': True, 'steps': ['Real emulator UI, protocol, editing and lifecycle tests']},
-    {'name': 'tui', 'workflow': '.github/workflows/ci.yml', 'whole_run_success': True,
-     'jobs': ['Native ubuntu-24.04', 'Native ubuntu-24.04-arm', 'Native windows-latest'],
-     'steps': ['Native unit, TUI and real loopback protocol tests', 'Binary smoke test']},
-    {'name': 'http-history-windows-icons', 'workflow': '.github/workflows/history-regression.yml',
-     'whole_run_success': True,
-     'jobs': ['history (ubuntu-22.04, linux)', 'history (windows-2022, windows)'],
-     'steps': ['Native ABI verification', 'Flutter static and widget contracts',
-               'Generate and verify platform icon alpha', 'Real desktop HTTP history UI'],
-     'job_steps': {'history (windows-2022, windows)': ['Verify embedded Windows icon transparency']}},
-    {'name': 'flutter-platforms', 'workflow': '.github/workflows/flutter-platforms.yml',
-     'whole_run_success': True,
-     'jobs': ['native (windows-2022, windows, amd64)', 'native (macos-15, macos, arm64)',
-              'native (macos-15-intel, macos, amd64)', 'native (ubuntu-22.04, linux, amd64, linux-x64)',
-              'native (ubuntu-22.04-arm, linux, arm64, linux-arm64)', 'web-contract', 'ios-device', 'ios'],
-     'steps': [], 'job_steps': {'ios': ['Required real iOS host XCTest acceptance'],
-     'native (windows-2022, windows, amd64)': ['Verify Windows Release icon transparency', 'Exact packaged Windows Release GUI and JVM independence']}},
-]
-
-
-def require(value, message):
-    if not value:
-        raise RuntimeError(message)
-
-
-def git(*args, root=ROOT):
-    return subprocess.check_output(['git', '-C', str(root), *args], text=True, encoding="utf-8").strip()
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as f:
-        for block in iter(lambda: f.read(1024 * 1024), b''):
-            h.update(block)
-    return h.hexdigest()
-
-
-def write_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-
-
-def is_input(path):
-    return path not in EXCLUDED_FILES
-
-
-def inventory(revision, root=ROOT):
-    raw = subprocess.check_output(['git', '-C', str(root), 'ls-tree', '-r', '-z', revision])
-    entries = {}
-    for entry in raw.split(b'\0'):
-        if not entry:
-            continue
-        meta, path = entry.split(b'\t', 1)
-        mode, kind, sha = meta.decode().split()
-        path = path.decode('utf-8')
-        require(kind == 'blob', f'Unreviewed non-blob input: {path}')
-        entries[path] = {'mode': mode, 'git_blob': sha}
-    return entries
-
-
-def inputs_digest(tree):
-    inputs = {path: row for path, row in tree.items() if is_input(path)}
-    return hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-
-
-def compare_sources(candidate, baseline, root=ROOT):
-    before, after = inventory(baseline, root), inventory(candidate, root)
-    changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
-    unsafe = [p for p in changed if is_input(p)]
-    require(not unsafe, f'Historical runtime source/build inputs differ from {baseline}: {unsafe}')
-    require(inputs_digest(before) == inputs_digest(after), 'Source input digest mismatch')
-    return {'baseline_sha': baseline, 'candidate_sha': candidate, 'identical_input_sha256': inputs_digest(after),
-            'baseline_tree': git('rev-parse', baseline + '^{tree}', root=root),
-            'candidate_tree': git('rev-parse', candidate + '^{tree}', root=root),
-            'excluded_differences': {p: {'before': before.get(p), 'after': after.get(p)} for p in changed},
-            'claim': ('same source commit; packages rebuilt independently' if candidate == baseline else
-                      'same application/build-input Git blobs across commits; packages rebuilt independently')}
-
-
-def identity(sha, version=VERSION, root=ROOT):
-    require(re.fullmatch('[0-9a-f]{40}', sha), 'Expected full source commit SHA')
-    require(version == VERSION, 'Only the reviewed v0.3.1 release is supported')
-    require(git('rev-parse', 'HEAD', root=root) == sha, 'Checkout is not the declared source SHA')
-    require(re.search(r'(?m)^version: 0\.3\.1\+4\s*$', (root / 'mobile/pubspec.yaml').read_text(encoding="utf-8")),
-            'Tag and Flutter application version disagree')
-    return {'source_sha': sha, 'tag': version, 'source_inputs_sha256': inputs_digest(inventory(sha, root))}
-
-
-def check_worktree(root=ROOT):
-    # CocoaPods generates fresh object IDs each run. Ignore only those IDs and
-    # formatting, never settings/scripts/references; compare reviewed semantics.
-    from pbx_gate import normalized_digest
-    projects = {
-        'mobile/ios/Runner.xcodeproj/project.pbxproj': (
-            'cfb367aba9a5ceff94dfe887876d6e604a03abdd6bd22901c213f1a838e01f82',
-            '23b5876c6356eec3343741459df79c6a773d0845f0a03d28d9acb776a9a18214'),
-        'mobile/macos/Runner.xcodeproj/project.pbxproj': (
-            '217137f1742343862f1d039ec599c095af514ab672408dffa514471faaa6bc86',
-            'ebdfd9e343466df2260882b86bcc7b01af2df6aba9cde0934ac956b3ef257813'),
-    }
-    workspaces = {'mobile/ios/Runner.xcworkspace/contents.xcworkspacedata',
-                  'mobile/macos/Runner.xcworkspace/contents.xcworkspacedata'}
-    changed = git('diff', '--name-only', 'HEAD', root=root).splitlines()
-    evidence = {}
-    for name in changed:
-        raw = subprocess.check_output(['git', '-C', str(root), 'show', 'HEAD:' + name])
-        original, generated = hashlib.sha256(raw).hexdigest(), digest(root / name)
-        out = root / 'platform-evidence/release-generated' / name
-        out.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(root / name, out)
-        diff = git('diff', 'HEAD', '--', name, root=root)
-        Path(str(out) + '.diff').write_text(diff, encoding='utf-8')
-        row = {'original_sha256': original, 'generated_sha256': generated, 'diff': diff}
-        evidence[name] = row
-        accepted = False
-        if name in projects:
-            row['normalized_generated_sha256'] = normalized_digest(raw.decode('utf-8'), (root / name).read_text(encoding='utf-8'))
-            accepted = (original, row['normalized_generated_sha256']) == projects[name]
-        elif name in workspaces:
-            accepted = (original, generated) == (
-                '46c3c9702ff7c5584e11c954d943cfb6e07fb26e3fbd072ddbc0f388aa352de1',
-                '465e6de5660384eb6832e8078920ba6cd5305c445cb29a24a86a2fda4aa6b67e')
-        write_json(root / 'platform-evidence/release-generated/mutations.json', evidence)
-        require(accepted, f'Unreviewed tracked build mutation: {name} ({original} -> {generated})')
-    return evidence
-
-
-class SafeRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        require(urllib.parse.urlsplit(newurl).scheme == 'https', 'Insecure asset redirect')
-        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None and urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
-            redirected.remove_header('Authorization')
-        return redirected
-
-
-class GitHub:
-    def __init__(self, token=None):
-        self.token = token or os.environ['GH_TOKEN']
-
-    def request(self, path, method='GET', data=None, raw=False):
-        url = path if path.startswith('https://') else 'https://api.github.com/repos/' + REPOSITORY + path
-        require(url.startswith(('https://api.github.com/repos/' + REPOSITORY + '/',
-                                'https://uploads.github.com/repos/' + REPOSITORY + '/')), 'Unexpected GitHub API destination')
-        headers = {'Authorization': 'Bearer ' + self.token, 'X-GitHub-Api-Version': '2022-11-28',
-                   'Accept': 'application/octet-stream' if raw else 'application/vnd.github+json',
-                   'User-Agent': 'iotools-release-gate'}
-        if isinstance(data, Path):
-            headers['Content-Type'] = 'application/octet-stream'
-            body = data.read_bytes()
-        elif data is not None:
-            headers['Content-Type'] = 'application/json'
-            body = json.dumps(data).encode()
-        else:
-            body = None
-        # Never automatically retry mutation requests with uncertain outcomes.
-        with urllib.request.build_opener(SafeRedirect()).open(urllib.request.Request(url, body, headers, method=method), timeout=180) as response:
-            content = response.read()
-        return content if raw else json.loads(content)
-
-    def optional(self, path):
-        try:
-            return self.request(path)
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            raise
-
-    def jobs(self, run_id):
-        rows, page = [], 1
-        while True:
-            batch = self.request(f'/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page={page}')['jobs']
-            rows.extend(batch)
-            if len(batch) < 100:
-                return rows
-            page += 1
+from release_common import ROOT, require, git, digest, write_json
+from release_config import REPOSITORY, VERSION, FLUTTER_REVISION, PLATFORMS, EXPECTED, EXCLUDED_FILES, HISTORY
+from release_source import is_input, inventory, inputs_digest, compare_sources, identity, check_worktree
+from release_github import SafeRedirect, GitHub
+from release_evidence import METADATA_FILES, source_sbom, build_provenance
 
 
 def verify_historical(api, spec):
@@ -451,6 +266,9 @@ def assemble(folder, output, proof, sha):
         shutil.copyfile(receipt.parent / row['file'], output / row['file'])
     manifest = {**proof, 'schema': 1, 'assets': receipts, 'runtime_verification':
                 'Every package is rebuilt from the tag commit. Latest complete Android, TUI, HTTP/UI/icon and all-eight-platform runtime gates are recorded at the same source commit or an identical direct-parent tree. See original SHAs and package scopes.'}
+    write_json(output / 'source-sbom.cdx.json', source_sbom(sha))
+    write_json(output / 'build-provenance.json', build_provenance(proof, receipts, digest(output / 'source-sbom.cdx.json')))
+    manifest['supplemental_evidence'] = {'sbom': 'source-sbom.cdx.json', 'provenance': 'build-provenance.json', 'authenticated': False}
     write_json(output / 'manifest.json', manifest)
     notes = release_notes(manifest)
     (output / 'RELEASE_NOTES.zh-CN.md').write_text(notes, encoding='utf-8')
@@ -524,7 +342,7 @@ def publish(args):
     require(manifest['run_id'] == os.environ['GITHUB_RUN_ID'] and manifest['run_attempt'] == os.environ['GITHUB_RUN_ATTEMPT'], 'Publish workflow run/attempt mismatch')
     api = GitHub()
     publication_context(api, args.sha, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], True)
-    expected = {filename(key) for key in EXPECTED} | {'manifest.json', 'SHA256SUMS', 'RELEASE_NOTES.zh-CN.md'}
+    expected = {filename(key) for key in EXPECTED} | METADATA_FILES
     require({p.name for p in folder.iterdir()} == expected, 'Publication asset inventory mismatch')
     checksums = {}
     for line in (folder / 'SHA256SUMS').read_text(encoding="utf-8").splitlines():

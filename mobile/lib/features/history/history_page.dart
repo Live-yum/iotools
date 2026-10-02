@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/json.dart';
 import '../../core/session.dart';
 import '../../shared/widgets.dart';
+import 'history_storage.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({
@@ -22,6 +23,8 @@ class _HistoryPageState extends State<HistoryPage> {
   bool loading = true;
   bool databaseExists = false;
   String? error;
+  JsonMap storage = {};
+  bool maintaining = false;
   StreamSubscription<JsonMap>? _events;
   late String _collection;
   bool _fetching = false;
@@ -97,6 +100,7 @@ class _HistoryPageState extends State<HistoryPage> {
           setState(() {
             entries = rows;
             databaseExists = status['exists'] == true;
+            storage = mapOf(status['storage']);
             loading = false;
             error = null;
           });
@@ -139,9 +143,20 @@ class _HistoryPageState extends State<HistoryPage> {
               child: Text('只读保护已开启：HTTP 响应不会写入历史，已有记录仍可查看。'),
             ),
           ),
+        if (databaseExists && storage.isNotEmpty) HistoryStorageCard(storage: storage),
         ActionWrap(
           padding: const EdgeInsets.only(bottom: 12),
           children: [
+            OutlinedButton(
+              onPressed: databaseExists && !loading && !maintaining && !widget.session.readOnly
+                  ? () => maintain(() => configureHistoryStorage(context, widget.session, storage)) : null,
+              child: const Text('容量 / 保留策略'),
+            ),
+            OutlinedButton(
+              onPressed: databaseExists && !loading && !maintaining && !widget.session.readOnly
+                  ? () => maintain(() => compactHistoryStorage(context, widget.session)) : null,
+              child: const Text('整理数据库'),
+            ),
             OutlinedButton.icon(
               onPressed: load,
               icon: const Icon(Icons.refresh),
@@ -206,6 +221,17 @@ class _HistoryPageState extends State<HistoryPage> {
       ],
     ),
   );
+  Future<void> maintain(Future<void> Function() action) async {
+    if (maintaining) return;
+    setState(() => maintaining = true);
+    try {
+      await action();
+      if (mounted) await load();
+    } finally {
+      if (mounted) setState(() => maintaining = false);
+    }
+  }
+
   Future<void> detail(JsonMap row) async {
     await guarded(context, () async {
       final e = mapOf(

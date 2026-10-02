@@ -1,0 +1,48 @@
+name: Fast pull request checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fast-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Verify locked modules
+        run: go mod verify
+      - name: Vet and unit tests
+        run: |
+          go vet ./...
+          go test -count=1 -timeout 5m ./...
+      - name: Go vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck -show verbose ./...
+      - name: Release and workflow fail-closed contracts
+        run: |
+          python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+      - name: Capture Go formatting for review
+        if: always()
+        run: |
+          mkdir -p formatting
+          git ls-files '*.go' | xargs gofmt -d > formatting/gofmt.patch
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fast-pr-format-${{ env.IOTOOLS_SHA }}
+          path: formatting/
+          if-no-files-found: error

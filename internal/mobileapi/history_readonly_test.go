@@ -193,3 +193,14 @@ func TestReadOnlyHTTPWorkflowReusesCachedResponseWithoutWritingOrRetriggering(t 
 		t.Fatalf("cached read changed file mode: %v", err)
 	}
 }
+
+func TestReadOnlyNoticeRequiresActualResponseCandidate(t *testing.T) {
+ // Invalid local URL is rejected before a response exists; no misleading notice.
+ s := testSession(t, config.Request{ID:"bad", Protocol:"http", Action:"GET", Endpoint:"http://127.0.0.1:1", Timeout:"100ms"})
+ mustOK(t,s,map[string]any{"op":"options.set","options":map[string]any{"history":true,"read_only":true}})
+ mustOK(t,s,map[string]any{"op":"run","token":previewToken(t,s,"bad")})
+ s.mu.Lock();done:=s.runDone;s.mu.Unlock()
+ select{case <-done:case <-time.After(4*time.Second):t.Fatal("fixture timed out")}
+ events:=awaitDone(t,s)
+ checkHistoryReadOnlyStatus(t,events,false)
+}

@@ -1,7 +1,7 @@
 name: iotools_mobile
 description: 共享协议内核的跨平台工业与网络调试工具
 publish_to: none
-version: 0.3.1+4
+version: 0.3.2+5
 environment:
   sdk: ">=3.9.0 <4.0.0"
 dependencies:

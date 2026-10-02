@@ -103,8 +103,7 @@ func (h *HTTPHistory) Add(ctx context.Context, e HTTPHistoryEntry) error {
 	if body == nil {
 		body = []byte{}
 	}
-	_, err = h.db.ExecContext(ctx, `INSERT INTO http_history(collection,profile,recipe,method,created_at,status,headers,body,transformed) VALUES(?,?,?,?,?,?,?,?,?)`, e.Collection, e.Profile, e.Recipe, e.Method, e.Time.Format(time.RFC3339Nano), e.Status, string(headers), body, e.Transformed)
-	return err
+	return h.addBounded(ctx, e, string(headers), body)
 }
 func (h *HTTPHistory) Latest(ctx context.Context, collection, profile, recipe string) (*HTTPHistoryEntry, error) {
 	e := &HTTPHistoryEntry{}
