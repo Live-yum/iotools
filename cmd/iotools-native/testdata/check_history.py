@@ -4,6 +4,7 @@
 All HTTP traffic is loopback and all persisted data is synthetic, in TemporaryDirectory.
 """
 import base64
+from contextlib import closing
 import ctypes as C
 import http.server
 import json
@@ -166,7 +167,7 @@ class NativeHistoryTests(unittest.TestCase):
         return value
 
     def count_sql(self):
-        with sqlite3.connect(self.root / "history.sqlite") as db:
+        with closing(sqlite3.connect(self.root / "history.sqlite")) as db, db:
             return db.execute("SELECT count(*) FROM http_history").fetchone()[0]
 
     def test_disabled_then_enabled_persists_real_response(self):
@@ -324,7 +325,7 @@ class NativeHistoryTests(unittest.TestCase):
     def test_history_save_failure_surfaces_after_response_and_retry_recovers(self):
         s = self.session(history=True)
         s.run(self.request())
-        with sqlite3.connect(self.root / "history.sqlite") as db:
+        with closing(sqlite3.connect(self.root / "history.sqlite")) as db, db:
             db.execute("CREATE TRIGGER fixture_save_failure BEFORE INSERT ON http_history BEGIN SELECT RAISE(FAIL, 'synthetic-save-failure'); END")
         done, events = s.run(self.request())
         self.assertEqual(done["status"], "failed")
@@ -332,7 +333,7 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertIn("synthetic-save-failure", done["error"])
         self.assertTrue(any(e["kind"] == "response" and e["data"]["status"] == 200 for e in events))
         self.assertEqual(self.count_sql(), 1)
-        with sqlite3.connect(self.root / "history.sqlite") as db:
+        with closing(sqlite3.connect(self.root / "history.sqlite")) as db, db:
             db.execute("DROP TRIGGER fixture_save_failure")
         done, _ = s.run(self.request())
         self.assertEqual(done["status"], "completed")
