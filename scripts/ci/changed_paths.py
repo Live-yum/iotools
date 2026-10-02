@@ -27,7 +27,7 @@ def main():
     if not base:
         result = True
     else:
-        paths = subprocess.check_output(['git', 'diff', '--name-only', '-z', base, head]).decode('utf-8').split('\0')
+        paths = subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z', base, head]).decode('utf-8').split('\0')
         result = relevant(suite, paths)
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
         out.write('relevant=' + str(result).lower() + '\n')

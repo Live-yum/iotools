@@ -2,6 +2,10 @@
 from pathlib import Path
 import re
 import unittest
+import os
+import subprocess
+import sys
+import tempfile
 from changed_paths import relevant, PATTERNS
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -41,4 +45,26 @@ class WorkflowContracts(unittest.TestCase):
             self.assertTrue(relevant(suite,['mobile/lib/features/history/history_page.dart']))
             self.assertFalse(relevant(suite,['docs/releasing.md']))
         self.assertFalse(relevant('android',['mobile/ios/Runner/AppDelegate.swift']))
+    def test_rename_out_of_platform_scope_still_selects_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            def git(*args):
+                return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+            git('init','-q')
+            git('config','user.name','Fixture')
+            git('config','user.email','fixture@example.invalid')
+            source=root/'mobile/android/app/src/main/AndroidManifest.xml'
+            source.parent.mkdir(parents=True)
+            source.write_text('<manifest/>')
+            git('add','.')
+            git('commit','-qm','fixture')
+            base=git('rev-parse','HEAD')
+            (root/'docs').mkdir()
+            source.rename(root/'docs/AndroidManifest.xml')
+            git('add','-A')
+            git('commit','-qm','rename fixture')
+            output=root/'output'
+            subprocess.run([sys.executable,str(ROOT/'scripts/ci/changed_paths.py'),'android',base,git('rev-parse','HEAD')],
+                           cwd=root,env={**os.environ,'GITHUB_OUTPUT':str(output)},check=True)
+            self.assertEqual(output.read_text(),'relevant=true\n')
 if __name__=='__main__':unittest.main()
