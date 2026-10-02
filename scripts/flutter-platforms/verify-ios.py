@@ -34,18 +34,38 @@ def run(*args, timeout=120):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=timeout)
 
 
+def diagnostic_text(value):
+    """Bound public evidence; keep raw subprocess values out of uploaded metadata."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    value = str(value or "")
+    value = re.sub(r"https?://[^\s]+", "<redacted-url>", value)
+    value = re.sub(r"(?i)(token|password|secret|authorization)(\s*[:=]\s*)[^\s]+",
+                   r"\1\2<redacted>", value)
+    value = re.sub(r"/Users/[^/\s]+", "/Users/<user>", value)
+    return value[:16384] + ("\n<truncated>" if len(value) > 16384 else "")
+
+
 def simulator_operation(evidence, label, *args, timeout=120):
-    """Preserve actual command output at the original timeout; never retry a gate."""
+    """One bounded operation; diagnostics never convert an error into success."""
+    started = time.monotonic()
+    record = {"command": [diagnostic_text(arg) for arg in args],
+              "timeout_seconds": timeout, "started_unix": time.time()}
+    output = ""
     try:
         output = run(*args, timeout=timeout)
+        record.update(status="success", exit_code=0)
+        return output
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        output = error.output or ''
-        if isinstance(output, bytes):
-            output = output.decode('utf-8', errors='replace')
-        (evidence / f'{label}.txt').write_text(output + '\n' + str(error))
+        output = error.output or ""
+        record.update(status="timeout" if isinstance(error, subprocess.TimeoutExpired) else "failed",
+                      exit_code=getattr(error, "returncode", None))
         raise
-    (evidence / f'{label}.txt').write_text(output)
-    return output
+    finally:
+        record["elapsed_seconds"] = time.monotonic() - started
+        record["finished_unix"] = time.time()
+        (evidence / f"{label}.txt").write_text(diagnostic_text(output))
+        (evidence / f"{label}-command.json").write_text(json.dumps(record, indent=2))
 
 
 def simulator_failure_diagnostics(evidence):
@@ -64,7 +84,7 @@ def simulator_failure_diagnostics(evidence):
             simulator_operation(evidence, label, *command, timeout=15)
         except Exception as error:
             with (evidence / f'{label}.txt').open('a') as output:
-                output.write('\nDiagnostic unavailable: ' + str(error))
+                output.write('\nDiagnostic unavailable: ' + type(error).__name__)
 
 
 def sha256(path):
@@ -256,14 +276,15 @@ def simulator_test_preflight(udid, build_command, architecture, evidence, deadli
 def normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid, deadline=None):
     def budget(seconds):
         return seconds if deadline is None else min(seconds, remaining(deadline))
-    devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json", timeout=budget(120)))["devices"]
+    require("normal_launch" not in report, "Refusing repeated normal launch in this gate")
+    devices = json.loads(simulator_operation(evidence, "normal-launch-devices", "xcrun", "simctl", "list", "devices", "available", "--json", timeout=budget(120)))["devices"]
     runtime, selected = select_simulator(devices, sdk_version, udid)
     if selected["state"] != "Booted":
         simulator_operation(evidence, 'simulator-boot', "xcrun", "simctl", "boot", udid, timeout=budget(120))
     simulator_operation(evidence, 'simulator-bootstatus', "xcrun", "simctl", "bootstatus", udid, "-b", timeout=budget(300))
     simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app), timeout=budget(120))
-    # Terminate any prior run without uninstalling or erasing simulator contents.
-    subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=budget(30))
+    # Fresh single-pass CI has not launched this host yet. Do not terminate an
+    # absent process before the first launch; retain the post-launch cleanup.
     launch = simulator_operation(evidence, 'simulator-launch', "xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=budget(60)).strip()
     report["normal_launch"] = {"simulator": selected["name"], "udid": udid, "runtime": runtime, "launch": launch}
     save()
@@ -276,7 +297,8 @@ def normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid
         run("xcrun", "simctl", "io", udid, "screenshot", str(evidence / "normal-launch.png"), timeout=budget(120))
         report["normal_launch"]["still_running_after_seconds"] = 5
     finally:
-        subprocess.run(["xcrun", "simctl", "terminate", udid, info["CFBundleIdentifier"]], capture_output=True, timeout=budget(30))
+        simulator_operation(evidence, "simulator-cleanup", "xcrun", "simctl", "terminate",
+                            udid, info["CFBundleIdentifier"], timeout=budget(30))
     save()
 
 
