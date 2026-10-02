@@ -8,15 +8,17 @@ env:
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   apk:
-    if: ${{ github.run_attempt == 1 && github.run_number == 3 && github.event.before == 'd85f2cc33bf389436e0074bf682f79027ed8783a' }}
+    if: ${{ github.run_attempt == 1 && github.run_number == 4 && github.event.before == 'aeadee3f6f1066dfe9230de0be56997e75e368ca' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
+      - name: Record job start for bounded permission lifetime
+        run: echo "IOTOOLS_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
       - name: Verify one-time permission and restoration guards
         run: python3 scripts/ci_trials/test_kvm_once_20261002.py
       - name: Install the official emulator before any permission change
@@ -141,6 +143,7 @@ jobs:
         run: |
           python3 scripts/ci_trials/kvm_once_20261002.py grant --state "$RUNNER_TEMP/iotools-kvm-once.json" --evidence android-evidence/kvm-grant.json
       - name: Real emulator UI, protocol, editing and lifecycle tests
+        timeout-minutes: 60
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           emulator-build: 16428233

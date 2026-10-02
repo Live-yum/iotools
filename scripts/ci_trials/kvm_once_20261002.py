@@ -10,11 +10,12 @@ from pathlib import Path
 import platform
 import stat
 import subprocess
+import time
 
 BASE = '8db14221104175fd265b4d08f51b905f0bc999a0'
 BRANCH = 'refs/heads/trial/kvm-once-20261002-0513'
-TRIGGER_PARENT = 'd85f2cc33bf389436e0074bf682f79027ed8783a'
-TRIAL_RUN_NUMBER = '3'  # Run 1 failed setup before emulator execution; ACL was verified restored.
+TRIGGER_PARENT = 'aeadee3f6f1066dfe9230de0be56997e75e368ca'
+TRIAL_RUN_NUMBER = '4'  # Prior runs failed setup; no emulator comparison has executed.
 DEVICE = Path('/dev/kvm')
 ALLOWED_FILES = {
     '.github/workflows/android-kvm-once-20261002.yml',
@@ -103,9 +104,16 @@ def verified_emulator():
     return emulator
 
 
+def verify_source():
+    changed = set(run(['git', 'diff', '--name-only', BASE, 'HEAD']).splitlines())
+    require(changed == ALLOWED_FILES, 'Runtime or unrelated source changed in this controlled experiment')
+    require(run(['git', 'rev-parse', 'HEAD']).strip() == os.environ['GITHUB_SHA'], 'Checkout differs from requested source')
+
+
 def preflight(state, evidence):
     check_context(os.environ, json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     require(platform.system() == 'Linux' and os.getuid() != 0, 'Expected unprivileged Linux runner')
+    verify_source()
     verified_emulator()
     info = identity()
     before = acl_text()
@@ -115,12 +123,18 @@ def preflight(state, evidence):
                          'device': info, 'runner_uid': os.getuid(), 'acl_sha256': digest(before)})
 
 
+def grant_elapsed_seconds():
+    started = os.environ.get('IOTOOLS_JOB_STARTED_AT', '')
+    require(started.isdigit(), 'Missing job start time; refusing permission grant')
+    elapsed = time.time() - int(started)
+    require(0 <= elapsed <= 25 * 60, 'Build preparation exceeded 25 minutes; preserve cleanup reserve')
+    return elapsed
+
+
 def grant(state, evidence):
     check_context(os.environ, json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     require(platform.system() == 'Linux' and os.getuid() != 0, 'Expected unprivileged Linux runner')
-    changed = set(run(['git', 'diff', '--name-only', BASE, 'HEAD']).splitlines())
-    require(changed == ALLOWED_FILES, 'Runtime or unrelated source changed in this controlled experiment')
-    require(run(['git', 'rev-parse', 'HEAD']).strip() == os.environ['GITHUB_SHA'], 'Checkout differs from requested source')
+    verify_source()
     emulator = verified_emulator()  # All installation/version checks precede the ACL mutation.
     before_device = identity()
     before = acl_text()
@@ -130,6 +144,7 @@ def grant(state, evidence):
     record = {'run_id': os.environ['GITHUB_RUN_ID'], 'source_sha': os.environ['GITHUB_SHA'],
               'baseline_sha': BASE, 'runner_uid': os.getuid(), 'device': before_device,
               'acl_before': before, 'before_sha256': digest(before), 'restored': False}
+    record['elapsed_before_grant_seconds'] = grant_elapsed_seconds()
     fd = os.open(state, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w') as output:
         json.dump(record, output)
@@ -144,6 +159,7 @@ def grant(state, evidence):
     require('KVM' in acceleration and 'usable' in acceleration.lower(), 'KVM usability check did not pass')
     write_json(evidence, {'status': 'granted', 'run_id': record['run_id'], 'source_sha': record['source_sha'],
                          'runner_uid': record['runner_uid'], 'before_sha256': record['before_sha256'],
+                         'elapsed_before_grant_seconds': record['elapsed_before_grant_seconds'],
                          'after_sha256': digest(after), 'accelerator_check': acceleration,
                          'scope': 'one ephemeral runner UID; existing ACL mask unchanged', 'restored': False})
     with Path(os.environ['GITHUB_ENV']).open('a') as output:

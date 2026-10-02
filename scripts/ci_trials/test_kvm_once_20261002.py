@@ -14,7 +14,7 @@ class GuardTests(unittest.TestCase):
     def setUp(self):
         self.env = {'GITHUB_ACTIONS': 'true', 'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': trial.BRANCH,
                     'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_RUN_NUMBER': trial.TRIAL_RUN_NUMBER, 'GITHUB_RUN_ID': '123',
-                    'GITHUB_SHA': 'b' * 40}
+                    'GITHUB_SHA': 'b' * 40, 'IOTOOLS_JOB_STARTED_AT': str(int(trial.time.time()))}
         self.event = {'before': trial.TRIGGER_PARENT, 'after': 'b' * 40, 'repository': {'full_name': 'Live-yum/iotools'}}
 
     def test_only_designated_first_run(self):
@@ -49,7 +49,7 @@ class GuardTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(RuntimeError):
                 trial.parse_acl(text)
 
-    def exercise(self, accelerator_ok):
+    def exercise(self, accelerator_ok, expired=False):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             event_path = root / 'event.json'
@@ -60,6 +60,8 @@ class GuardTests(unittest.TestCase):
             env = {**self.env, 'GITHUB_EVENT_PATH': str(event_path), 'ANDROID_HOME': str(root / 'sdk'),
                    'GITHUB_ENV': str(root / 'env')}
             state, evidence = root / 'state.json', root / 'evidence.json'
+            if expired:
+                env['IOTOOLS_JOB_STARTED_AT'] = '1'
             current = [ACL]
             commands = []
 
@@ -93,6 +95,14 @@ class GuardTests(unittest.TestCase):
                  patch.object(trial.platform, 'system', return_value='Linux'), \
                  patch.object(trial.os, 'getuid', return_value=1001), \
                  patch.object(trial.os, 'access', return_value=True):
+                if expired:
+                    with self.assertRaisesRegex(RuntimeError, 'exceeded 25 minutes'):
+                        trial.grant(state, evidence)
+                    self.assertFalse(state.exists())
+                    self.assertFalse(any(c[:3] == ['sudo', '-n', 'setfacl'] for c in commands))
+                    trial.restore(state, evidence)
+                    self.assertEqual(json.loads(evidence.read_text())['status'], 'not_granted')
+                    return
                 if accelerator_ok:
                     trial.grant(state, evidence)
                     self.assertIn('ANDROID_TEST_API=29', (root / 'env').read_text())
@@ -107,6 +117,9 @@ class GuardTests(unittest.TestCase):
                 self.assertTrue(json.loads(evidence.read_text())['restored'])
                 self.assertEqual(json.loads(evidence.read_text())['before_sha256'], trial.digest(ACL))
             self.assertFalse(any('chmod' in ' '.join(c) or 'udev' in ' '.join(c) for c in commands))
+
+    def test_expired_preparation_never_grants(self):
+        self.exercise(True, expired=True)
 
     def test_grant_and_verified_restore(self):
         self.exercise(True)
@@ -131,6 +144,44 @@ class GuardTests(unittest.TestCase):
                     trial.grant(root / 'state.json', root / 'report.json')
                 self.assertFalse((root / 'state.json').exists())
                 self.assertFalse(any(c.args[0][0] == 'sudo' for c in runner.call_args_list))
+
+    def test_missing_baseline_fails_preflight_before_device_or_permission_access(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            event = root / 'event.json'
+            event.write_text(json.dumps(self.event))
+            with patch.dict(os.environ, {**self.env, 'GITHUB_EVENT_PATH': str(event)}, clear=True), \
+                 patch.object(trial.platform, 'system', return_value='Linux'), \
+                 patch.object(trial.os, 'getuid', return_value=1001), \
+                 patch.object(trial, 'run', side_effect=RuntimeError('fatal: bad object baseline')) as runner, \
+                 patch.object(trial, 'verified_emulator') as emulator, \
+                 patch.object(trial, 'identity') as device:
+                with self.assertRaisesRegex(RuntimeError, 'bad object baseline'):
+                    trial.preflight(root / 'state.json', root / 'evidence.json')
+                runner.assert_called_once_with(['git', 'diff', '--name-only', trial.BASE, 'HEAD'])
+                emulator.assert_not_called()
+                device.assert_not_called()
+                self.assertFalse((root / 'state.json').exists())
+
+    def test_source_guard_rejects_runtime_change_and_wrong_head(self):
+        with patch.dict(os.environ, self.env, clear=True):
+            for changed, head in [(trial.ALLOWED_FILES | {'mobile/lib/main.dart'}, self.env['GITHUB_SHA']),
+                                  (trial.ALLOWED_FILES, 'wrong-head')]:
+                with self.subTest(head=head), patch.object(trial, 'run', side_effect=['\n'.join(changed), head]):
+                    with self.assertRaises(RuntimeError):
+                        trial.verify_source()
+
+    def test_permission_time_budget_fails_closed(self):
+        for started, now, valid in [('1000', 2499, True), ('1000', 2500, True),
+                                     ('1000', 2501, False), ('1000', 999, False), ('', 1000, False)]:
+            with self.subTest(started=started, now=now), \
+                 patch.dict(os.environ, {'IOTOOLS_JOB_STARTED_AT': started}, clear=True), \
+                 patch.object(trial.time, 'time', return_value=now):
+                if valid:
+                    self.assertEqual(trial.grant_elapsed_seconds(), now - int(started))
+                else:
+                    with self.assertRaises(RuntimeError):
+                        trial.grant_elapsed_seconds()
 
     def test_cleanup_when_grant_never_started(self):
         with tempfile.TemporaryDirectory() as td:
@@ -163,19 +214,21 @@ class GuardTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         original = (root / '.github/workflows/android.yml').read_text()
         controlled = (root / '.github/workflows/android-kvm-once-20261002.yml').read_text()
-        self.assertIn('github.run_attempt == 1 && github.run_number == 3', controlled)
+        self.assertIn('github.run_attempt == 1 && github.run_number == 4', controlled)
         self.assertNotIn('workflow_dispatch:', controlled)
         self.assertIn("branches: ['trial/kvm-once-20261002-0513']", controlled)
-        self.assertIn('fetch-depth: 2', controlled)
+        self.assertIn('fetch-depth: 0', controlled)
         marker = '      - name: Real emulator UI, protocol, editing and lifecycle tests\n'
         expected = original[original.index(marker):original.index('      - uses: actions/upload-artifact@v4\n')]
         expected = expected.replace('reactivecircus/android-emulator-runner@v2',
                                     'reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d')
+        expected = expected.replace(marker, marker + '        timeout-minutes: 60\n')
         expected = expected.replace('          api-level:', '          emulator-build: 16428233\n          api-level:')
         self.assertIn(expected, controlled)
         self.assertIn('Restore and verify the original KVM ACL even if testing fails\n        if: always()', controlled)
         self.assertEqual(controlled.count('kvm_once_20261002.py grant'), 1)
-        self.assertIn('timeout-minutes: 60', controlled)
+        self.assertIn('    timeout-minutes: 90', controlled)
+        self.assertIn(marker + '        timeout-minutes: 60', controlled)
 
 
 if __name__ == '__main__':
