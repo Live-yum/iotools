@@ -8,7 +8,7 @@ env:
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   apk:
-    if: ${{ github.run_attempt == 1 && github.run_number == 2 && github.event.before == 'bb77e6acc1d2fe64d4876fbaf4031a0184d29bf9' }}
+    if: ${{ github.run_attempt == 1 && github.run_number == 3 && github.event.before == 'd85f2cc33bf389436e0074bf682f79027ed8783a' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

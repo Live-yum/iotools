@@ -13,8 +13,8 @@ import subprocess
 
 BASE = '8db14221104175fd265b4d08f51b905f0bc999a0'
 BRANCH = 'refs/heads/trial/kvm-once-20261002-0513'
-TRIGGER_PARENT = 'bb77e6acc1d2fe64d4876fbaf4031a0184d29bf9'
-TRIAL_RUN_NUMBER = '2'  # Run 1 failed setup before emulator execution; ACL was verified restored.
+TRIGGER_PARENT = 'd85f2cc33bf389436e0074bf682f79027ed8783a'
+TRIAL_RUN_NUMBER = '3'  # Run 1 failed setup before emulator execution; ACL was verified restored.
 DEVICE = Path('/dev/kvm')
 ALLOWED_FILES = {
     '.github/workflows/android-kvm-once-20261002.yml',
@@ -29,7 +29,10 @@ def require(condition, message):
 
 
 def run(args):
-    return subprocess.run(args, check=True, text=True, capture_output=True, timeout=30).stdout
+    result = subprocess.run(args, check=False, text=True, capture_output=True, timeout=30)
+    if result.returncode:
+        raise RuntimeError(f'Command {args[0]} exited {result.returncode}: {(result.stderr or result.stdout)[-6000:]}')
+    return result.stdout
 
 
 def check_context(env, event):
@@ -95,7 +98,7 @@ def write_json(path, value):
 def verified_emulator():
     emulator = Path(os.environ['ANDROID_HOME']) / 'emulator' / 'emulator'
     require(emulator.is_file(), 'Install the official Android emulator before granting permissions')
-    version = run([str(emulator), '-version'])
+    version = run([str(emulator), '-no-window', '-version'])
     require('37.2.12' in version and '16428233' in version, 'Emulator differs from the controlled baseline')
     return emulator
 
@@ -137,7 +140,7 @@ def grant(state, evidence):
     after = acl_text()
     require(parse_acl(after) == desired, 'ACL grant changed entries beyond the current runner UID')
     require(os.access(DEVICE, os.R_OK | os.W_OK), 'Runner still cannot access KVM')
-    acceleration = run([str(emulator), '-accel-check'])
+    acceleration = run([str(emulator), '-no-window', '-accel-check'])
     require('KVM' in acceleration and 'usable' in acceleration.lower(), 'KVM usability check did not pass')
     write_json(evidence, {'status': 'granted', 'run_id': record['run_id'], 'source_sha': record['source_sha'],
                          'runner_uid': record['runner_uid'], 'before_sha256': record['before_sha256'],

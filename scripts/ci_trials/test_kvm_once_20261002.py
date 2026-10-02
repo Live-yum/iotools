@@ -21,7 +21,7 @@ class GuardTests(unittest.TestCase):
         trial.check_context(self.env, self.event)
         for key, value in [('GITHUB_ACTIONS', 'false'), ('GITHUB_EVENT_NAME', 'workflow_dispatch'),
                            ('GITHUB_REF', 'refs/heads/main'), ('GITHUB_RUN_ATTEMPT', '2'),
-                           ('GITHUB_RUN_NUMBER', '3'), ('GITHUB_RUN_ID', ''), ('GITHUB_SHA', 'x')]:
+                           ('GITHUB_RUN_NUMBER', '999'), ('GITHUB_RUN_ID', ''), ('GITHUB_SHA', 'x')]:
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 trial.check_context({**self.env, key: value}, self.event)
 
@@ -150,11 +150,20 @@ class GuardTests(unittest.TestCase):
                     trial.restore(state, root / 'report.json')
                 runner.assert_not_called()
 
+    def test_failed_runtime_probe_retains_bounded_diagnostics(self):
+        from types import SimpleNamespace
+        result = SimpleNamespace(returncode=127, stderr='missing runtime dependency ' + 'x' * 8000, stdout='')
+        with patch.object(trial.subprocess, 'run', return_value=result):
+            with self.assertRaises(RuntimeError) as raised:
+                trial.run(['/official/emulator', '-no-window', '-version'])
+            self.assertIn('exited 127', str(raised.exception))
+            self.assertLess(len(str(raised.exception)), 6200)
+
     def test_workflow_keeps_baseline_tests_and_security_scope(self):
         root = Path(__file__).resolve().parents[2]
         original = (root / '.github/workflows/android.yml').read_text()
         controlled = (root / '.github/workflows/android-kvm-once-20261002.yml').read_text()
-        self.assertIn('github.run_attempt == 1 && github.run_number == 2', controlled)
+        self.assertIn('github.run_attempt == 1 && github.run_number == 3', controlled)
         self.assertNotIn('workflow_dispatch:', controlled)
         self.assertIn("branches: ['trial/kvm-once-20261002-0513']", controlled)
         self.assertIn('fetch-depth: 2', controlled)
