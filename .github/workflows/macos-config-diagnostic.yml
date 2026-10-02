@@ -1,0 +1,42 @@
+name: Inspect generated macOS project
+on:
+  push:
+    branches: ['diag/release-macos-config']
+permissions:
+  contents: read
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+jobs:
+  inspect:
+    runs-on: macos-15
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install original pinned Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Generate configuration only using original release flags
+        run: |
+          cd mobile
+          flutter pub get --enforce-lockfile
+          flutter build macos --release --config-only --dart-define="IOTOOLS_SHA=${{ github.sha }}"
+      - name: Capture exact generated project and source diff
+        if: always()
+        run: |
+          mkdir -p generated-evidence
+          git diff HEAD -- mobile > generated-evidence/project.diff
+          git status --short > generated-evidence/status.txt
+          cp mobile/macos/Runner.xcodeproj/project.pbxproj generated-evidence/generated.pbxproj
+          git show HEAD:mobile/macos/Runner.xcodeproj/project.pbxproj > generated-evidence/original.pbxproj
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generated-macos-project
+          path: generated-evidence
+          if-no-files-found: error
+          retention-days: 14
