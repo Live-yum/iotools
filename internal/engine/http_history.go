@@ -30,6 +30,23 @@ type HTTPHistory struct {
 	path string
 }
 
+// openWorkflowHistory preserves cached reads without permitting any history
+// mutation under read-only protection. Missing files stay missing; the existing
+// management opener uses SQLite mode=ro/query_only and never creates or chmods.
+func openWorkflowHistory(path string, readOnly bool) (*HTTPHistory, error) {
+	if !readOnly {
+		return OpenHTTPHistory(path)
+	}
+	db, err := historyManagementDB(path, false)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &HTTPHistory{db: db, path: path}, nil
+}
+
 func OpenHTTPHistory(path string) (*HTTPHistory, error) {
 	if path == "" {
 		return nil, fmt.Errorf("history path required")

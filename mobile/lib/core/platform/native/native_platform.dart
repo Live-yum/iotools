@@ -49,7 +49,7 @@ class NativePlatformServices implements PlatformServices {
       'platform': Platform.operatingSystem,
       'version': const String.fromEnvironment(
         'IOTOOLS_VERSION',
-        defaultValue: '0.3.0',
+        defaultValue: '0.3.1',
       ),
       'sha': const String.fromEnvironment(
         'IOTOOLS_SHA',
@@ -57,7 +57,7 @@ class NativePlatformServices implements PlatformServices {
       ),
       'theme': saved['theme'] ?? 'dark',
       'readOnly': saved['readOnly'] == true,
-      'history': saved['history'] == true,
+      'history': !saved.containsKey('history') || saved['history'] == true,
       'collection': saved['collection'] ?? 'iotools.yaml',
       'usb': false,
       'capabilities': {

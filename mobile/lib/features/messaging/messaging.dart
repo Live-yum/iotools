@@ -35,6 +35,7 @@ class _ResultPageState extends State<ResultPage> {
             'done',
             'connected',
             'subscription.started',
+            'history_status',
           ].contains(e['kind']),
         )
         .toList()
@@ -59,6 +60,14 @@ class _ResultPageState extends State<ResultPage> {
               ),
           ],
         ),
+        for (final notice in s.events.where((e) => e['kind'] == 'history_status'))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              mapOf(notice['data'])['message']?.toString() ?? '',
+              key: const ValueKey('history_recording_notice'),
+            ),
+          ),
         if (s.dropped > 0 || s.evicted > 0)
           Text(
             '缓冲区淘汰 ${s.dropped} 条事件 · 完整结果缓存淘汰 ${s.evicted} 项',

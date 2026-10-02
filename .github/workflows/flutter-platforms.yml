@@ -2,13 +2,15 @@ name: Flutter native platform acceptance
 on:
   push:
     branches: ['feat/flutter-cross-platform']
+  pull_request:
+    paths: ['mobile/**', 'internal/**', 'cmd/**', 'go.*', 'scripts/flutter-platforms/**', '.github/workflows/flutter-platforms.yml']
   workflow_dispatch:
 permissions:
   contents: read
 env:
   CI: 'true'
   FLUTTER_SUPPRESS_ANALYTICS: 'true'
-  IOTOOLS_SHA: ${{ github.sha }}
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   native:
     strategy:
@@ -40,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -107,6 +110,9 @@ jobs:
       - name: Compile Windows Flutter application
         if: matrix.target == 'windows'
         run: cd mobile && flutter build windows --release --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+      - name: Verify Windows Release icon transparency
+        if: matrix.target == 'windows'
+        run: python3 scripts/flutter-platforms/verify-windows-icons.py mobile/build/windows/x64/runner/Release/iotools.exe --expected-ico mobile/windows/runner/resources/app_icon.ico --extract-dir platform-evidence/windows-release-icons --report platform-evidence/windows-release-icon-report.json
       - name: Bundle application-local Windows runtime
         if: matrix.target == 'windows'
         shell: pwsh
@@ -131,7 +137,7 @@ jobs:
           & scripts/flutter-platforms/verify-windows-release.ps1 -Archive $zip.FullName
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-${{ github.sha }}
+          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-${{ env.IOTOOLS_SHA }}
           path: |
             platform-dist/iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-*.zip
             platform-dist/manifest.json
@@ -146,7 +152,7 @@ jobs:
           python3 scripts/flutter-platforms/verify-web-gateway.py "platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}/iotools-web$suffix"
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-${{ github.sha }}
+          name: iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-${{ env.IOTOOLS_SHA }}
           path: |
             platform-dist/iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-*.zip
             platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}-manifest.json
@@ -155,7 +161,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-evidence-${{ github.sha }}
+          name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-evidence-${{ env.IOTOOLS_SHA }}
           path: |
             platform-evidence/
             mobile/build/flutter-evidence/
@@ -168,6 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -197,7 +204,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: iotools-flutter-web-browser-evidence-${{ github.sha }}
+          name: iotools-flutter-web-browser-evidence-${{ env.IOTOOLS_SHA }}
           path: platform-evidence/
           if-no-files-found: error
           retention-days: 14
@@ -207,6 +214,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -241,7 +249,7 @@ jobs:
           python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-flutter-ios-simulator-compiled-${{ github.sha }}
+          name: iotools-flutter-ios-simulator-compiled-${{ env.IOTOOLS_SHA }}
           path: platform-dist/ios-simulator-compiled-*
           if-no-files-found: error
           retention-days: 14
@@ -249,17 +257,17 @@ jobs:
         run: python3 scripts/flutter-platforms/verify-ios.py simulator
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-flutter-ios-simulator-verified-${{ github.sha }}
+          name: iotools-flutter-ios-simulator-verified-${{ env.IOTOOLS_SHA }}
           path: |
-            platform-dist/ios-simulator-${{ github.sha }}.zip
-            platform-dist/ios-simulator-${{ github.sha }}-manifest.json
+            platform-dist/ios-simulator-${{ env.IOTOOLS_SHA }}.zip
+            platform-dist/ios-simulator-${{ env.IOTOOLS_SHA }}-manifest.json
             platform-dist/ios-simulator-README.zh-CN.txt
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: iotools-flutter-ios-evidence-${{ github.sha }}
+          name: iotools-flutter-ios-evidence-${{ env.IOTOOLS_SHA }}
           path: platform-evidence/ios/
           if-no-files-found: ignore
           retention-days: 14
@@ -269,6 +277,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -292,14 +301,14 @@ jobs:
           python3 scripts/flutter-platforms/verify-ios.py device
       - uses: actions/upload-artifact@v4
         with:
-          name: iotools-flutter-ios-device-unsigned-${{ github.sha }}
+          name: iotools-flutter-ios-device-unsigned-${{ env.IOTOOLS_SHA }}
           path: platform-dist/ios-device-*
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: iotools-flutter-ios-device-evidence-${{ github.sha }}
+          name: iotools-flutter-ios-device-evidence-${{ env.IOTOOLS_SHA }}
           path: platform-evidence/ios/
           if-no-files-found: ignore
           retention-days: 14

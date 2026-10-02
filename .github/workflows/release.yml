@@ -2,14 +2,12 @@
 name: Verified multi-platform release
 'on':
   push:
-    branches:
-    - feat/unified-portable-tui
     tags:
-    - v0.3.0
+    - v0.3.1
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish v0.3.0 after every exact-source asset passes (main only)
+        description: Publish v0.3.1 after every exact-source asset passes (main only)
         type: boolean
         required: true
         default: false
@@ -17,7 +15,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: iotools-v0.3.0-release
+  group: iotools-v0.3.1-release
   cancel-in-progress: false
 env:
   CI: 'true'
@@ -40,7 +38,7 @@ jobs:
         persist-credentials: false
     - name: Test release fail-closed gates
       run: python3 -m unittest discover -s scripts/release -p "test_*.py" -v
-    - name: Verify source equivalence, historical gates and publication context
+    - name: Verify current-source runtime gates and publication context
       id: gate
       env:
         GH_TOKEN: ${{ github.token }}
@@ -194,6 +192,9 @@ jobs:
     - name: Compile Windows Flutter application
       if: matrix.target == 'windows'
       run: cd mobile && flutter build windows --release --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+    - name: Verify Windows Release icon transparency
+      if: matrix.target == 'windows'
+      run: python3 scripts/flutter-platforms/verify-windows-icons.py mobile/build/windows/x64/runner/Release/iotools.exe --expected-ico mobile/windows/runner/resources/app_icon.ico --extract-dir platform-evidence/windows-release-icons --report platform-evidence/windows-release-icon-report.json
     - name: Bundle application-local Windows runtime
       if: matrix.target == 'windows'
       shell: pwsh

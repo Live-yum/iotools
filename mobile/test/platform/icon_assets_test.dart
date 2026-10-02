@@ -17,10 +17,15 @@ void main() {
       final original = (await codec.getNextFrame()).image;
       expect(original.width, 512);
       expect(original.height, 512);
-      Future<Uint8List> render(int size) async {
+      Future<Uint8List> render(int size, {bool transparent = false}) async {
         final record = ui.PictureRecorder();
         final canvas = ui.Canvas(record);
-        canvas.drawColor(const ui.Color(0xff08141f), ui.BlendMode.src);
+        // Windows ICO supports alpha. Keep the avatar's alpha instead of
+        // flattening it onto the opaque background required by iOS icons.
+        canvas.drawColor(
+          transparent ? const ui.Color(0x00000000) : const ui.Color(0xff08141f),
+          ui.BlendMode.src,
+        );
         canvas.drawImageRect(
           original,
           const ui.Rect.fromLTWH(0, 0, 512, 512),
@@ -35,8 +40,59 @@ void main() {
         return data!.buffer.asUint8List();
       }
 
+      Future<void> checkPng(Uint8List png, int size, {required bool transparent})
+          async {
+        final decoded = await ui.instantiateImageCodec(png);
+        final image = (await decoded.getNextFrame()).image;
+        try {
+          expect(image.width, size);
+          expect(image.height, size);
+          final rgba = (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!;
+          int channel(int x, int y, int c) =>
+              rgba.getUint8((y * size + x) * 4 + c);
+          for (final x in [0, size - 1]) {
+            for (final y in [0, size - 1]) {
+              expect(channel(x, y, 3), transparent ? 0 : 255,
+                  reason: '$size px icon corner alpha');
+            }
+          }
+          // This is inside the original black beret, not its surroundings.
+          // Transparency must never come from removing all dark pixels.
+          final hatX = (size * .5).floor();
+          final hatY = (size * (.125 + .75 * 96 / 512)).floor();
+          expect(channel(hatX, hatY, 3), 255,
+              reason: '$size px beret stays opaque');
+          for (var c = 0; c < 3; c++) {
+            expect(channel(hatX, hatY, c), lessThan(80),
+                reason: '$size px beret stays dark');
+          }
+          if (transparent) {
+            var clear = 0;
+            var opaque = 0;
+            for (var i = 3; i < rgba.lengthInBytes; i += 4) {
+              if (rgba.getUint8(i) == 0) clear++;
+              if (rgba.getUint8(i) == 255) opaque++;
+            }
+            expect(clear, greaterThan(size * size ~/ 4));
+            expect(opaque, greaterThan(0));
+          }
+        } finally {
+          image.dispose();
+          decoded.dispose();
+        }
+      }
+
       final sample = await render(256);
       expect(sample.length, greaterThan(1000));
+      await checkPng(sample, 256, transparent: false);
+      final sizes = [16, 32, 48, 256], pngs = <Uint8List>[];
+      for (final size in sizes) {
+        final png = await render(size, transparent: true);
+        await checkPng(png, size, transparent: true);
+        pngs.add(png);
+      }
       if (const bool.fromEnvironment('IOTOOLS_GENERATE_PLATFORM_ICONS')) {
         for (final path in [
           'macos/Runner/Assets.xcassets/AppIcon.appiconset',
@@ -59,8 +115,6 @@ void main() {
             ).writeAsBytes(await render((points * scale).round()));
           }
         }
-        final sizes = [16, 32, 48, 256], pngs = <Uint8List>[];
-        for (final size in sizes) pngs.add(await render(size));
         final table = ByteData(6 + 16 * sizes.length)
           ..setUint16(2, 1, Endian.little)
           ..setUint16(4, sizes.length, Endian.little);

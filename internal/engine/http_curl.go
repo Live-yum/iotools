@@ -48,12 +48,14 @@ func GenerateCurl(ctx context.Context, c *config.Collection, r config.Request, p
 	}
 	w := &httpWorkflow{ctx: ctx, collection: c, profile: profile, rootDir: root, collectionKey: key, vars: vars, varsCache: map[string]any{}, varsActive: map[string]bool{}, active: map[string]bool{}, executed: map[string]bool{}, responses: map[string]*HTTPHistoryEntry{}, allowWrites: allowWrites, options: options, current: r}
 	if options.HistoryPath != "" {
-		h, e := OpenHTTPHistory(options.HistoryPath)
+		h, e := openWorkflowHistory(options.HistoryPath, options.HistoryReadOnly)
 		if e != nil {
 			return "", e
 		}
-		w.history = h
-		defer h.Close()
+		if h != nil {
+			w.history = h
+			defer h.Close()
+		}
 	}
 	resolved, e := w.renderRequest(r)
 	if e != nil {

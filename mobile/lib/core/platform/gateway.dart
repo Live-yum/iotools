@@ -124,7 +124,7 @@ class GatewayEngine implements Engine {
   @override
   Future<JsonMap> open({
     bool readOnly = false,
-    bool history = false,
+    bool history = true,
     String? path,
   }) => _ordered(() async {
     if (_session != null) {
@@ -213,7 +213,7 @@ class UnavailableGatewayEngine implements Engine {
   @override
   Future<JsonMap> open({
     bool readOnly = false,
-    bool history = false,
+    bool history = true,
     String? path,
   }) async => _fail();
   @override

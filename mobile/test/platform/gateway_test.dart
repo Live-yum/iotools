@@ -28,6 +28,27 @@ class Files implements GatewayFiles {
 }
 
 void main() {
+  test('gateway open defaults history on and preserves explicit off', () async {
+    final seen = <bool>[];
+    final transport = GatewayTransport(
+      origin: Uri.parse('http://localhost:9000'),
+      client: MockClient((request) async {
+        if (request.url.path == '/api/bootstrap') {
+          return http.Response('{"ok":true,"data":{"csrf":"nonce"}}', 200);
+        }
+        if (request.url.path == '/api/open') {
+          seen.add((jsonDecode(request.body) as Map)['history'] as bool);
+          return http.Response('{"ok":true,"session":"fixture","data":{}}', 200);
+        }
+        return http.Response('{"ok":true,"data":{}}', 200);
+      }),
+    );
+    final engine = GatewayEngine(transport);
+    await engine.open();
+    await engine.open(history: false);
+    expect(seen, [true, false]);
+  });
+
   test(
     'large explicit text exports have a separate bounded JSON allowance',
     () async {

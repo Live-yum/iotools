@@ -175,6 +175,20 @@ void main() {
     );
     expect(await root.list().toList(), isEmpty);
   });
+  test('history defaults on and retains an explicit off across restarts', () async {
+    NativePlatformServices fresh() => NativePlatformServices(
+      rootDirectory: root.path, dialogs: dialogs,
+    );
+    expect(mapOf(await fresh().invoke('settings.get'))['history'], true);
+    await File('${root.path}/.iotools-settings.json').writeAsString('{"theme":"light"}');
+    expect(mapOf(await fresh().invoke('settings.get'))['history'], true);
+    await fresh().invoke('settings.save', {'history': false});
+    expect(mapOf(await fresh().invoke('settings.get'))['history'], false);
+    await fresh().invoke('settings.save', {'theme': 'dark'});
+    expect(mapOf(await fresh().invoke('settings.get'))['history'], false);
+    await fresh().invoke('settings.save', {'history': true});
+    expect(mapOf(await fresh().invoke('settings.get'))['history'], true);
+  });
   test(
     'settings persist only approved keys and never accept external collections',
     () async {

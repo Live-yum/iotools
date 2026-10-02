@@ -46,8 +46,16 @@ void main() {
       expect(call.arguments, {'readOnly': true, 'history': false, 'path': '/private/中文.yaml'});
       return '{"ok":true,"data":{"path":"/private/中文.yaml","requests":[]}}';
     });
-    final state = await const MethodChannelEngine().open(readOnly: true, path: '/private/中文.yaml');
+    final state = await const MethodChannelEngine().open(readOnly: true, history: false, path: '/private/中文.yaml');
     expect(state['path'], '/private/中文.yaml');
+  });
+
+  test('new channel sessions default history on', () async {
+    messenger.setMockMethodCallHandler(engineChannel, (call) async {
+      expect(call.arguments['history'], true);
+      return '{"ok":true,"data":{}}';
+    });
+    await const MethodChannelEngine().open();
   });
 
   test('engine failures do not become successful result payloads', () async {
