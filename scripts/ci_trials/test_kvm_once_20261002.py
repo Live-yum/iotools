@@ -13,15 +13,15 @@ ACL = 'user::rw-\ngroup::rw-\nother::---\n'
 class GuardTests(unittest.TestCase):
     def setUp(self):
         self.env = {'GITHUB_ACTIONS': 'true', 'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': trial.BRANCH,
-                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_RUN_NUMBER': '1', 'GITHUB_RUN_ID': '123',
+                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_RUN_NUMBER': trial.TRIAL_RUN_NUMBER, 'GITHUB_RUN_ID': '123',
                     'GITHUB_SHA': 'b' * 40}
-        self.event = {'before': trial.BASE, 'after': 'b' * 40, 'repository': {'full_name': 'Live-yum/iotools'}}
+        self.event = {'before': trial.TRIGGER_PARENT, 'after': 'b' * 40, 'repository': {'full_name': 'Live-yum/iotools'}}
 
     def test_only_designated_first_run(self):
         trial.check_context(self.env, self.event)
         for key, value in [('GITHUB_ACTIONS', 'false'), ('GITHUB_EVENT_NAME', 'workflow_dispatch'),
                            ('GITHUB_REF', 'refs/heads/main'), ('GITHUB_RUN_ATTEMPT', '2'),
-                           ('GITHUB_RUN_NUMBER', '2'), ('GITHUB_RUN_ID', ''), ('GITHUB_SHA', 'x')]:
+                           ('GITHUB_RUN_NUMBER', '3'), ('GITHUB_RUN_ID', ''), ('GITHUB_SHA', 'x')]:
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 trial.check_context({**self.env, key: value}, self.event)
 
@@ -79,6 +79,8 @@ class GuardTests(unittest.TestCase):
                     else:
                         current[0] = Path(command[command.index('--set-file') + 1]).read_text()
                     return ''
+                if command[-1] == '-version':
+                    return 'Android emulator version 37.2.12.0 (build_id 16428233)\n'
                 if command[-1] == '-accel-check':
                     if not accelerator_ok:
                         raise RuntimeError('Accelerator verification failed')
@@ -112,6 +114,24 @@ class GuardTests(unittest.TestCase):
     def test_failure_after_grant_still_restores(self):
         self.exercise(False)
 
+    def test_missing_emulator_fails_before_any_permission_mutation(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            event_path = root / 'event.json'
+            event_path.write_text(json.dumps(self.event))
+            env = {**self.env, 'GITHUB_EVENT_PATH': str(event_path), 'ANDROID_HOME': str(root / 'empty-sdk')}
+            def source_only(command):
+                if command[:2] == ['git', 'diff']:
+                    return '\n'.join(sorted(trial.ALLOWED_FILES))
+                if command[:2] == ['git', 'rev-parse']:
+                    return self.env['GITHUB_SHA']
+                self.fail(f'Unexpected command before emulator preflight: {command}')
+            with patch.dict(os.environ, env, clear=True), patch.object(trial.platform, 'system', return_value='Linux'), patch.object(trial.os, 'getuid', return_value=1001), patch.object(trial, 'run', side_effect=source_only) as runner:
+                with self.assertRaisesRegex(RuntimeError, 'Install the official Android emulator'):
+                    trial.grant(root / 'state.json', root / 'report.json')
+                self.assertFalse((root / 'state.json').exists())
+                self.assertFalse(any(c.args[0][0] == 'sudo' for c in runner.call_args_list))
+
     def test_cleanup_when_grant_never_started(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -134,7 +154,7 @@ class GuardTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         original = (root / '.github/workflows/android.yml').read_text()
         controlled = (root / '.github/workflows/android-kvm-once-20261002.yml').read_text()
-        self.assertIn('github.run_attempt == 1 && github.run_number == 1', controlled)
+        self.assertIn('github.run_attempt == 1 && github.run_number == 2', controlled)
         self.assertNotIn('workflow_dispatch:', controlled)
         self.assertIn("branches: ['trial/kvm-once-20261002-0513']", controlled)
         self.assertIn('fetch-depth: 2', controlled)
@@ -142,6 +162,7 @@ class GuardTests(unittest.TestCase):
         expected = original[original.index(marker):original.index('      - uses: actions/upload-artifact@v4\n')]
         expected = expected.replace('reactivecircus/android-emulator-runner@v2',
                                     'reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d')
+        expected = expected.replace('          api-level:', '          emulator-build: 16428233\n          api-level:')
         self.assertIn(expected, controlled)
         self.assertIn('Restore and verify the original KVM ACL even if testing fails\n        if: always()', controlled)
         self.assertEqual(controlled.count('kvm_once_20261002.py grant'), 1)

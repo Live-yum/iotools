@@ -8,7 +8,7 @@ env:
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
   apk:
-    if: ${{ github.run_attempt == 1 && github.run_number == 1 && github.event.before == '8db14221104175fd265b4d08f51b905f0bc999a0' }}
+    if: ${{ github.run_attempt == 1 && github.run_number == 2 && github.event.before == 'bb77e6acc1d2fe64d4876fbaf4031a0184d29bf9' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -19,6 +19,9 @@ jobs:
           fetch-depth: 2
       - name: Verify one-time permission and restoration guards
         run: python3 scripts/ci_trials/test_kvm_once_20261002.py
+      - name: Install the official emulator before any permission change
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "emulator" </dev/null
       - name: Check KVM prerequisites without changing permissions
         run: python3 scripts/ci_trials/kvm_once_20261002.py preflight --state "$RUNNER_TEMP/iotools-kvm-once.json" --evidence android-evidence/kvm-preflight.json
       - uses: actions/setup-go@v5
@@ -140,6 +143,7 @@ jobs:
       - name: Real emulator UI, protocol, editing and lifecycle tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
+          emulator-build: 16428233
           api-level: ${{ env.ANDROID_TEST_API }}
           arch: x86_64
           target: ${{ env.ANDROID_TEST_TARGET }}

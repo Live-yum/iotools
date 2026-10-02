@@ -13,6 +13,8 @@ import subprocess
 
 BASE = '8db14221104175fd265b4d08f51b905f0bc999a0'
 BRANCH = 'refs/heads/trial/kvm-once-20261002-0513'
+TRIGGER_PARENT = 'bb77e6acc1d2fe64d4876fbaf4031a0184d29bf9'
+TRIAL_RUN_NUMBER = '2'  # Run 1 failed setup before emulator execution; ACL was verified restored.
 DEVICE = Path('/dev/kvm')
 ALLOWED_FILES = {
     '.github/workflows/android-kvm-once-20261002.yml',
@@ -35,8 +37,8 @@ def check_context(env, event):
     require(env.get('GITHUB_EVENT_NAME') == 'push', 'Only the one controlled push is permitted')
     require(env.get('GITHUB_REF') == BRANCH, 'Wrong trial branch')
     require(env.get('GITHUB_RUN_ATTEMPT') == '1', 'Retries require new owner approval')
-    require(env.get('GITHUB_RUN_NUMBER') == '1', 'Only the first run may grant access')
-    require(event.get('before') == BASE, 'Trial must start from the approved baseline')
+    require(env.get('GITHUB_RUN_NUMBER') == TRIAL_RUN_NUMBER, 'Only this single setup-recovery run may grant access')
+    require(event.get('before') == TRIGGER_PARENT, 'Trial must start from the approved baseline')
     require(event.get('after') == env.get('GITHUB_SHA'), 'Event source identity mismatch')
     require(not event.get('deleted', False) and not event.get('forced', False), 'Non-force push required')
     require(event.get('repository', {}).get('full_name') == 'Live-yum/iotools', 'Wrong repository')
@@ -90,9 +92,18 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
 
 
+def verified_emulator():
+    emulator = Path(os.environ['ANDROID_HOME']) / 'emulator' / 'emulator'
+    require(emulator.is_file(), 'Install the official Android emulator before granting permissions')
+    version = run([str(emulator), '-version'])
+    require('37.2.12' in version and '16428233' in version, 'Emulator differs from the controlled baseline')
+    return emulator
+
+
 def preflight(state, evidence):
     check_context(os.environ, json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text()))
     require(platform.system() == 'Linux' and os.getuid() != 0, 'Expected unprivileged Linux runner')
+    verified_emulator()
     info = identity()
     before = acl_text()
     planned_acl(before, os.getuid())
@@ -107,6 +118,7 @@ def grant(state, evidence):
     changed = set(run(['git', 'diff', '--name-only', BASE, 'HEAD']).splitlines())
     require(changed == ALLOWED_FILES, 'Runtime or unrelated source changed in this controlled experiment')
     require(run(['git', 'rev-parse', 'HEAD']).strip() == os.environ['GITHUB_SHA'], 'Checkout differs from requested source')
+    emulator = verified_emulator()  # All installation/version checks precede the ACL mutation.
     before_device = identity()
     before = acl_text()
     desired, mask = planned_acl(before, os.getuid())
@@ -125,8 +137,6 @@ def grant(state, evidence):
     after = acl_text()
     require(parse_acl(after) == desired, 'ACL grant changed entries beyond the current runner UID')
     require(os.access(DEVICE, os.R_OK | os.W_OK), 'Runner still cannot access KVM')
-    emulator = Path(os.environ['ANDROID_HOME']) / 'emulator' / 'emulator'
-    require(emulator.is_file(), 'Installed official Android emulator is unavailable')
     acceleration = run([str(emulator), '-accel-check'])
     require('KVM' in acceleration and 'usable' in acceleration.lower(), 'KVM usability check did not pass')
     write_json(evidence, {'status': 'granted', 'run_id': record['run_id'], 'source_sha': record['source_sha'],
