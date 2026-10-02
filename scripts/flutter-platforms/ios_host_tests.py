@@ -71,7 +71,6 @@ def test_command(descriptor, udid, result):
     return ["xcrun", "xcodebuild", "test-without-building", "-xctestrun", str(descriptor),
             "-destination", f"platform=iOS Simulator,id={udid}",
             "-parallel-testing-enabled", "NO", "-only-testing:RunnerTests",
-            "-test-iterations", "1",
             "-resultBundlePath", str(result)]
 
 

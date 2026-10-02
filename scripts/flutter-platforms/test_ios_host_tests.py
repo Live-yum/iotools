@@ -285,8 +285,11 @@ class PhaseTests(unittest.TestCase):
         command = host.test_command(descriptor, ID, Path("/evidence/test.xcresult"))
         self.assertEqual(command[command.index("-xctestrun") + 1], str(descriptor))
         self.assertEqual(command[command.index("-destination") + 1], "platform=iOS Simulator,id=" + ID)
-        self.assertEqual(command[command.index("-test-iterations") + 1], "1")
-        self.assertFalse(set(command) & {"test", "build", "-workspace", "-project", "-retry-tests-on-failure"})
+        # Xcode 26.2 rejects -test-iterations 1. A single execution omits all
+        # optional repetition controls and is still checked for five results.
+        self.assertFalse(set(command) & {"test", "build", "-workspace", "-project",
+                                        "-test-iterations", "-retry-tests-on-failure",
+                                        "-run-tests-until-failure", "-test-repetition-relaunch-enabled"})
         self.assertIn("-only-testing:RunnerTests", command)
 
     def test_failed_phase_is_executed_once_and_keeps_remaining_budget(self):
