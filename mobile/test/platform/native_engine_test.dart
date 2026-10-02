@@ -290,6 +290,24 @@ requests:
             final decoded = mapOf(exactDecode(wire));
             expect(decoded['number'], isA<ExactNumber>());
             expect(decoded['string'], isA<String>());
+            // Capturing the request body does not mean the response and its
+            // now-default history transaction have finished. Wait for the
+            // actual terminal event before deleting this test's Windows root.
+            final deadline = DateTime.now().add(const Duration(seconds: 5));
+            JsonMap? done;
+            while (done == null && DateTime.now().isBefore(deadline)) {
+              final batch = mapOf(await engine.command({'op': 'events'}));
+              for (final event in rowsOf(batch['events'])) {
+                if (event['kind'] == 'done') done = mapOf(event['data']);
+              }
+              if (done == null) {
+                await Future<void>.delayed(const Duration(milliseconds: 5));
+              }
+            }
+            expect(done, isNotNull, reason: 'HTTP workflow must finish');
+            expect(done!['status'], 'completed');
+            expect(rowsOf(await engine.command({'op': 'history.list'})), hasLength(1));
+
           } finally {
             await subscription.cancel();
             await server.close(force: true);
