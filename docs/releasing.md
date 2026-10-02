@@ -57,3 +57,5 @@ CocoaPods 每次生成新的工程对象 ID。门禁仅归一化新增对象 ID 
 发布追加 `source-sbom.cdx.json`（CycloneDX 1.6 源码锁定依赖清单，明确包括开发依赖且非完整二进制运行时清单）与 `build-provenance.json`（未签名构建记录）。19 个平台包加五份元数据共 24 个文件，都纳入 SHA256SUMS 和远端重新下载验证。构建记录包含源码 SHA、全树输入摘要、Actions run/attempt 和各产物摘要；不能将它称为已认证来源或声称 SLSA 等级。
 
 未添加 OIDC `id-token: write`、attestations 权限、持久访问或发布签名。若未来需要可信签名/证明，必须先单独确认权限和签名方案。v0.3.1 已发布内容不回写。
+
+供应链验证参考：[CycloneDX 1.6 官方 schema](https://github.com/CycloneDX/specification/blob/master/schema/bom-1.6.schema.json)、[SLSA provenance 说明](https://slsa.dev/spec/v1.2/provenance)。源码 SBOM 已用官方 1.6 JSON schema 校验（102 个锁定组件）；这不扩大其明确标注的覆盖范围。

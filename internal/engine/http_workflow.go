@@ -315,16 +315,16 @@ func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
 		w.responses[r.ID] = entry
 		w.executed[r.ID] = true
 		if w.options.HistoryPath != "" && r.Params["persist"] != false {
-            if w.options.HistoryReadOnly {
-                send(emit, "history_status", map[string]any{"recorded": false, "reason": "read_only", "message": "只读保护，本次未记录", "request_id": r.ID})
-            } else if w.history != nil {
-                if err := w.history.Add(w.ctx, *entry); errors.Is(err, ErrHTTPHistoryCapacity) {
-                    send(emit, "history_status", map[string]any{"recorded": false, "reason": "capacity", "message": err.Error(), "request_id": r.ID})
-                } else if err != nil {
-                    return errors.Join(e, fmt.Errorf("HTTP completed but history save failed: %w", err))
-                }
-            }
-        }
+			if w.options.HistoryReadOnly {
+				send(emit, "history_status", map[string]any{"recorded": false, "reason": "read_only", "message": "只读保护，本次未记录", "request_id": r.ID})
+			} else if w.history != nil {
+				if err := w.history.Add(w.ctx, *entry); errors.Is(err, ErrHTTPHistoryCapacity) {
+					send(emit, "history_status", map[string]any{"recorded": false, "reason": "capacity", "message": err.Error(), "request_id": r.ID})
+				} else if err != nil {
+					return errors.Join(e, fmt.Errorf("HTTP completed but history save failed: %w", err))
+				}
+			}
+		}
 	}
 	return e
 }
