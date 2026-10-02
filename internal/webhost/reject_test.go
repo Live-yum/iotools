@@ -90,9 +90,9 @@ func TestRejectionFragmentedConnectionCloseReturnsComplete403(t *testing.T) {
 		t.Fatal(err)
 	}
 	changes := map[string]func(*http.Request){
-		"origin": func(r *http.Request) { r.Header.Set("Origin", "https://evil.invalid") },
-		"host": func(r *http.Request) { r.Host = "evil.invalid" },
-		"csrf": func(r *http.Request) { r.Header.Set("X-Iotools-CSRF", "wrong") },
+		"origin":     func(r *http.Request) { r.Header.Set("Origin", "https://evil.invalid") },
+		"host":       func(r *http.Request) { r.Host = "evil.invalid" },
+		"csrf":       func(r *http.Request) { r.Header.Set("X-Iotools-CSRF", "wrong") },
 		"cross-site": func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
 	}
 	for name, change := range changes {
