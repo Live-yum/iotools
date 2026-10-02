@@ -1,10 +1,12 @@
 import 'runtime_adapter.dart';
 import 'action_interaction.dart';
+import 'http_fixture_diagnostics.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
 import 'package:iotools_mobile/core/json.dart';
 import 'modbus_workflow_test.dart';
@@ -20,25 +22,36 @@ void main() {
       final engine = runtime.engine, platform = runtime.platform;
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final received = <String>[];
+      final fixture = HTTPFixtureDiagnostics();
       // Public independent OpenSSL AES-128-CBC/PKCS7 vectors, not calculated by the engine under test.
       const expected = 'qaecBiJg5qYkn1be0PS0WKhxPv6lLp69C1xwHFRMubE=';
       const responseCipher =
           'tPXT09vO41jl5nnDRzL/o2IXTqn+Ik2TLqQ7mHjsQGJVm+cnEb4WHA0oNdfc/Mam';
       server.listen((request) async {
-        final raw = await utf8.decoder.bind(request).join();
-        received.add(raw);
-        request.response.headers.contentType = ContentType.text;
-        switch (request.uri.path) {
-          case '/aes':
-            request.response.write(responseCipher);
-          case '/binary':
-            request.response.add([0, 255, 128]);
-          case '/chinese':
-            request.response.write('中文😀');
-          default:
-            request.response.write('test');
+        final path = request.uri.path;
+        fixture.record('accepted', path: path);
+        try {
+          final raw = await utf8.decoder.bind(request).join();
+          received.add(raw);
+          fixture.record('body_read', path: path);
+          request.response.headers.contentType = ContentType.text;
+          switch (request.uri.path) {
+            case '/aes':
+              request.response.write(responseCipher);
+            case '/binary':
+              request.response.add([0, 255, 128]);
+            case '/chinese':
+              request.response.write('中文😀');
+            default:
+              request.response.write('test');
+          }
+          fixture.record('close_started', path: path);
+          await request.response.close();
+          fixture.record('response_closed', path: path);
+        } catch (error) {
+          fixture.record('errors', path: path, error: error);
+          rethrow;
         }
-        await request.response.close();
       });
       await platform.invoke('settings.save', {
         'theme': 'dark',
@@ -152,8 +165,9 @@ void main() {
         await tapText(tester, '取消');
         expect(received, isEmpty);
         await tapKey(tester, 'run_request');
+        fixture.record('run_requested', path: '/aes');
         await tapKey(tester, 'confirm_action');
-        await waitForHTTPCompletion(tester, engine, binding, received);
+        await waitForHTTPCompletion(tester, engine, binding, received, fixture);
         expect(received, [expected]);
         expect(find.textContaining('AES 解密成功中文'), findsWidgets);
         await shot(tester, binding, 'flutter-http-04-decrypted-result');
@@ -161,8 +175,15 @@ void main() {
           await back(tester);
           await tester.pump(const Duration(milliseconds: 350));
           await openRequest(tester, 'HTTP $name');
+          fixture.record('run_requested', path: '/$name');
           await tapKey(tester, 'run_request');
-          await waitForHTTPCompletion(tester, engine, binding, received);
+          await waitForHTTPCompletion(
+            tester,
+            engine,
+            binding,
+            received,
+            fixture,
+          );
         }
         await tapKey(tester, 'nav_history');
         await waitFor(
@@ -385,16 +406,27 @@ Future<void> waitForHTTPCompletion(
   Engine engine,
   IntegrationTestWidgetsFlutterBinding binding,
   List<String> received,
+  HTTPFixtureDiagnostics fixture,
 ) async {
   final end = DateTime.now().add(const Duration(seconds: 20));
   while (find.text('已完成').evaluate().isEmpty) {
     if (find.text('执行失败').evaluate().isNotEmpty ||
         DateTime.now().isAfter(end)) {
+      final session = tester
+          .widget<WorkspaceShell>(find.byType(WorkspaceShell))
+          .session;
+      final diagnostics = jsonEncode({
+        'session': retainedHTTPDiagnostics(session),
+        'fixture': fixture.snapshot(),
+      });
+      // Emit before screenshot/native diagnostics can fail or delay capture.
+      debugPrint('HTTP failure diagnostics: $diagnostics');
       await shot(tester, binding, 'flutter-http-failure');
       final state = await engine.command({'op': 'state'});
       // Only this test's synthetic fixture state and public vector are emitted.
       throw TestFailure(
         'HTTP UI did not complete; fixture writes=${received.length}; state=$state; '
+        'diagnostics=$diagnostics; '
         'visible=${find.byType(Text).evaluate().map((e) => (e.widget as Text).data).whereType<String>().join(" | ")}',
       );
     }
