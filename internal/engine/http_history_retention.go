@@ -75,7 +75,7 @@ type HTTPHistoryStorage struct {
 	Policy        HTTPHistoryPolicy `json:"policy"`
 }
 
-const historySizeSQL = "length(CAST(headers AS BLOB))+length(body)+coalesce(length(transformed),0)"
+const historySizeSQL = "length(CAST(headers AS BLOB))+length(CAST(body AS BLOB))+coalesce(length(CAST(transformed AS BLOB)),0)"
 
 func HTTPHistoryStorageStatus(ctx context.Context, path string) (HTTPHistoryStorage, error) {
 	var out HTTPHistoryStorage
@@ -131,7 +131,7 @@ type HTTPHistoryRetentionPreview struct {
 	IDs           []int64           `json:"-"`
 }
 
-func retentionPlan(ctx context.Context, db historyQuerier, p HTTPHistoryPolicy, at time.Time) (HTTPHistoryRetentionPreview, error) {
+func retentionPlan(ctx context.Context, db historyQuerier, p HTTPHistoryPolicy, at time.Time, bindContents bool) (HTTPHistoryRetentionPreview, error) {
 	plan := HTTPHistoryRetentionPreview{Policy: p, At: at}
 	if err := p.Validate(); err != nil {
 		return plan, err
@@ -145,7 +145,15 @@ func retentionPlan(ctx context.Context, db historyQuerier, p HTTPHistoryPolicy, 
 	_ = enc.Encode(p)
 	_ = enc.Encode(current)
 	_ = enc.Encode(at)
-	rows, err := db.QueryContext(ctx, "SELECT id,created_at,"+historySizeSQL+" FROM http_history ORDER BY id DESC")
+	query := "SELECT id,created_at," + historySizeSQL + " FROM http_history ORDER BY id DESC"
+	var args []any
+	if bindContents {
+		// Cap individual values before they leave SQLite. Manually edited oversized
+		// records require separate inspection rather than unbounded allocation.
+		query = "SELECT id,substr(CAST(collection AS BLOB),1,?),substr(CAST(profile AS BLOB),1,?),substr(CAST(recipe AS BLOB),1,?),substr(CAST(method AS BLOB),1,?),substr(CAST(created_at AS BLOB),1,?),status,substr(CAST(headers AS BLOB),1,?),substr(CAST(body AS BLOB),1,?),substr(CAST(transformed AS BLOB),1,?),transformed IS NULL," + historySizeSQL + " FROM http_history ORDER BY id DESC"
+		args = []any{maxBody + 1, maxBody + 1, maxBody + 1, maxBody + 1, maxBody + 1, maxBody + 1, maxBody + 1, maxBody + 1}
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return plan, err
 	}
@@ -154,10 +162,23 @@ func retentionPlan(ctx context.Context, db historyQuerier, p HTTPHistoryPolicy, 
 	for rows.Next() {
 		var id, size int64
 		var created string
-		if err = rows.Scan(&id, &created, &size); err != nil {
+		if bindContents {
+			var collection, profile, recipe, method, timestamp []byte
+			var status int64
+			var headers, body, transformed []byte
+			var transformedNull bool
+			if err = rows.Scan(&id, &collection, &profile, &recipe, &method, &timestamp, &status, &headers, &body, &transformed, &transformedNull, &size); err != nil {
+				return plan, err
+			}
+			if len(collection) > maxBody || len(profile) > maxBody || len(recipe) > maxBody || len(method) > maxBody || len(timestamp) > maxBody || len(headers) > maxBody || len(body) > maxBody || len(transformed) > maxBody {
+				return plan, errors.New("历史单项超过 4 MiB，清理预览已取消，请先检查记录")
+			}
+			// Bind raw bytes and nulls, not just sizes: edits and migrations invalidate consent.
+			_ = enc.Encode([]any{id, collection, profile, recipe, method, timestamp, status, headers, body, transformed, transformedNull, size})
+			created = string(timestamp)
+		} else if err = rows.Scan(&id, &created, &size); err != nil {
 			return plan, err
 		}
-		_ = enc.Encode([]any{id, created, size})
 		timestamp, e := time.Parse(time.RFC3339Nano, created)
 		if e != nil {
 			return plan, fmt.Errorf("历史时间无效，未删除任何记录: %w", e)
@@ -175,7 +196,9 @@ func retentionPlan(ctx context.Context, db historyQuerier, p HTTPHistoryPolicy, 
 	if err = rows.Err(); err != nil {
 		return plan, err
 	}
-	plan.Token = hex.EncodeToString(hash.Sum(nil))
+	if bindContents {
+		plan.Token = hex.EncodeToString(hash.Sum(nil))
+	}
 	return plan, nil
 }
 func PreviewHTTPHistoryRetention(ctx context.Context, path string, p HTTPHistoryPolicy) (HTTPHistoryRetentionPreview, error) {
@@ -184,7 +207,7 @@ func PreviewHTTPHistoryRetention(ctx context.Context, path string, p HTTPHistory
 		return HTTPHistoryRetentionPreview{}, e
 	}
 	defer db.Close()
-	return retentionPlan(ctx, db, p, time.Now().UTC())
+	return retentionPlan(ctx, db, p, time.Now().UTC(), true)
 }
 func pruneHistory(ctx context.Context, tx *sql.Tx, plan HTTPHistoryRetentionPreview) error {
 	// Prepared single-row deletes avoid SQLite parameter limits and remain atomic.
@@ -204,6 +227,9 @@ func ApplyHTTPHistoryRetention(ctx context.Context, path string, preview HTTPHis
 	if !confirmed {
 		return preview, errors.New("历史策略需要明确确认；自动清理会永久删除记录")
 	}
+	if preview.Token == "" {
+		return preview, errors.New("历史策略需要完整内容预览")
+	}
 	if age := time.Since(preview.At); age < 0 || age > 5*time.Minute {
 		return preview, errors.New("历史策略预览已过期，请重新预览")
 	}
@@ -217,7 +243,7 @@ func ApplyHTTPHistoryRetention(ctx context.Context, path string, preview HTTPHis
 		return preview, err
 	}
 	defer tx.Rollback()
-	fresh, err := retentionPlan(ctx, tx, preview.Policy, preview.At)
+	fresh, err := retentionPlan(ctx, tx, preview.Policy, preview.At, true)
 	if err != nil {
 		return preview, err
 	}
@@ -267,7 +293,7 @@ func (h *HTTPHistory) addBounded(ctx context.Context, e HTTPHistoryEntry, header
 		return err
 	}
 	if p.Mode == "prune" {
-		plan, e := retentionPlan(ctx, tx, p, time.Now().UTC())
+		plan, e := retentionPlan(ctx, tx, p, time.Now().UTC(), false)
 		if e != nil {
 			return e
 		}

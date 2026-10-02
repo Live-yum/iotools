@@ -411,6 +411,11 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"], confirmed=True)["ok"])
         self.assertEqual(self.count_sql(), 3)
         plan = s.command(op="history.retention.preview", policy=policy)
+        with closing(sqlite3.connect(self.root / "history.sqlite")) as db, db:
+            db.execute("UPDATE http_history SET status=201 WHERE id=1")
+        self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"], confirmed=True)["ok"])
+        self.assertEqual(self.count_sql(), 3)
+        plan = s.command(op="history.retention.preview", policy=policy)
         s.command(op="history.retention.apply", token=plan["token"], confirmed=True)
         self.assertEqual(self.count_sql(), 1)
         s.run(self.request())

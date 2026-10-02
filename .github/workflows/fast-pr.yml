@@ -35,6 +35,8 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/flutter -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/flutter-platforms -p 'test_*.py' -v
       - name: Capture Go formatting for review
         if: always()
         run: |

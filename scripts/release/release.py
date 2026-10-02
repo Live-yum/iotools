@@ -283,10 +283,12 @@ def release_notes(manifest):
 
 源码提交：{manifest['source_sha']}。19 个平台包均由此提交重新构建，未把旧 CI 包改名充当发布包。
 
-## 本次修复
-- Flutter HTTP 历史默认开启，保留已经保存的关闭选择；响应可能包含敏感信息，可在设置关闭。请求 persist: false 仍不记录，只读保护也不会写历史。
-- 请求完成后，正在显示的历史页自动刷新；切换集合不会混入旧列表。
-- Windows 图标保留透明背景与原有黑色帽子，四种图标尺寸从生成 PNG 到实际 EXE 资源逐一校验。
+## 本次改进
+- HTTP 历史默认限制为全库 10,000 条 / 128 MiB 响应内容，达到上限时暂停记录并保留已有数据。历史页显示真实数据库与辅助文件大小，支持明确确认的独立空间整理。
+- 可配置最长天数、条数与字节限制。自动永久清理默认关闭，开启前必须预览并确认当前删除范围和未来清理；数据、策略变化或预览过期必须重新确认。策略作用于所有集合。
+- Flutter 默认记录，保留已保存的关闭选择；CLI/TUI 仍显式启用。persist: false 和只读保护不写历史，只读已有缓存仍可复用。只有实际可持久化响应被只读阻止时才提示，连接失败不会产生误导性记录提示。
+- 工作台对话框与发布逻辑拆分为可测试模块，继续共用同一个 Go 引擎。Actions 固定完整官方提交 SHA，新增 Dependabot、真实 govulncheck 和快速/专项/完整候选分层检查，完整发布门禁保留。
+- 新增 source-sbom.cdx.json 与 build-provenance.json，并加入完整性核验；它们是源码依赖清单和未签名构建记录，不代表完整运行时 SBOM、可信签名或 SLSA 等级。
 
 ## 选择与启动
 - TUI：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon。完整解压后运行 iotools（Windows 为 iotools.exe）；首次可加 --init。macOS 二进制未做 Developer ID 公证。

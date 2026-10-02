@@ -104,7 +104,7 @@ exit 99''')
         self.assertTrue(marker)
         step,marker,after=remaining.partition('      - name: Real emulator UI, protocol, editing and lifecycle tests\n')
         self.assertTrue(marker)
-        self.assertIn('uses: reactivecircus/android-emulator-runner@v2',after)
+        self.assertRegex(after, r'uses: reactivecircus/android-emulator-runner@[0-9a-f]{40} # v2')
         with tempfile.TemporaryDirectory(prefix='iotools-pre-emulator-') as directory:
             root=Path(directory)
             env=os.environ | {'ANDROID_HOME':str(root/'sdk-not-installed'), 'GITHUB_ENV':str(root/'github-env')}

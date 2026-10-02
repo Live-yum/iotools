@@ -101,7 +101,7 @@ JSON 正文内仅有一个动态片段时保留其类型，例如 `"{{ [1, 2] }}
 
 ## 查询与 SQLite 历史
 
-默认不创建历史数据库。需要持久化时显式启用：
+CLI/TUI 默认不创建历史数据库，需要持久化时通过以下参数显式启用。Flutter 图形版默认记录，但保留已保存的关闭选项，可在设置中关闭；只读和 `persist: false` 仍阻止新增，查看不存在的历史不会创建数据库：
 
 ```sh
 iotools --file slumber.yml --history-db ./history.sqlite --run data

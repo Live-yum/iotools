@@ -63,7 +63,7 @@ Events are `subscription.started`, `subscription.event` with `{subscription_id,k
 - `history.preview {sql}` → `{database,sql,token,backup_bytes,statements}`
 - `history.execute {sql,token,backup,confirmed:true}` → `{backup,results}`. Requires unchanged preview and a new private backup path. Blocked by read-only mode
 
-HTTP history is opt-in. Neither startup nor an ordinary history list creates an empty history database. HTTP workflow options preserve separate prompts, selections, TLS approvals, root-write authorization and dependency-write authorization. Optional engine sandbox hooks enforce private files after dynamic rendering and before file reads/network execution; desktop callers retain original behavior when hooks are nil.
+The core API requires the explicit `History` option; Flutter hosts enable it by default while preserving saved opt-outs. CLI/TUI persistence remains opt-in. Neither startup nor an ordinary history list creates an empty history database. HTTP workflow options preserve separate prompts, selections, TLS approvals, root-write authorization and dependency-write authorization. Optional engine sandbox hooks enforce private files after dynamic rendering and before file reads/network execution; desktop callers retain original behavior when hooks are nil.
 
 ## Modbus local tools
 

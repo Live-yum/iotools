@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -164,5 +165,93 @@ func TestHistoryPolicyInvalidExpiryAndMissingAreSafe(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatal("read created database")
+	}
+}
+
+func TestHistoryPruneRejectsSameLengthAndMetadataEdits(t *testing.T) {
+	for _, statement := range []string{
+		"UPDATE http_history SET body=X'6E6577' WHERE id=1",
+		"UPDATE http_history SET collection='migrated' WHERE id=1",
+		"UPDATE http_history SET status=201 WHERE id=1",
+		"UPDATE http_history SET headers=replace(headers,'Test','Next') WHERE id=1",
+		"UPDATE http_history SET transformed=X'6368616E676564' WHERE id=1",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			ctx, path, h := retentionFixture(t)
+			retentionAdd(t, ctx, h, 0, "old")
+			retentionAdd(t, ctx, h, 0, "keep")
+			preview, err := PreviewHTTPHistoryRetention(ctx, path, HTTPHistoryPolicy{Mode: "prune", MaxEntries: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = h.db.ExecContext(ctx, statement); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = ApplyHTTPHistoryRetention(ctx, path, preview, true); err == nil {
+				t.Fatal("changed record passed stale deletion consent")
+			}
+			status, err := HTTPHistoryStorageStatus(ctx, path)
+			if err != nil || status.Entries != 2 || status.Policy.Mode != "stop" {
+				t.Fatal(status, err)
+			}
+		})
+	}
+}
+
+func TestHistoryPreviewRejectsOversizedEditedBlob(t *testing.T) {
+	ctx, path, h := retentionFixture(t)
+	retentionAdd(t, ctx, h, 0, "keep")
+	if _, err := h.db.ExecContext(ctx, "UPDATE http_history SET body=zeroblob(?)", maxBody+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreviewHTTPHistoryRetention(ctx, path, HTTPHistoryPolicy{Mode: "prune", MaxEntries: 1}); err == nil {
+		t.Fatal("oversized edited blob accepted")
+	}
+	status, err := HTTPHistoryStorageStatus(ctx, path)
+	if err != nil || status.Entries != 1 || status.Policy.Mode != "stop" {
+		t.Fatal(status, err)
+	}
+}
+
+func TestHistoryAutomaticPlanMatchesBoundPreview(t *testing.T) {
+	ctx, _, h := retentionFixture(t)
+	retentionAdd(t, ctx, h, 90*24*time.Hour, "old")
+	retentionAdd(t, ctx, h, 0, "new")
+	retentionAdd(t, ctx, h, 0, "newest")
+	policy := HTTPHistoryPolicy{Mode: "prune", MaxAgeDays: 30, MaxEntries: 1, MaxBytes: 200}
+	at := time.Now().UTC()
+	bound, err := retentionPlan(ctx, h.db, policy, at, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	light, err := retentionPlan(ctx, h.db, policy, at, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.Token == "" || light.Token != "" {
+		t.Fatal("only full previews may carry an approval token")
+	}
+	bound.Token = ""
+	if !reflect.DeepEqual(bound, light) {
+		t.Fatal("automatic plan differs from preview", bound, light)
+	}
+}
+
+func TestHistoryPruneRejectsNullToEmptyTransformation(t *testing.T) {
+	ctx, path, h := retentionFixture(t)
+	retentionAdd(t, ctx, h, 0, "old")
+	retentionAdd(t, ctx, h, 0, "keep")
+	if _, err := h.db.ExecContext(ctx, "UPDATE http_history SET transformed=NULL WHERE id=1"); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PreviewHTTPHistoryRetention(ctx, path, HTTPHistoryPolicy{Mode: "prune", MaxEntries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.db.ExecContext(ctx, "UPDATE http_history SET transformed=X'' WHERE id=1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApplyHTTPHistoryRetention(ctx, path, preview, true); err == nil {
+		t.Fatal("NULL to empty BLOB change passed stale consent")
 	}
 }

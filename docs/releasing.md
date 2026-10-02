@@ -1,15 +1,15 @@
-# v0.3.1 发布流程与验证边界
+# v0.3.2 发布流程与验证边界
 
-版本来自 `mobile/pubspec.yaml` 的 `0.3.1+4`。此流程只接受 `v0.3.1`，不推断后续版本的发布资格。
+版本来自 `mobile/pubspec.yaml` 的 `0.3.2+5`。此流程只接受 `v0.3.2`，不推断后续版本的发布资格。
 
 ## 流程
 
-1. PR 的最终候选先通过 Android、TUI、HTTP 历史/Windows 图标、完整八项 Flutter 平台验收。然后在既有 **Verified multi-platform release** 中选择候选分支，保持 publish=false，手动执行完整 dry run；不创建 tag/release。PR 同时运行发布门禁单元测试。
+1. PR 的最终候选先通过 快速安全检查、Android、TUI、HTTP 历史/Windows 图标、完整八项 Flutter 平台验收。然后在既有 **Verified multi-platform release** 中选择候选分支，保持 publish=false，手动执行完整 dry run；不创建 tag/release。PR 同时运行发布门禁单元测试。
 2. 正常审阅、CI 通过并合并到 `main` 后，在 **Verified multi-platform release** 手动运行中选择 `main`、勾选 `publish`。默认不勾选，只构建。
 3. 所有任务检出同一完整提交 SHA，重新编译。任何失败、缺包、重复包、错 SHA、错架构、哈希不符或未审阅的源码变化都阻止汇总和发布。
-4. 发布器再次确认该提交已进入 main、普通 main TUI CI 成功且没有该 SHA 的失败检查，再创建/核对 `v0.3.1` tag。已存在且指向其他提交的 tag、已存在的 release 均拒绝覆盖。
+4. 发布器再次确认该提交已进入 main、普通 main TUI CI 成功且没有该 SHA 的失败检查，再创建/核对 `v0.3.2` tag。已存在且指向其他提交的 tag、已存在的 release 均拒绝覆盖。
 5. 先创建 draft，上传全部文件，逐个重新下载并核对大小/SHA256，再次确认 tag 和 CI，才转为公开 release。上传失败只留下 draft；不自动删除、替换或盲目重试。维护者应先检查失败状态再决定恢复方式。
-6. 也支持由已存在的 `v0.3.1` tag push 启动，同样要求已合并 main。工作流自己的 token 创建 tag 不需要再次触发构建：已验证的全部包恰好来自此 tag 的提交。
+6. 也支持由已存在的 `v0.3.2` tag push 启动，同样要求已合并 main。工作流自己的 token 创建 tag 不需要再次触发构建：已验证的全部包恰好来自此 tag 的提交。
 
 发布任务才有 `contents: write`；其他任务只有只读权限。构建产物按目标隔离，不平铺多个 `manifest.json`。上传的 `release-evidence-*` 诊断不作为用户安装包。
 
@@ -20,7 +20,7 @@
 - 5 离线 Web 本机网关 ZIP：上述五种主机，包含 Flutter Web 与 Go 网关
 - Android ARM64 单架构 APK、ARM64/x86_64 双架构 universal APK；保留历史构建命令、正常 `lib/main.dart` 入口和 AOT。无测试入口 APK、instrumentation APK 或 transport 分片
 - iOS arm64 未签名 device Release ZIP、arm64 Debug simulator developer ZIP；后者包含测试通道，只声明编译和静态检查
-- `manifest.json`、`SHA256SUMS`、中文 `RELEASE_NOTES.zh-CN.md`
+- `manifest.json`、`SHA256SUMS`、中文 `RELEASE_NOTES.zh-CN.md`、`source-sbom.cdx.json`、`build-provenance.json`
 
 Android 使用原有 Gradle debug/test 签名方式，不创建正式发行者密钥。证书 SHA256 写入 manifest；签名可能跨构建不同，不能保证覆盖旧 APK。需要卸载时先自行备份数据，不自动卸载。项目、USB、Go 和 Flutter 许可证嵌入 APK，门禁检查其存在和 Go 许可证哈希。
 
@@ -28,9 +28,9 @@ macOS 没有 Developer ID 公证，桌面 app 保持原有 sandbox/ad-hoc 签名
 
 ## 本次候选验收和发布源码
 
-preflight 读取候选 SHA 的最新运行，要求 Android、TUI、HTTP 历史/图标和完整八项 Flutter 平台工作流全部成功。必须的 job/步骤不能跳过，Windows 要检查实际 EXE 四种尺寸图标，iOS 必须完成原有五项 XCTest 和 1200 秒总限。不能用旧成功运行遮盖同 SHA 的新失败或 pending 运行。
+preflight 读取候选 SHA 的最新运行，要求 快速安全检查、Android、TUI、HTTP 历史/图标和完整八项 Flutter 平台工作流全部成功。必须的 job/步骤不能跳过，Windows 要检查实际 EXE 四种尺寸图标，iOS 必须完成原有五项 XCTest 和 1200 秒总限。不能用旧成功运行遮盖同 SHA 的新失败或 pending 运行。
 
-正式合并提交可以引用直接父提交的验收，但只在应用、版本、锁文件、原生桥接、编译配置、测试、平台工作流和其他构建输入 Git blob/mode 完全一致时允许。v0.3.1 不排除任何文件，要求完整 Git 树完全一致，包括发布脚本和测试 harness。源码摘要、前后 Git tree SHA 和空排除清单写入 manifest。发现当前 SHA 已有必需运行失败或 pending，就停止，不退回父提交的旧绿结果。
+正式合并提交可以引用直接父提交的验收，但只在应用、版本、锁文件、原生桥接、编译配置、测试、平台工作流和其他构建输入 Git blob/mode 完全一致时允许。v0.3.2 不排除任何文件，要求完整 Git 树完全一致，包括发布脚本和测试 harness。源码摘要、前后 Git tree SHA 和空排除清单写入 manifest。发现当前 SHA 已有必需运行失败或 pending，就停止，不退回父提交的旧绿结果。
 
 v0.3.0 的 8db/5c66/fb719 运行不作为此版本的新代码验收。验收记录保留真实 SHA 和 run 链接；正式 19 包由最终 main/tag SHA 重建，不把父提交测试二进制改名交付。发布器在上传前验证记录及最终 SHA 检查；下载核对完整 22 资产后，公开前再次验证父提交验收、tag 和最终 SHA 检查。父验收在上传期间变红或 pending 时保留 draft，不公开 release。
 
