@@ -241,6 +241,18 @@ class PackageTests(unittest.TestCase):
     def test_macos_non_system_dep_rejected(self):
         with self.assertRaisesRegex(RuntimeError,'non-system'):
             check_macos_dependencies('arm64','x\n @rpath/libcustom.dylib (x)','arm64')
+    def test_apksigner_legacy_and_scheme_labels(self):
+        from android_report import signing_fingerprint
+        prefix='Verifies\nNumber of signers: 1\nV2 Signer: certificate DN: C=US, O=Android, CN=Android Debug\n'
+        for label in ['Signer #1','V2 Signer:','V3.1 Signer:']:
+            self.assertEqual(signing_fingerprint(prefix+label+' certificate SHA-256 digest: '+SHA+'a'*24+'\n'),SHA+'a'*24)
+        with self.assertRaisesRegex(RuntimeError,'exactly one'):
+            signing_fingerprint(prefix.replace('signers: 1','signers: 2'))
+        with self.assertRaisesRegex(RuntimeError,'inconsistent'):
+            signing_fingerprint(prefix+'V2 Signer: certificate SHA-256 digest: '+'a'*64+'\nV3 Signer: certificate SHA-256 digest: '+'b'*64+'\n')
+        with self.assertRaisesRegex(RuntimeError,'Missing'):
+            signing_fingerprint(prefix+'V2 Signer: public key SHA-256 digest: '+'a'*64+'\n')
+
     def test_android_missing_licenses_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/'test.apk'
