@@ -1,0 +1,92 @@
+name: HTTP history regression
+on:
+  pull_request:
+    paths: ['mobile/**', 'internal/webhost/**', '.github/workflows/history-regression.yml']
+permissions:
+  contents: read
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  history:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux
+          - os: windows-2022
+            target: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Linux desktop prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libblkid-dev xvfb fonts-noto-cjk
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          update: false
+      - name: Windows compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          'C:\msys64\mingw64\bin' | Out-File -FilePath $env:GITHUB_PATH -Append
+          'CC=gcc' | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Install pinned official Flutter
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Icon resource parser tests
+        run: python3 scripts/flutter-platforms/test_windows_icons.py
+      - name: Real backend and native bridge
+        run: |
+          go test -race -count=1 -timeout 5m ./internal/engine ./internal/mobileapi ./internal/webhost
+          bash scripts/flutter-platforms/build-native.sh '${{ matrix.target }}' amd64
+      - name: Native ABI verification
+        run: |
+          python3 cmd/iotools-native/testdata/check_abi.py "$IOTOOLS_NATIVE_LIBRARY"
+          python3 cmd/iotools-native/testdata/check_history.py
+      - name: Flutter static and widget contracts
+        run: |
+          cd mobile
+          flutter pub get --enforce-lockfile
+          flutter analyze
+          flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
+      - name: Generate and verify platform icon alpha
+        run: cd mobile && flutter test test/platform/icon_assets_test.dart --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
+      - name: Application fonts
+        run: python3 scripts/flutter-platforms/prepare-native-fonts.py
+      - name: Real desktop HTTP history UI
+        run: |
+          cd mobile
+          if test '${{ matrix.target }}' = linux; then
+            xvfb-run -a flutter test integration_test/history_refresh_test.dart -d linux --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+          else
+            flutter test integration_test/history_refresh_test.dart -d windows --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+          fi
+      - name: Verify embedded Windows icon transparency
+        if: runner.os == 'Windows'
+        run: python3 scripts/flutter-platforms/verify-windows-icons.py mobile/build/windows/x64/runner/Debug/iotools.exe --expected-ico mobile/windows/runner/resources/app_icon.ico --extract-dir platform-evidence/windows-icons --report platform-evidence/windows-icon-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: history-${{ matrix.target }}-${{ env.IOTOOLS_SHA }}
+          path: |
+            mobile/build/flutter-evidence/
+            platform-evidence/
+          if-no-files-found: warn

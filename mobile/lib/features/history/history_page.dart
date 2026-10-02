@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/json.dart';
 import '../../core/session.dart';
@@ -21,31 +22,100 @@ class _HistoryPageState extends State<HistoryPage> {
   bool loading = true;
   bool databaseExists = false;
   String? error;
+  StreamSubscription<JsonMap>? _events;
+  late String _collection;
+  bool _fetching = false;
+  bool _reloadRequested = false;
+
   @override
   void initState() {
     super.initState();
+    _attach();
     load();
   }
 
+  void _attach() {
+    _collection = widget.session.currentCollection;
+    widget.session.addListener(_sessionChanged);
+    _events = widget.session.eventStream.listen((event) {
+      // A terminal event is emitted after the workflow commits history.
+      // Streaming response updates must not repeatedly query SQLite.
+      if (event['kind'] == 'done') load();
+    });
+  }
+
+  void _sessionChanged() {
+    final collection = widget.session.currentCollection;
+    if (collection == _collection) return;
+    _collection = collection;
+    setState(() {
+      entries = [];
+      loading = true;
+      error = null;
+    });
+    load();
+  }
+
+  @override
+  void didUpdateWidget(covariant HistoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session == widget.session) return;
+    oldWidget.session.removeListener(_sessionChanged);
+    _events?.cancel();
+    _attach();
+    entries = [];
+    loading = true;
+    load();
+  }
+
+  @override
+  void dispose() {
+    widget.session.removeListener(_sessionChanged);
+    _events?.cancel();
+    super.dispose();
+  }
+
   Future<void> load() async {
+    _reloadRequested = true;
+    if (_fetching) return;
+    _fetching = true;
     try {
-      final status = mapOf(
-        await widget.session.command({'op': 'history.status'}),
-      );
-      final r = rowsOf(await widget.session.command({'op': 'history.list'}));
-      if (mounted)
-        setState(() {
-          entries = r;
-          databaseExists = status['exists'] == true;
-          loading = false;
-          error = null;
-        });
-    } catch (e) {
-      if (mounted)
-        setState(() {
-          error = '$e';
-          loading = false;
-        });
+      while (mounted && _reloadRequested) {
+        _reloadRequested = false;
+        final session = widget.session;
+        final collection = session.currentCollection;
+        try {
+          final status = mapOf(await session.command({'op': 'history.status'}));
+          final rows = rowsOf(await session.command({'op': 'history.list'}));
+          if (!mounted) return;
+          if (session != widget.session ||
+              collection != session.currentCollection ||
+              _reloadRequested) {
+            _reloadRequested = true;
+            continue;
+          }
+          setState(() {
+            entries = rows;
+            databaseExists = status['exists'] == true;
+            loading = false;
+            error = null;
+          });
+        } catch (e) {
+          if (!mounted) return;
+          if (session != widget.session ||
+              collection != session.currentCollection ||
+              _reloadRequested) {
+            _reloadRequested = true;
+            continue;
+          }
+          setState(() {
+            error = '$e';
+            loading = false;
+          });
+        }
+      }
+    } finally {
+      _fetching = false;
     }
   }
 
@@ -60,6 +130,13 @@ class _HistoryPageState extends State<HistoryPage> {
             child: Padding(
               padding: EdgeInsets.all(16),
               child: Text('HTTP 历史当前关闭。可在设置中明确开启；查看历史不会创建数据库。'),
+            ),
+          ),
+        if (widget.session.readOnly && widget.session.history)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('只读保护已开启：HTTP 响应不会写入历史，已有记录仍可查看。'),
             ),
           ),
         ActionWrap(
@@ -97,7 +174,12 @@ class _HistoryPageState extends State<HistoryPage> {
         if (error != null)
           Text(error!, style: const TextStyle(color: Colors.redAccent)),
         if (!loading && entries.isEmpty)
-          const EmptyState('暂无执行历史', '运行 HTTP 请求且明确开启历史后，记录会出现在这里'),
+          EmptyState(
+            '暂无执行历史',
+            widget.session.history
+                ? '当前集合尚无已保存的 HTTP 响应；请求设置 persist: false 时不会记录'
+                : 'HTTP 历史已关闭，开启后重新执行请求才会记录',
+          ),
         ...entries
             .where(
               (e) => e.toString().toLowerCase().contains(filter.toLowerCase()),

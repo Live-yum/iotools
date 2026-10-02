@@ -149,7 +149,7 @@ class AppSession extends ChangeNotifier {
       // from this selected file. Explicit paths require an existing file.
       final next = await engine.open(
         readOnly: preferences['readOnly'] == true,
-        history: preferences['history'] == true,
+        history: !preferences.containsKey('history') || preferences['history'] == true,
         path:
             !remember &&
                 (path == null || path.isEmpty || path == 'iotools.yaml')

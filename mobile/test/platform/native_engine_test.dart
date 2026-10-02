@@ -25,6 +25,11 @@ void main() {
         await engine.close();
       await root.delete(recursive: true);
     });
+    test('history defaults on while explicit off remains authoritative', () async {
+      expect(mapOf((await engine.open())['options'])['history'], true);
+      await engine.close();
+      expect(mapOf((await engine.open(history: false))['options'])['history'], false);
+    });
     test('trusted host root aliases are canonicalized before Go opens the session', () async {
       if (Platform.isWindows) return;
       final aliases = await Directory.systemTemp.createTemp('iotools-root-alias-');

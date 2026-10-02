@@ -1040,7 +1040,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           SwitchListTile(
             key: const ValueKey('history_opt_in'),
             title: const Text('记录 HTTP 历史'),
-            subtitle: const Text('开启后将响应和请求元数据写入应用私有数据库'),
+            subtitle: const Text('默认开启：响应和请求元数据保存在本机，可能包含敏感信息；可随时关闭'),
             value: s.history,
             onChanged: s.running
                 ? null

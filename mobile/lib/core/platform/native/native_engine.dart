@@ -101,7 +101,7 @@ class NativeFfiEngine implements Engine {
   @override
   Future<JsonMap> open({
     bool readOnly = false,
-    bool history = false,
+    bool history = true,
     String? path,
   }) => _ordered(() async {
     if (_handle != 0) {

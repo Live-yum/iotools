@@ -107,7 +107,7 @@ func (s *Server) settings() (map[string]any, error) {
 	} else if !os.IsNotExist(e) {
 		return nil, e
 	}
-	out := map[string]any{"root": "", "platform": "web", "version": s.version, "sha": s.version, "theme": "dark", "readOnly": false, "history": false, "collection": "iotools.yaml", "usb": false, "capabilities": capabilities()}
+	out := map[string]any{"root": "", "platform": "web", "version": s.version, "sha": s.version, "theme": "dark", "readOnly": false, "history": true, "collection": "iotools.yaml", "usb": false, "capabilities": capabilities()}
 	for _, k := range []string{"theme", "readOnly", "history", "collection"} {
 		if value, ok := v[k]; ok {
 			out[k] = value

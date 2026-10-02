@@ -68,6 +68,31 @@ func (c *testClient) waitDone() map[string]any {
 	c.t.Fatalf("no done event: %v", events)
 	return nil
 }
+func TestGatewayHistoryDefaultPreservesExplicitOff(t *testing.T) {
+	c := fixture(t)
+	settings := func() map[string]any {
+		return c.ok("/api/platform", map[string]any{"method": "settings.get"})["data"].(map[string]any)
+	}
+	if settings()["history"] != true {
+		t.Fatal("new workspace must default history on")
+	}
+	if err := os.WriteFile(filepath.Join(c.s.root, ".iotools-settings.json"), []byte(`{"theme":"dark"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if settings()["history"] != true {
+		t.Fatal("older settings without history must use the new default")
+	}
+	c.ok("/api/platform", map[string]any{"method": "settings.save", "args": map[string]any{"history": false}})
+	c.ok("/api/platform", map[string]any{"method": "settings.save", "args": map[string]any{"theme": "light"}})
+	if settings()["history"] != false {
+		t.Fatal("saved history off must survive unrelated setting changes")
+	}
+	c.ok("/api/platform", map[string]any{"method": "settings.save", "args": map[string]any{"history": true}})
+	if settings()["history"] != true {
+		t.Fatal("explicit enable must persist")
+	}
+}
+
 func TestGatewaySettingsOptionsAndReadOnly(t *testing.T) {
 	c := fixture(t)
 	for _, args := range []map[string]any{{"theme": "light", "history": true}, {"readOnly": true, "collection": "iotools.yaml"}} {

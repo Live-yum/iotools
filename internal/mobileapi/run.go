@@ -118,6 +118,7 @@ func (s *Session) run(c command) (any, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.runID, s.runDone = cancel, runID, done
+	historyReadOnly := p.Request.Protocol == "http" && s.options.History && s.options.ReadOnly && p.Request.Params["persist"] != false
 	controller := engine.NewModbusPauseController()
 	if p.Request.Protocol == "modbus" && !p.Request.Mutates() {
 		s.modbusPause = controller
@@ -190,6 +191,9 @@ func (s *Session) run(c command) (any, error) {
 			return
 		}
 		runErr = engine.RunCollection(ctx, p.Collection, p.Request, p.Profile, c.Confirmed, func(ev engine.Event) { s.emit(runID, ev.Kind, normalizeEvent(ev.Data)) })
+		if historyReadOnly {
+			s.emit(runID, "history_status", map[string]any{"recorded": false, "reason": "read_only", "message": "只读保护，本次未记录"})
+		}
 	}()
 	return map[string]any{"run_id": runID}, nil
 }
@@ -199,7 +203,9 @@ func (s *Session) workflowOptions(runID string, interactive bool) engine.HTTPWor
 		ValidateFilePath: s.privatePath,
 		ValidateRequest:  func(r config.Request) error { return s.prepareRequest(&r) },
 	}
-	if s.options.History {
+	// Read-only protection covers automatic history writes as well as commands.
+	// Keep the preference intact so disabling read-only resumes future recording.
+	if s.options.History && !s.options.ReadOnly {
 		options.HistoryPath = filepath.Join(s.root, "history.sqlite")
 	}
 	if !interactive {

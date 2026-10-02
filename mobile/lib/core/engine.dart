@@ -5,7 +5,7 @@ import 'json.dart';
 abstract interface class Engine {
   Future<JsonMap> open({
     bool readOnly = false,
-    bool history = false,
+    bool history = true,
     String? path,
   });
   Future<Object?> command(JsonMap command);
@@ -48,7 +48,7 @@ class MethodChannelEngine implements Engine {
   @override
   Future<JsonMap> open({
     bool readOnly = false,
-    bool history = false,
+    bool history = true,
     String? path,
   }) => _ordered(
     () async => mapOf(

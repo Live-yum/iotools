@@ -57,7 +57,7 @@ class NativePlatformServices implements PlatformServices {
       ),
       'theme': saved['theme'] ?? 'dark',
       'readOnly': saved['readOnly'] == true,
-      'history': saved['history'] == true,
+      'history': !saved.containsKey('history') || saved['history'] == true,
       'collection': saved['collection'] ?? 'iotools.yaml',
       'usb': false,
       'capabilities': {
