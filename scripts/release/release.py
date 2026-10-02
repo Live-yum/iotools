@@ -1,0 +1,516 @@
+#!/usr/bin/env python3
+"""Fail-closed source, asset and draft-publication gates for the v0.3.0 release.
+
+No runtime acceptance is manufactured for the release SHA. Historical results
+retain their original SHAs; only the explicitly inventoried source inputs match.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+import zipfile
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY = 'Live-yum/iotools'
+VERSION = 'v0.3.0'
+FLUTTER_REVISION = 'adc901062556672b4138e18a4dc62a4be8f4b3c2'
+PLATFORMS = ('linux-amd64', 'linux-arm64', 'windows-amd64', 'macos-amd64', 'macos-arm64')
+EXPECTED = {f'{kind}-{platform}': '.zip' for kind in ('tui', 'flutter', 'web') for platform in PLATFORMS}
+EXPECTED.update({'android-arm64-v8a-aot-test-signed': '.apk', 'android-universal-arm64-x86_64-aot-test-signed': '.apk',
+                 'ios-device-arm64-unsigned': '.zip', 'ios-simulator-arm64-debug-developer': '.zip'})
+# All other tracked files, including native bridges, locks, compiler configuration,
+# test fixtures and build/package/font scripts, must have identical Git blobs/modes.
+EXCLUDED_FILES = {
+    # Historical permission/harness-only deltas (never executed by this workflow).
+    '.github/workflows/android-kvm-once-20261002.yml',
+    'scripts/ci_trials/kvm_once_20261002.py', 'scripts/ci_trials/test_kvm_once_20261002.py',
+    '.github/workflows/ios-launch-diagnostic.yml',
+    'scripts/flutter-platforms/verify-ios.py', 'scripts/flutter-platforms/test_ios_host_tests.py',
+    # Reviewed release orchestration/verifier additions, not application sources.
+    '.github/workflows/release.yml', '.github/workflows/release-validation.yml', 'docs/releasing.md',
+    'scripts/release/release.py', 'scripts/release/build_tui.py', 'scripts/release/build_android.sh',
+    'scripts/release/android_report.py', 'scripts/release/test_release.py',
+}
+HISTORY = [
+    {'name': 'android', 'sha': '5c66d28c18575bedd16b21c28d030e0d61437129', 'run_id': 36973280392,
+     'workflow': '.github/workflows/android-kvm-once-20261002.yml', 'jobs': ['apk'], 'whole_run_success': True,
+     'steps': ['Real emulator UI, protocol, editing and lifecycle tests',
+               'Restore and verify the original KVM ACL even if testing fails']},
+    {'name': 'ios', 'sha': 'fb719cc73760e6bcba9216d7a56dd1de886e578d', 'run_id': 36977115253,
+     'workflow': '.github/workflows/ios-launch-diagnostic.yml', 'jobs': ['ios'], 'whole_run_success': True,
+     'steps': ['Required real iOS host XCTest acceptance']},
+    {'name': 'tui', 'sha': '8db14221104175fd265b4d08f51b905f0bc999a0', 'run_id': 36955539788,
+     'workflow': '.github/workflows/ci.yml', 'whole_run_success': True,
+     'jobs': ['Native ubuntu-24.04', 'Native ubuntu-24.04-arm', 'Native windows-latest'],
+     'steps': ['Native unit, TUI and real loopback protocol tests', 'Binary smoke test']},
+    {'name': 'desktop-web-device', 'sha': '8db14221104175fd265b4d08f51b905f0bc999a0', 'run_id': 36955539838,
+     'workflow': '.github/workflows/flutter-platforms.yml', 'whole_run_success': False,
+     'jobs': ['native (windows-2022, windows, amd64)', 'native (macos-15, macos, arm64)',
+              'native (macos-15-intel, macos, amd64)', 'native (ubuntu-22.04, linux, amd64, linux-x64)',
+              'native (ubuntu-22.04-arm, linux, arm64, linux-arm64)', 'web-contract', 'ios-device'],
+     'steps': [], 'excluded_failed_job': 'ios (failure; replaced only by separate historical iOS run above)'},
+]
+
+
+def require(value, message):
+    if not value:
+        raise RuntimeError(message)
+
+
+def git(*args, root=ROOT):
+    return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for block in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(block)
+    return h.hexdigest()
+
+
+def write_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+
+def is_input(path):
+    return path not in EXCLUDED_FILES
+
+
+def inventory(revision, root=ROOT):
+    raw = subprocess.check_output(['git', '-C', str(root), 'ls-tree', '-r', '-z', revision])
+    entries = {}
+    for entry in raw.split(b'\0'):
+        if not entry:
+            continue
+        meta, path = entry.split(b'\t', 1)
+        mode, kind, sha = meta.decode().split()
+        path = path.decode('utf-8')
+        require(kind == 'blob', f'Unreviewed non-blob input: {path}')
+        entries[path] = {'mode': mode, 'git_blob': sha}
+    return entries
+
+
+def inputs_digest(tree):
+    inputs = {path: row for path, row in tree.items() if is_input(path)}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def compare_sources(candidate, baseline, root=ROOT):
+    before, after = inventory(baseline, root), inventory(candidate, root)
+    changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
+    unsafe = [p for p in changed if is_input(p)]
+    require(not unsafe, f'Historical runtime source/build inputs differ from {baseline}: {unsafe}')
+    require(inputs_digest(before) == inputs_digest(after), 'Source input digest mismatch')
+    return {'baseline_sha': baseline, 'candidate_sha': candidate, 'identical_input_sha256': inputs_digest(after),
+            'excluded_differences': {p: {'before': before.get(p), 'after': after.get(p)} for p in changed},
+            'claim': 'same application/build-input Git blobs, not same commit or same binary'}
+
+
+def identity(sha, version=VERSION, root=ROOT):
+    require(re.fullmatch('[0-9a-f]{40}', sha), 'Expected full source commit SHA')
+    require(version == VERSION, 'Only the reviewed v0.3.0 release is supported')
+    require(git('rev-parse', 'HEAD', root=root) == sha, 'Checkout is not the declared source SHA')
+    require(re.search(r'(?m)^version: 0\.3\.0\+3\s*$', (root / 'mobile/pubspec.yaml').read_text()),
+            'Tag and Flutter application version disagree')
+    return {'source_sha': sha, 'tag': version, 'source_inputs_sha256': inputs_digest(inventory(sha, root))}
+
+
+def check_worktree(root=ROOT):
+    # Flutter generated this exact Xcode project in the successful pinned iOS run.
+    # An unknown mutation still fails; always preserve its bytes/diff for review.
+    path = 'mobile/ios/Runner.xcodeproj/project.pbxproj'
+    known_original = 'cfb367aba9a5ceff94dfe887876d6e604a03abdd6bd22901c213f1a838e01f82'
+    known_generated = '862de2fe98f0301cce127e87514c6412bf01a9fbc83937676f67942b71428b4b'
+    changed = git('diff', '--name-only', 'HEAD', root=root).splitlines()
+    evidence = {}
+    for name in changed:
+        raw = subprocess.check_output(['git', '-C', str(root), 'show', 'HEAD:' + name])
+        original = hashlib.sha256(raw).hexdigest()
+        generated = digest(root / name)
+        if name == path:
+            out = root / 'platform-evidence/release-generated'
+            out.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / name, out / 'project.pbxproj')
+            diff = git('diff', 'HEAD', '--', name, root=root)
+            (out / 'project.diff').write_text(diff)
+            evidence[name] = {'original_sha256': original, 'generated_sha256': generated,
+                              'diff': diff, 'scope': 'Exact generated bytes measured in historical iOS runtime evidence'}
+            write_json(out / 'mutation.json', evidence)
+        require(name == path and original == known_original and generated == known_generated,
+                f'Unreviewed tracked build mutation: {name} ({original} -> {generated})')
+    return evidence
+
+
+class SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require(urllib.parse.urlsplit(newurl).scheme == 'https', 'Insecure asset redirect')
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
+            redirected.remove_header('Authorization')
+        return redirected
+
+
+class GitHub:
+    def __init__(self, token=None):
+        self.token = token or os.environ['GH_TOKEN']
+
+    def request(self, path, method='GET', data=None, raw=False):
+        url = path if path.startswith('https://') else 'https://api.github.com/repos/' + REPOSITORY + path
+        require(url.startswith(('https://api.github.com/repos/' + REPOSITORY + '/',
+                                'https://uploads.github.com/repos/' + REPOSITORY + '/')), 'Unexpected GitHub API destination')
+        headers = {'Authorization': 'Bearer ' + self.token, 'X-GitHub-Api-Version': '2022-11-28',
+                   'Accept': 'application/octet-stream' if raw else 'application/vnd.github+json',
+                   'User-Agent': 'iotools-release-gate'}
+        if isinstance(data, Path):
+            headers['Content-Type'] = 'application/octet-stream'
+            body = data.read_bytes()
+        elif data is not None:
+            headers['Content-Type'] = 'application/json'
+            body = json.dumps(data).encode()
+        else:
+            body = None
+        # Never automatically retry mutation requests with uncertain outcomes.
+        with urllib.request.build_opener(SafeRedirect()).open(urllib.request.Request(url, body, headers, method=method), timeout=180) as response:
+            content = response.read()
+        return content if raw else json.loads(content)
+
+    def optional(self, path):
+        try:
+            return self.request(path)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
+
+    def jobs(self, run_id):
+        rows, page = [], 1
+        while True:
+            batch = self.request(f'/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page={page}')['jobs']
+            rows.extend(batch)
+            if len(batch) < 100:
+                return rows
+            page += 1
+
+
+def verify_historical(api, spec):
+    run = api.request(f'/actions/runs/{spec["run_id"]}')
+    require(run['repository']['full_name'] == REPOSITORY and run['head_sha'] == spec['sha'], 'Historical run repository/SHA mismatch')
+    require(run['path'] == spec['workflow'], 'Historical workflow path mismatch')
+    require(run['status'] == 'completed', 'Historical workflow is not complete')
+    if spec['whole_run_success']:
+        require(run['conclusion'] == 'success', 'Historical workflow is not successful')
+    jobs = api.jobs(spec['run_id'])
+    selected = []
+    for name in spec['jobs']:
+        found = [job for job in jobs if job['name'] == name]
+        require(len(found) == 1 and found[0]['status'] == 'completed' and found[0]['conclusion'] == 'success', f'Historical job not successful: {name}')
+        job = found[0]
+        for step in spec['steps']:
+            matches = [row for row in job['steps'] if row['name'] == step]
+            require(len(matches) == 1 and matches[0]['conclusion'] == 'success', f'Historical gate missing/failed: {step}')
+        selected.append({'id': job['id'], 'name': name, 'conclusion': job['conclusion'], 'required_steps': spec['steps']})
+    return {**spec, 'url': run['html_url'], 'run_attempt': run['run_attempt'], 'run_conclusion': run['conclusion'], 'verified_jobs': selected,
+            'scope': 'historical runtime results only; no final-commit Android/iOS runtime rerun claimed'}
+
+
+def resolve_tag(api, version):
+    ref = api.optional('/git/ref/tags/' + version)
+    if ref is None:
+        return None
+    obj = ref['object']
+    seen = set()
+    while obj['type'] == 'tag':
+        require(obj['sha'] not in seen and len(seen) < 8, 'Invalid annotated tag chain')
+        seen.add(obj['sha'])
+        obj = api.request('/git/tags/' + obj['sha'])['object']
+    require(obj['type'] == 'commit', 'Release tag does not reference a commit')
+    return obj['sha']
+
+
+def publication_context(api, sha, event, ref, publish):
+    require(event in ('push', 'workflow_dispatch'), 'Unsupported release event')
+    if event == 'push':
+        if ref.startswith('refs/tags/'):
+            require(ref == 'refs/tags/' + VERSION and resolve_tag(api, VERSION) == sha, 'Tag event does not match exact source commit')
+        else:
+            require(ref == 'refs/heads/feat/unified-portable-tui' and not publish, 'Only the reviewed PR branch may trigger a dry build')
+    elif publish:
+        require(ref == 'refs/heads/main', 'Manual publishing is allowed only from main')
+    if publish:
+        # Never infer successful merge just from the workflow's branch label.
+        main = api.request('/git/ref/heads/main')['object']['sha']
+        comparison = api.request('/compare/' + sha + '...' + main)
+        require(comparison['status'] in ('identical', 'ahead'), 'Release source is not merged into main')
+        tag_sha = resolve_tag(api, VERSION)
+        require(tag_sha in (None, sha), 'Existing release tag targets a different SHA')
+        require(api.optional('/releases/tags/' + VERSION) is None, 'Release already exists; no overwrite or silent retry')
+
+
+def preflight(args):
+    result = identity(args.sha)
+    api = GitHub()
+    publication_context(api, args.sha, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], args.publish)
+    comparisons, historical = [], []
+    for spec in HISTORY:
+        try:
+            git('cat-file', '-e', spec['sha'] + '^{commit}')
+        except subprocess.CalledProcessError:
+            subprocess.run(['git', 'fetch', '--no-tags', 'origin', spec['sha']], cwd=ROOT, check=True)
+        comparisons.append(compare_sources(args.sha, spec['sha']))
+        historical.append(verify_historical(api, spec))
+    result.update(historical=historical, source_equivalence=comparisons,
+                  excluded_files=sorted(EXCLUDED_FILES),
+                  flutter_revision=FLUTTER_REVISION, run_id=os.environ['GITHUB_RUN_ID'],
+                  run_attempt=os.environ['GITHUB_RUN_ATTEMPT'], publish_requested=args.publish)
+    write_json(args.output, result)
+    print(json.dumps(result, ensure_ascii=False))
+
+
+def filename(key):
+    require(key in EXPECTED, 'Unexpected release asset type: ' + key)
+    return 'iotools-' + VERSION + '-' + key + EXPECTED[key]
+
+
+def validate_build_report(key, report, asset, sha):
+    require(report.get('source_sha') == sha, 'Package report source SHA mismatch')
+    require(report.get('sha256') == digest(asset) and report.get('bytes') == asset.stat().st_size, 'Package report hash/size mismatch')
+    if key.startswith('ios-device'):
+        require(report.get('kind') == 'device' and report.get('status') == 'passed_for_stated_scope', 'Device static gate failed')
+        require(report.get('architectures') == ['arm64'] and report.get('signature', '').startswith('unsigned;'), 'Device scope/signature mismatch')
+        require(report.get('production_isolation') and report.get('dependency_isolation'), 'Device production isolation missing')
+    elif key.startswith('ios-simulator'):
+        require(report.get('kind') == 'simulator-compiled' and report.get('status') == 'compiled_only_no_runtime_acceptance', 'Simulator artifact must retain compiled-only scope')
+        require(report.get('architectures') == ['arm64'], 'Simulator must be arm64 only')
+    elif key.startswith('android'):
+        require(report.get('normal_entry_aot') is True and report.get('test_code_absent') is True, 'Normal-entry AOT APK gates missing')
+        require(report.get('abis') == (['arm64-v8a'] if 'arm64-v8a' in key else ['arm64-v8a', 'x86_64']), 'Android ABI mismatch')
+        require(report.get('signing') == 'debug/test certificate; not production publisher identity', 'Android signing disclosure missing')
+    elif key.startswith('tui'):
+        require(report.get('standalone_runtime_verified') is True and report.get('smoke_passed') is True, 'TUI runtime/smoke gates missing')
+        require(report.get('platform') == key[len('tui-'):], 'TUI target mismatch')
+    elif key.startswith('flutter'):
+        require(report.get('platform') + '-' + report.get('runner_arch') == key[len('flutter-'):], 'Flutter target mismatch')
+        require(report.get('native_core_sha256'), 'Native core report missing')
+    elif key.startswith('web'):
+        require(report.get('platform') + '-' + report.get('arch') == key[len('web-'):], 'Web target mismatch')
+        require(report.get('binary_sha256'), 'Web gateway report missing')
+
+
+def embedded_revision(asset, key, sha):
+    """Inspect actual shipped Go binaries, not only filenames or JSON metadata."""
+    if key.startswith('android'):
+        abis = ['arm64-v8a'] if 'arm64-v8a' in key else ['arm64-v8a', 'x86_64']
+        names = [f'lib/{abi}/libiotools.so' for abi in abis]
+        platform = 'android'
+    else:
+        abis = None
+        platform = key.split('-')[1]
+        names = None
+    with zipfile.ZipFile(asset) as archive:
+        if names is None:
+            suffix = ('/Runner.app/Runner' if key.startswith('ios') else
+                      '/iotools.exe' if key.startswith('tui-windows') else
+                      '/iotools' if key.startswith('tui') else
+                      '/iotools-web.exe' if key.startswith('web-windows') else
+                      '/iotools-web' if key.startswith('web') else
+                      '/iotools_native.dll' if key.startswith('flutter-windows') else
+                      '/libiotools_native.dylib' if key.startswith('flutter-macos') else '/libiotools_native.so')
+            names = [n for n in archive.namelist() if ('/' + n).endswith(suffix) and not n.startswith('__MACOSX/')]
+            require(len(names) == 1, 'Package must contain exactly one expected Go binary')
+        result = []
+        for index, name in enumerate(names):
+            data = archive.read(name)
+            require(sha.encode() in data, 'Shipped Go binary is missing exact source revision: ' + name)
+            row = {'file': name, 'sha256': hashlib.sha256(data).hexdigest(), 'embedded_source_sha': sha}
+            if key.startswith('ios'):
+                row['build_info_scope'] = 'Linked iOS Runner contains the exact Go version stamp; c-archive has no standalone go-version report'
+            else:
+                with tempfile.TemporaryDirectory() as folder:
+                    file = Path(folder) / 'binary'
+                    file.write_bytes(data)
+                    info = subprocess.check_output(['go', 'version', '-m', str(file)], text=True)
+                expected_os = 'darwin' if platform == 'macos' else platform
+                expected_arch = ('arm64' if abis[index] == 'arm64-v8a' else 'amd64') if abis else key.rsplit('-', 1)[1]
+                require('main.version=' + sha in info and 'GOOS=' + expected_os in info
+                        and 'GOARCH=' + expected_arch in info, 'Shipped Go build identity/target differs')
+                row['go_build_info'] = info.replace(str(file), name)
+            result.append(row)
+    return result
+
+
+def stage(args):
+    record = identity(args.sha)
+    generated = check_worktree()
+    asset, report = Path(args.asset), json.loads(Path(args.report).read_text())
+    require(asset.is_file() and not asset.is_symlink(), 'Missing/unsafe package')
+    validate_build_report(args.key, report, asset, args.sha)
+    embedded = embedded_revision(asset, args.key, args.sha)
+    target = Path(args.output) / args.key
+    target.mkdir(parents=True, exist_ok=False)
+    destination = target / filename(args.key)
+    shutil.copyfile(asset, destination)
+    record.update(key=args.key, file=destination.name, sha256=digest(destination), bytes=destination.stat().st_size,
+                  build_report=report, embedded_binaries=embedded, generated_project=generated, run_id=os.environ['GITHUB_RUN_ID'], run_attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+                  runner_os=os.environ['RUNNER_OS'], runner_arch=os.environ['RUNNER_ARCH'])
+    write_json(target / 'receipt.json', record)
+
+
+def assemble(folder, output, proof, sha):
+    expected_identity = identity(sha)
+    require(proof['source_sha'] == sha and proof['tag'] == VERSION
+            and proof['source_inputs_sha256'] == expected_identity['source_inputs_sha256'], 'Preflight identity mismatch')
+    receipts, seen = [], set()
+    for receipt in sorted(Path(folder).rglob('receipt.json')):
+        require(not receipt.is_symlink(), 'Unsafe receipt')
+        record = json.loads(receipt.read_text())
+        key = record['key']
+        require(key in EXPECTED and key not in seen, 'Unexpected/duplicate asset key: ' + key)
+        require(record['file'] == filename(key), 'Unexpected/unsafe asset filename')
+        for field, value in expected_identity.items():
+            require(record.get(field) == value, 'Asset identity differs: ' + field)
+        for field in ('run_id', 'run_attempt'):
+            require(record.get(field) == proof[field], 'Asset belongs to a different workflow run/attempt')
+        asset = receipt.parent / record['file']
+        require(asset.is_file() and not asset.is_symlink(), 'Missing/unsafe asset')
+        require(set(p.name for p in receipt.parent.iterdir()) == {'receipt.json', asset.name}, 'Unexpected files in asset artifact')
+        require(digest(asset) == record['sha256'] and asset.stat().st_size == record['bytes'], 'Asset transfer checksum mismatch')
+        validate_build_report(key, record['build_report'], asset, sha)
+        require(record.get('embedded_binaries'), 'Missing shipped binary identity report')
+        require(embedded_revision(asset, key, sha) == record['embedded_binaries'], 'Shipped binary identity changed after staging')
+        seen.add(key)
+        receipts.append(record)
+    require(seen == set(EXPECTED), 'Missing release assets: ' + repr(sorted(set(EXPECTED) - seen)))
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=False)
+    for receipt in Path(folder).rglob('receipt.json'):
+        row = json.loads(receipt.read_text())
+        shutil.copyfile(receipt.parent / row['file'], output / row['file'])
+    manifest = {**proof, 'schema': 1, 'assets': receipts, 'runtime_verification':
+                'Exact source rebuilt; historical Android/iOS source-equivalent runtime results retain original commits. '
+                'Final commit is not claimed to have rerun the full runtime suite. See each package scope.'}
+    write_json(output / 'manifest.json', manifest)
+    notes = release_notes(manifest)
+    (output / 'RELEASE_NOTES.zh-CN.md').write_text(notes, encoding='utf-8')
+    sums = ''.join(f'{digest(p)}  {p.name}\n' for p in sorted(output.iterdir()))
+    (output / 'SHA256SUMS').write_text(sums)
+    return manifest
+
+
+def release_notes(manifest):
+    links = '\n'.join(f'- {item["name"]}: {item["url"]}，提交 {item["sha"]}' for item in manifest['historical'])
+    return f'''# iotools {VERSION}
+
+源码提交：{manifest['source_sha']}。19 个平台包均由此提交重新构建，未把旧 CI 包改名充当发布包。
+
+## 选择与启动
+- TUI：Windows x64、Linux x64/ARM64、macOS Intel/Apple Silicon。完整解压后运行 iotools（Windows 为 iotools.exe）；首次可加 --init。macOS 二进制未做 Developer ID 公证。
+- Flutter 桌面：同上五种目标。完整解压并保留 DLL/lib/data，运行 iotools 或 iotools.app。Linux 需要图形会话、GTK 3，基于 Ubuntu 22.04；macOS 13+，仅 ad-hoc 签名、未公证；Windows 无 Authenticode 发行者签名。
+- Web：同上五种主机包。运行 iotools-web，浏览器打开终端打印的 127.0.0.1 地址；包含离线界面与本机 Go 网关，单独上传静态网页不提供完整协议功能。
+- Android：Android 8/API 26+ 的 ARM64 单架构包和 ARM64/x86_64 双架构通用包，正常入口 Release/AOT，无 instrumentation/integration_test 测试代码。仍用项目原有 debug/test 证书签名，文件名明确标注 test-signed；不是正式发行签名，不能承诺跨构建原地升级，不要作为生产可信签名分发。实际证书 SHA256 见 manifest.json；若签名不同，卸载会删除应用数据，请先自行备份，不要自动卸载。未附测试入口 APK。
+- iOS device：arm64 未签名 Release Runner.app ZIP，需自行合法签名；不是可直接安装的 IPA，未做签名真机验收。
+- iOS simulator：仅 arm64 Debug 开发包，包含 integration_test 测试通道；不是生产应用。需相应架构 macOS/Xcode。此次包仅编译和静态检查。
+
+## 校验与边界
+下载 SHA256SUMS、manifest.json 和所需包。Linux 可运行 sha256sum -c SHA256SUMS（只下载部分包时只核对对应行）；macOS 用 shasum -a 256；Windows 用 Get-FileHash -Algorithm SHA256。清单记录完整源码 SHA、各包哈希、构建运行和静态检查范围。SHA256 用于完整性核对，不替代发行者签名。
+本次重新编译、包完整性/依赖/签名状态检查和轻量 smoke 通过后才发布。历史运行时依据与本次应用、锁文件、桥接和提交的编译配置输入相同；提交 SHA 和二进制并不相同。Android 保留历史双架构通用包和单 ARM64 包的编译选项，仍然不是历史运行中测试过的同一二进制。Flutter SDK 与声明的 Go/NDK/Gradle/Xcode 版本受检；托管 runner、Java 补丁和系统 SDK 可能更新，不声称整个编译环境逐字节相同。未声称最终提交重跑完整 Android UI/协议验收或 iOS XCTest；未扩大 KVM 权限。
+{links}
+iOS 历史 XCTest 只覆盖普通启动、真实 Go ABI/生命周期、导出边界及系统选择器展示；文件保存/重新导入、全协议界面及签名 iPhone 仍待独立验收。物理串口和真实工业设备也不在此发布保证范围内。
+系统若阻止未签名/未公证应用，请使用自己的受信签名构建；不要绕过系统安全警告。完整包内附相应许可证。
+'''
+
+
+def verify_final_ci(api, sha):
+    runs = api.request('/actions/workflows/ci.yml/runs?head_sha=' + sha + '&per_page=100')['workflow_runs']
+    runs = [run for run in runs if run['head_sha'] == sha and run['head_branch'] == 'main' and run['event'] == 'push']
+    require(runs, 'No ordinary main-branch TUI acceptance run exists for release SHA')
+    latest = max(runs, key=lambda run: run['id'])
+    require(latest['status'] == 'completed' and latest['conclusion'] == 'success', 'Final-SHA main CI is pending or failed; do not publish')
+    checks = api.request('/commits/' + sha + '/check-runs?per_page=100')['check_runs']
+    require(len(checks) < 100, 'Unexpected check count; paginate/review before publication')
+    failures = [row['name'] for row in checks if row['status'] == 'completed' and row['conclusion'] in
+                ('failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale')]
+    require(not failures, 'Final-SHA failed/cancelled checks require review: ' + repr(failures))
+    pending = [row for row in checks if row['status'] != 'completed']
+    if pending:
+        jobs = api.jobs(os.environ['GITHUB_RUN_ID'])
+        own = [job for job in jobs if job['name'] == 'publish' and job['status'] == 'in_progress']
+        require(len(own) == 1 and own[0].get('check_run_url'), 'Cannot identify this active publisher check')
+        own_check_id = int(own[0]['check_run_url'].rsplit('/', 1)[1])
+        require(all(row['id'] == own_check_id for row in pending),
+                'Other final-SHA checks are still pending: ' + repr([row['name'] for row in pending if row['id'] != own_check_id]))
+    return {'run_id': latest['id'], 'url': latest['html_url'], 'head_sha': sha, 'conclusion': 'success'}
+
+
+def publish(args):
+    folder = Path(args.folder)
+    manifest = json.loads((folder / 'manifest.json').read_text())
+    require(manifest['publish_requested'] is True, 'This was a dry-run build')
+    for field, value in identity(args.sha).items():
+        require(manifest.get(field) == value, 'Publish identity mismatch: ' + field)
+    require(manifest['run_id'] == os.environ['GITHUB_RUN_ID'] and manifest['run_attempt'] == os.environ['GITHUB_RUN_ATTEMPT'], 'Publish workflow run/attempt mismatch')
+    api = GitHub()
+    publication_context(api, args.sha, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REF'], True)
+    expected = {filename(key) for key in EXPECTED} | {'manifest.json', 'SHA256SUMS', 'RELEASE_NOTES.zh-CN.md'}
+    require({p.name for p in folder.iterdir()} == expected, 'Publication asset inventory mismatch')
+    checksums = {}
+    for line in (folder / 'SHA256SUMS').read_text().splitlines():
+        hash_value, name = line.split('  ', 1)
+        require(name in expected - {'SHA256SUMS'} and name not in checksums, 'Invalid checksum manifest')
+        require(digest(folder / name) == hash_value, 'Local publication checksum mismatch')
+        checksums[name] = hash_value
+    require(set(checksums) == expected - {'SHA256SUMS'}, 'Incomplete checksum manifest')
+    for spec in HISTORY:
+        verify_historical(api, spec)
+    verify_final_ci(api, args.sha)
+    if resolve_tag(api, VERSION) is None:
+        api.request('/git/refs', 'POST', {'ref': 'refs/tags/' + VERSION, 'sha': args.sha})
+    require(resolve_tag(api, VERSION) == args.sha, 'Tag moved before release creation')
+    # All mutation steps happen only after the complete validated build matrix.
+    # A failed upload/remote verification leaves a draft, never a public partial release.
+    release = api.request('/releases', 'POST', {'tag_name': VERSION, 'target_commitish': args.sha,
+                          'name': 'iotools ' + VERSION, 'draft': True, 'prerelease': False,
+                          'body': (folder / 'RELEASE_NOTES.zh-CN.md').read_text()})
+    require(release['draft'] is True, 'Server did not create a draft')
+    upload_url = release['upload_url'].split('{', 1)[0]
+    for path in sorted(folder.iterdir()):
+        api.request(upload_url + '?name=' + urllib.parse.quote(path.name), 'POST', path)
+    assets = api.request(f'/releases/{release["id"]}/assets?per_page=100')
+    require(len(assets) == len(expected) and {a['name'] for a in assets} == expected, 'Remote asset inventory differs')
+    for asset in assets:
+        require(asset['state'] == 'uploaded' and asset['size'] == (folder / asset['name']).stat().st_size, 'Remote asset incomplete')
+        remote = api.request(f'/releases/assets/{asset["id"]}', raw=True)
+        require(hashlib.sha256(remote).hexdigest() == digest(folder / asset['name']), 'Remote asset checksum mismatch')
+    require(resolve_tag(api, VERSION) == args.sha, 'Tag moved during release upload')
+    verify_final_ci(api, args.sha)
+    result = api.request(f'/releases/{release["id"]}', 'PATCH', {'draft': False})
+    require(result['draft'] is False and result['tag_name'] == VERSION, 'Release publication not confirmed')
+    print(result['html_url'])
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    commands = p.add_subparsers(dest='command', required=True)
+    q = commands.add_parser('preflight'); q.add_argument('--sha', required=True); q.add_argument('--publish', action='store_true'); q.add_argument('--output', default='release-proof.json')
+    q = commands.add_parser('stage'); q.add_argument('--sha', required=True); q.add_argument('--key', choices=sorted(EXPECTED), required=True); q.add_argument('--asset', required=True); q.add_argument('--report', required=True); q.add_argument('--output', default='release-stage')
+    q = commands.add_parser('assemble'); q.add_argument('--sha', required=True); q.add_argument('--folder', default='incoming'); q.add_argument('--output', default='release-dist'); q.add_argument('--proof', default='release-proof.json')
+    q = commands.add_parser('publish'); q.add_argument('--sha', required=True); q.add_argument('--folder', default='release-dist')
+    args = p.parse_args()
+    if args.command == 'assemble':
+        assemble(args.folder, args.output, json.loads(Path(args.proof).read_text()), args.sha)
+    else:
+        globals()[args.command](args)
+
+
+if __name__ == '__main__':
+    main()

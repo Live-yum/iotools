@@ -330,11 +330,53 @@ class PhaseTests(unittest.TestCase):
                 verifier.normal_launch_simulator(app, {"CFBundleIdentifier": "io.github.liveyum.iotools"},
                     Path(directory), report, lambda: None, "26.2", ID, 1200)
             sleep.assert_called_once_with(5)
-            self.assertTrue(all(call.kwargs["timeout"] <= 7 for call in terminate.call_args_list))
+            terminate.assert_not_called()
+            operations = [args[2] for args, _ in commands if len(args) > 2 and args[1] == "simctl"]
+            self.assertEqual(operations.count("terminate"), 1)
+            self.assertLess(operations.index("launch"), operations.index("terminate"))
+            self.assertIn("screenshot", [part for args, _ in commands for part in args])
             installed = [args for args, _ in commands if "install" in args]
             self.assertEqual(len(installed), 1)
             self.assertEqual(installed[0][-1], str(app))
             self.assertEqual(report["normal_launch"]["still_running_after_seconds"], 5)
+
+
+class OperationDiagnosticsTests(unittest.TestCase):
+    def verifier(self):
+        spec = importlib.util.spec_from_file_location("verify_ios_diagnostics", Path(__file__).with_name("verify-ios.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_output_is_bounded_and_redacted_without_changing_returned_value(self):
+        verifier = self.verifier()
+        raw = "https://example.invalid/private token=secret-value /Users/private/path " + "x" * 20000
+        with tempfile.TemporaryDirectory() as directory, patch.object(verifier, "run", return_value=raw) as run:
+            root = Path(directory)
+            self.assertEqual(verifier.simulator_operation(root, "launch", "xcrun", "simctl", "launch", timeout=7), raw)
+            run.assert_called_once_with("xcrun", "simctl", "launch", timeout=7)
+            saved = (root / "launch.txt").read_text()
+            self.assertLess(len(saved), 16400)
+            self.assertNotIn("secret-value", saved)
+            self.assertNotIn("example.invalid", saved)
+            self.assertNotIn("/Users/private", saved)
+            record = json.loads((root / "launch-command.json").read_text())
+            self.assertEqual(record["status"], "success")
+            self.assertEqual(record["timeout_seconds"], 7)
+            self.assertGreaterEqual(record["elapsed_seconds"], 0)
+
+    def test_timeout_and_failure_are_recorded_once_and_still_raise(self):
+        verifier = self.verifier()
+        for error, status in [(subprocess.TimeoutExpired(["simctl"], 7, output=b"password=private"), "timeout"),
+                              (subprocess.CalledProcessError(3, ["simctl"], output="secret=private"), "failed")]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(verifier, "run", side_effect=error) as run:
+                root = Path(directory)
+                with self.assertRaises(type(error)):
+                    verifier.simulator_operation(root, "operation", "simctl", timeout=7)
+                self.assertEqual(run.call_count, 1)
+                self.assertNotIn("private", (root / "operation.txt").read_text())
+                self.assertEqual(json.loads((root / "operation-command.json").read_text())["status"], status)
 
 
 if __name__ == "__main__":
