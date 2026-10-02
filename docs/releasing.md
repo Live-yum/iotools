@@ -50,7 +50,7 @@ CocoaPods 每次生成新的工程对象 ID。门禁仅归一化新增对象 ID 
 
 ## v0.3.2 候选与供应链检查
 
-普通 PR 首先运行 Fast pull request checks（Go unit/vet、真实 govulncheck v1.1.4、Python 发布门禁）。Android 和 Linux/Windows HTTP 历史按相关路径运行；完整 Flutter 八平台矩阵由 PR 的 `release-candidate` 标签或手动触发。发布候选必须在同一完整源码 SHA 上完成全部原有 Android/TUI/HTTP/UI/icon/八平台门禁，加上快速安全检查。跳过的矩阵、旧绿色运行、不同源码与失败的新运行不能用于发布。仅将昂贵检查移出普通 PR 快速反馈路径，不降低发布条件。
+普通 PR 首先运行 Fast pull request checks（Go unit/vet、真实 govulncheck v1.8.0、Python 发布门禁）。Android 和 Linux/Windows HTTP 历史按相关路径运行；完整 Flutter 八平台矩阵由 PR 的 `release-candidate` 标签或手动触发。发布候选必须在同一完整源码 SHA 上完成全部原有 Android/TUI/HTTP/UI/icon/八平台门禁，加上快速安全检查。跳过的矩阵、旧绿色运行、不同源码与失败的新运行不能用于发布。仅将昂贵检查移出普通 PR 快速反馈路径，不降低发布条件。
 
 所有外部 Actions 固定官方仓库解析出的完整 commit SHA；Dependabot 每周提出 Action/Go/pub 更新，仍须审查和测试。当前动作身份核对于 2026-10-02，通过官方 GitHub Git refs 解析 annotated tag 到最终 commit。
 

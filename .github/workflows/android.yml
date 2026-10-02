@@ -22,14 +22,33 @@ on:
       - 'LICENSE'
       - '.github/workflows/android.yml'
   pull_request:
-    paths: ['mobile/lib/**', 'mobile/test/**', 'mobile/integration_test/**', 'mobile/android/**', 'mobile/pubspec.*', 'internal/mobileapi/**', 'cmd/iotools-android/**', '.github/workflows/android.yml', 'scripts/android/**', 'scripts/flutter/**', 'scripts/android-fixtures/**', 'internal/engine/**', 'internal/config/**', 'internal/crypto/**', 'go.mod', 'go.sum']
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 permissions:
   contents: read
 env:
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  changes:
+    name: Select relevant paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.paths.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select ordinary PR scope
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci/changed_paths.py android "$BASE_SHA" "$IOTOOLS_SHA"
   apk:
+    needs: changes
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate') || needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
