@@ -1,0 +1,75 @@
+name: Android AOT isolated diagnosis (not release approval)
+on:
+  # One deliberate creation of this never-reused branch starts the two arms.
+  # This does not require merging an unverified workflow onto the default branch.
+  push:
+    branches: ['diag/aot-1465-once']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/diag/aot-1465-once' && github.event.created == true && github.event.before == '0000000000000000000000000000000000000000' && github.run_attempt == 1
+    name: API29 fresh ${{ matrix.arm }} diagnostic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [cold-launch, standalone]
+    env:
+      # The workflow revision is deliberately separate from the packaged source.
+      IOTOOLS_SHA: 1465af9cbdf438bcca463066e3fd577ab440f04d
+      DIAGNOSTIC_WORKFLOW_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Hermetic diagnostic contract tests (no device)
+        run: python3 scripts/flutter/test_aot_diagnostics.py
+      - name: Download and verify immutable original artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/flutter/aot_diagnostics.py prepare --inputs diagnostic-inputs
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: matrix.arm == 'standalone'
+        with:
+          ref: 1465af9cbdf438bcca463066e3fd577ab440f04d
+          path: diagnostic-source
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: matrix.arm == 'standalone'
+        with:
+          go-version-file: diagnostic-source/go.mod
+      - name: Build original disposable loopback fixtures only
+        if: matrix.arm == 'standalone'
+        run: |
+          test "$(git -C diagnostic-source rev-parse HEAD)" = "$IOTOOLS_SHA"
+          cd diagnostic-source
+          go build -o "$RUNNER_TEMP/aot-diagnostic-fixtures" ./scripts/android-fixtures
+      - name: One fresh emulator and one attempt; no debug suites or retries
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          profile: Nexus 5
+          avd-name: aot-${{ matrix.arm }}-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-build: 16428233
+          disable-linux-hw-accel: true
+          disable-animations: true
+          emulator-boot-timeout: 1200
+          # Match the failing API29 software-emulation arm. No KVM or security changes.
+          emulator-options: -no-window -no-audio -no-snapshot -wipe-data -no-boot-anim -skin 480x800 -memory 1536 -gpu software -accel off
+          script: python3 scripts/flutter/aot_diagnostics.py run --arm ${{ matrix.arm }} --inputs diagnostic-inputs --output android-aot-diagnostics --fixture "$RUNNER_TEMP/aot-diagnostic-fixtures" --source diagnostic-source
+      - name: Preserve results, including inconclusive and failed attempts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-aot-diagnostic-${{ matrix.arm }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            diagnostic-inputs/identity.json
+            android-aot-diagnostics/
+          if-no-files-found: error
+          retention-days: 14
