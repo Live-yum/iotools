@@ -73,6 +73,10 @@ jobs:
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/flutter/bin/flutter" --version
+      - name: Validate or provision pinned Android NDK
+        run: |
+          python3 scripts/flutter/test_android_ndk_bootstrap.py
+          python3 scripts/flutter/android_ndk_bootstrap.py --sdk-root "$ANDROID_HOME" --github-env "$GITHUB_ENV"
       - name: Flutter static analysis and widget tests
         run: |
           cd mobile
@@ -89,12 +93,6 @@ jobs:
         run: |
           go test -race -count=1 -timeout 5m ./...
           CGO_ENABLED=1 go test -race -tags sqlite_android_test -count=1 -timeout 5m ./internal/engine ./internal/mobileapi
-      - name: Select installed Android NDK
-        run: |
-          ndk="$ANDROID_HOME/ndk/28.1.13356709"
-          test -d "$ndk"
-          cat "$ndk/source.properties"
-          echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
       - name: Build actual shared Go engine
         run: |
           python3 scripts/flutter/verify-mobile.py
