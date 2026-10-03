@@ -17,7 +17,7 @@ jobs:
     outputs:
       relevant: ${{ steps.paths.outputs.relevant }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           fetch-depth: 0
@@ -44,11 +44,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Linux desktop prerequisites
@@ -102,7 +102,7 @@ jobs:
       - name: Verify embedded Windows icon transparency
         if: runner.os == 'Windows'
         run: python3 scripts/flutter-platforms/verify-windows-icons.py mobile/build/windows/x64/runner/Debug/iotools.exe --expected-ico mobile/windows/runner/resources/app_icon.ico --extract-dir platform-evidence/windows-icons --report platform-evidence/windows-icon-report.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: history-${{ matrix.target }}-${{ env.IOTOOLS_SHA }}
