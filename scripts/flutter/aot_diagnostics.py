@@ -42,7 +42,7 @@ ARTIFACTS = (
 INSTRUMENTATION_WATCHDOG = 600
 COLD_OBSERVATION_SECONDS = 30
 PORTS = tuple(range(48410, 48417))
-DIAGNOSTIC_REF = 'refs/heads/diag/aot-1465-once'
+DIAGNOSTIC_REF = 'refs/heads/diag/aot-1465-api29-once'
 
 
 class DiagnosticError(RuntimeError):
@@ -275,10 +275,24 @@ def diagnose(arm, inputs, output, fixture, source, *, commands_class=Commands, s
         require(len(entries) == 1 and entries[0][1] == "device" and
                 re.fullmatch(r"emulator-\d+", entries[0][0]), "Require exactly one disposable emulator, never a real device")
         commands.serial = entries[0][0]
-        for prop, expected in (("ro.boot.qemu", "1"), ("ro.build.version.sdk", "29"),
+        # Android 10 Build.IS_EMULATOR reads ro.kernel.qemu, not ro.boot.qemu:
+        # aosp-mirror/platform_frameworks_base android-10.0.0_r30 core/java/android/os/Build.java.
+        # Preserve every identity observation before validation, including the
+        # optional boot property which was empty in the first diagnostic run.
+        identity = {}
+        for prop in ("ro.kernel.qemu", "ro.boot.qemu", "ro.build.version.sdk",
+                     "ro.product.cpu.abi", "ro.build.fingerprint"):
+            value, code = commands.adb(prop + ".txt", "shell", "getprop", prop, required=False)
+            identity[prop] = {"value": value.strip(), "exit": code}
+        report["device_identity"] = identity
+        write_json(output / "device-identity.json", identity)
+        for prop, expected in (("ro.kernel.qemu", "1"), ("ro.build.version.sdk", "29"),
                                ("ro.product.cpu.abi", "x86_64"), ("ro.build.fingerprint", FINGERPRINT)):
-            value, _ = commands.adb(prop + ".txt", "shell", "getprop", prop)
-            require(value.strip() == expected, f"Unexpected emulator {prop}; comparison is inconclusive")
+            require(identity[prop] == {"value": expected, "exit": 0},
+                    f"Unexpected emulator {prop}; comparison is inconclusive")
+        require(identity["ro.boot.qemu"]["exit"] == 0 and
+                identity["ro.boot.qemu"]["value"] in ("", "1"),
+                "Conflicting optional boot emulator identity")
         packages, _ = commands.adb("preinstalled.txt", "shell", "pm", "list", "packages", PACKAGE)
         require(not any(line.strip() in ("package:" + PACKAGE, "package:" + PACKAGE + ".test")
                         for line in packages.splitlines()), "Refuse installed app/test state; use a new disposable emulator")

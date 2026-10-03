@@ -88,14 +88,16 @@ class FakeADB(diagnostic.Commands):
         output, code = b"OK\n", 0
         if name == "devices.txt":
             output = self.case.get("devices", "List of devices attached\nemulator-5554 device\n").encode()
+        elif name == "ro.kernel.qemu.txt":
+            output = self.case.get("kernel_qemu", "1\n").encode()
         elif name == "ro.boot.qemu.txt":
-            output = b"1\n"
+            output = self.case.get("boot_qemu", "\n").encode()
         elif name == "ro.build.version.sdk.txt":
             output = self.case.get("sdk", "29\n").encode()
         elif name == "ro.product.cpu.abi.txt":
             output = b"x86_64\n"
         elif name == "ro.build.fingerprint.txt":
-            output = (diagnostic.FINGERPRINT + "\n").encode()
+            output = self.case.get("fingerprint", diagnostic.FINGERPRINT + "\n").encode()
         elif name == "preinstalled.txt":
             output = self.case.get("preinstalled", "").encode()
         elif name == "preexisting-pid.txt":
@@ -236,6 +238,24 @@ class DiagnosticTests(unittest.TestCase):
                 code, report, _, _, _ = self.run_case(arm, no_profile=True)
                 self.assertEqual(code, 2)
                 self.assertEqual(report["status"], "inconclusive")
+
+    def test_api29_kernel_identity_accepts_recorded_empty_boot_property(self):
+        code, report, records, _, _ = self.run_case(boot_qemu="\n")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["device_identity"]["ro.boot.qemu"], {"value": "", "exit": 0})
+        self.assertEqual(report["device_identity"]["ro.kernel.qemu"], {"value": "1", "exit": 0})
+        self.assertEqual(sum("getprop" in x["command"] for x in records), 5)
+
+    def test_identity_conflict_failure_or_missing_kernel_stops_before_install(self):
+        for changes in ({"kernel_qemu": ""}, {"kernel_qemu": "0\n", "boot_qemu": "1\n"},
+                        {"boot_qemu": "0\n"}, {"fingerprint": "other-image\n"},
+                        {"failures": {"ro.kernel.qemu.txt": 124}}):
+            with self.subTest(changes=changes):
+                code, report, records, _, _ = self.run_case(**changes)
+                self.assertEqual(code, 1)
+                self.assertEqual(report["attempts"], 0)
+                self.assertEqual(len(report["device_identity"]), 5)
+                self.assertFalse(any("install" in r["command"] for r in records))
 
     def test_profile_skip_is_inconclusive_even_with_install_log(self):
         code, report, _, _, _ = self.run_case(skip_profile=True)
@@ -382,7 +402,7 @@ class WorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/android-aot-diagnostics.yml").read_text()
         self.assertNotIn("workflow_dispatch:", workflow)
         self.assertNotIn("pull_request:", workflow)
-        self.assertIn("branches: ['diag/aot-1465-once']", workflow)
+        self.assertIn("branches: ['diag/aot-1465-api29-once']", workflow)
         self.assertIn("github.event.created == true", workflow)
         self.assertIn("github.run_attempt == 1", workflow)
         self.assertIn("github.event.before == '" + '0' * 40 + "'", workflow)

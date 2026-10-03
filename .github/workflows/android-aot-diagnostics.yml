@@ -3,13 +3,13 @@ on:
   # One deliberate creation of this never-reused branch starts the two arms.
   # This does not require merging an unverified workflow onto the default branch.
   push:
-    branches: ['diag/aot-1465-once']
+    branches: ['diag/aot-1465-api29-once']
 permissions:
   contents: read
   actions: read
 jobs:
   diagnose:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/diag/aot-1465-once' && github.event.created == true && github.event.before == '0000000000000000000000000000000000000000' && github.run_attempt == 1
+    if: github.event_name == 'push' && github.ref == 'refs/heads/diag/aot-1465-api29-once' && github.event.created == true && github.event.before == '0000000000000000000000000000000000000000' && github.run_attempt == 1
     name: API29 fresh ${{ matrix.arm }} diagnostic
     runs-on: ubuntu-24.04
     timeout-minutes: 40
