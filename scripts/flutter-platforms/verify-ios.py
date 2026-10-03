@@ -282,12 +282,16 @@ def normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid
     if selected["state"] != "Booted":
         simulator_operation(evidence, 'simulator-boot', "xcrun", "simctl", "boot", udid, timeout=budget(120))
     simulator_operation(evidence, 'simulator-bootstatus', "xcrun", "simctl", "bootstatus", udid, "-b", timeout=budget(300))
-    simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app), timeout=budget(120))
+    # A cold hosted simulator can finish boot migration yet need longer than
+    # 120s to install the host. Keep one attempt, capped by the existing shared
+    # host-test deadline; do not reset the device or retry a failed acceptance.
+    simulator_operation(evidence, 'simulator-install', "xcrun", "simctl", "install", udid, str(app), timeout=budget(300))
     # Fresh single-pass CI has not launched this host yet. Do not terminate an
     # absent process before the first launch; retain the post-launch cleanup.
     launch = simulator_operation(evidence, 'simulator-launch', "xcrun", "simctl", "launch", udid, info["CFBundleIdentifier"], timeout=budget(60)).strip()
     report["normal_launch"] = {"simulator": selected["name"], "udid": udid, "runtime": runtime, "launch": launch}
     save()
+    validation_failed = False
     try:
         require(budget(120) >= 5, "Host gate has insufficient time for normal launch")
         time.sleep(5)
@@ -296,9 +300,19 @@ def normal_launch_simulator(app, info, evidence, report, save, sdk_version, udid
         require(any(info["CFBundleIdentifier"] in line and line.split()[0].isdigit() for line in services.splitlines()), "App exited after launch")
         run("xcrun", "simctl", "io", udid, "screenshot", str(evidence / "normal-launch.png"), timeout=budget(120))
         report["normal_launch"]["still_running_after_seconds"] = 5
+    except BaseException:
+        validation_failed = True
+        raise
     finally:
-        simulator_operation(evidence, "simulator-cleanup", "xcrun", "simctl", "terminate",
-                            udid, info["CFBundleIdentifier"], timeout=budget(30))
+        try:
+            simulator_operation(evidence, "simulator-cleanup", "xcrun", "simctl", "terminate",
+                                udid, info["CFBundleIdentifier"], timeout=budget(30))
+        except Exception as error:
+            report["normal_launch"]["cleanup_error"] = diagnostic_text(error)
+            # Cleanup must not hide the original crash, screenshot failure or
+            # exhausted deadline. A cleanup-only failure still fails the gate.
+            if not validation_failed:
+                raise
     save()
 
 

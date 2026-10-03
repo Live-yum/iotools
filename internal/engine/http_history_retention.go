@@ -207,7 +207,19 @@ func PreviewHTTPHistoryRetention(ctx context.Context, path string, p HTTPHistory
 		return HTTPHistoryRetentionPreview{}, e
 	}
 	defer db.Close()
-	return retentionPlan(ctx, db, p, time.Now().UTC(), true)
+	// Read the current policy and all rows from one SQLite snapshot. The
+	// connection is mode=ro/query_only; a preview never creates or writes data.
+	tx, e := db.BeginTx(ctx, nil)
+	if e != nil {
+		return HTTPHistoryRetentionPreview{}, e
+	}
+	defer tx.Rollback()
+	plan, e := retentionPlan(ctx, tx, p, time.Now().UTC(), true)
+	if e != nil {
+		return plan, e
+	}
+	plan.Token, e = scopeHTTPHistoryRetentionToken(path, plan.Token)
+	return plan, e
 }
 func pruneHistory(ctx context.Context, tx *sql.Tx, plan HTTPHistoryRetentionPreview) error {
 	// Prepared single-row deletes avoid SQLite parameter limits and remain atomic.
@@ -247,8 +259,12 @@ func ApplyHTTPHistoryRetention(ctx context.Context, path string, preview HTTPHis
 	if err != nil {
 		return preview, err
 	}
+	fresh.Token, err = scopeHTTPHistoryRetentionToken(path, fresh.Token)
+	if err != nil {
+		return preview, err
+	}
 	if fresh.Token != preview.Token {
-		return preview, errors.New("历史数据或策略已变化，请重新预览")
+		return preview, errors.New("历史数据库路径、数据或策略已变化，请重新预览")
 	}
 	if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS http_history_policy (id INTEGER PRIMARY KEY CHECK(id=1),policy TEXT NOT NULL)"); err != nil {
 		return preview, err
