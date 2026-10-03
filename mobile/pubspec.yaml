@@ -13,7 +13,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   ffi: ^2.1.4
   file_selector: ^1.0.3
-  path_provider: ^2.1.5
+  path_provider: ^2.1.6
   # Android uses our MethodChannelPlatform, not path_provider feature calls.
   # Keep its supported Java implementation; isolate unused external Dart JNI.
   # See docs/android-dependency-isolation.md. This is not a proven crash fix.
