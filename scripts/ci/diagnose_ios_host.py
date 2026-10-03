@@ -17,6 +17,10 @@ COMMANDS = (
     ('xcdevice', ['xcrun', 'xcdevice', 'list', '--timeout', '10']),
     ('devices', ['xcrun', 'simctl', 'list', 'devices', 'available', '--json']),
     ('runtimes', ['xcrun', 'simctl', 'list', 'runtimes', '--json']),
+    # Compare the first device inventory with the same read after CoreSimulator
+    # discovery. Keep both observations: a later healthy list cannot erase an
+    # early empty result or timeout, and this is never an acceptance fallback.
+    ('xcdevice-after-discovery', ['xcrun', 'xcdevice', 'list', '--timeout', '10']),
     ('processes', ['pgrep', '-fl', 'CoreSimulator|simdiskimaged']),
     ('memory', ['vm_stat']),
     ('disk', ['df', '-h', '/Library/Developer/CoreSimulator']),

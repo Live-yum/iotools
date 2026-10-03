@@ -73,9 +73,9 @@ func fragmentedRejection(t *testing.T, r *http.Request, splitBody int) (*http.Re
 func TestGatewayErrorRouteFragmentationMatrix(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, path, payload, message string
-		status                              int
-		plain                               bool
-		prepare                             func(*testing.T, *testClient, *http.Request)
+		status                               int
+		plain                                bool
+		prepare                              func(*testing.T, *testClient, *http.Request)
 	}{
 		{name: "closed-gateway", method: "POST", path: "/api/platform", status: 503, message: "网关已关闭", prepare: func(t *testing.T, c *testClient, r *http.Request) { c.s.Close() }},
 		{name: "bootstrap-method", method: "POST", path: "/api/bootstrap", status: 405, message: "不支持的请求方法"},
@@ -96,7 +96,9 @@ func TestGatewayErrorRouteFragmentationMatrix(t *testing.T) {
 		{name: "asset-range", method: "GET", path: "/index.html", status: 416, plain: true, message: "invalid range: failed to overlap\n", prepare: func(t *testing.T, c *testClient, r *http.Request) { r.Header.Set("Range", "bytes=99999-") }},
 		{name: "missing-command-session", method: "POST", path: "/api/command", status: 404, message: "本机会话已关闭", prepare: func(t *testing.T, c *testClient, r *http.Request) { r.Header.Set("X-Iotools-Session", "missing") }},
 		{name: "missing-lifecycle-session", method: "POST", path: "/api/lifecycle", status: 404, message: "本机会话已关闭", prepare: func(t *testing.T, c *testClient, r *http.Request) { r.Header.Del("X-Iotools-Session") }},
-		{name: "closed-command-session", method: "POST", path: "/api/command", status: 404, message: "本机会话已关闭", prepare: func(t *testing.T, c *testClient, r *http.Request) { c.ok("/api/lifecycle", map[string]any{"action": "close"}) }},
+		{name: "closed-command-session", method: "POST", path: "/api/command", status: 404, message: "本机会话已关闭", prepare: func(t *testing.T, c *testClient, r *http.Request) {
+			c.ok("/api/lifecycle", map[string]any{"action": "close"})
+		}},
 		{name: "foreign-command-session", method: "POST", path: "/api/command", status: 404, message: "本机会话已关闭", prepare: rejectionForeignClient},
 		{name: "foreign-lifecycle-session", method: "POST", path: "/api/lifecycle", status: 404, message: "本机会话已关闭", prepare: rejectionForeignClient},
 		{name: "partial-lifecycle-overflow", method: "POST", path: "/api/lifecycle", payload: strings.Repeat("x", 4096), status: 400, message: "请求内容超过上限"},
@@ -509,8 +511,8 @@ func (s failedContentSeeker) Seek(offset int64, whence int) (int64, error) {
 func TestServeContentErrorDisposalPreservesSuccessAndStandardResponses(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, header, value string
-		status                     int
-		failedSeek                 bool
+		status                      int
+		failedSeek                  bool
 	}{
 		{name: "get", method: "GET", status: 200},
 		{name: "head", method: "HEAD", status: 200},

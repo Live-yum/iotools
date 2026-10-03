@@ -15,6 +15,9 @@ class IOSHostDiagnosticsTests(unittest.TestCase):
         commands = dict(diagnostics.COMMANDS)
         self.assertEqual(commands['devices'], ['xcrun', 'simctl', 'list', 'devices', 'available', '--json'])
         self.assertEqual(commands['runtimes'], ['xcrun', 'simctl', 'list', 'runtimes', '--json'])
+        self.assertEqual(commands['xcdevice'], commands['xcdevice-after-discovery'])
+        self.assertLess(list(commands).index('xcdevice'), list(commands).index('devices'))
+        self.assertGreater(list(commands).index('xcdevice-after-discovery'), list(commands).index('runtimes'))
         self.assertEqual(diagnostics.DEVELOPER_DIR, '/Applications/Xcode_26.2.app/Contents/Developer')
         for command in commands.values():
             self.assertFalse(set(command) & {'sudo', 'boot', 'create', 'delete', 'erase', 'shutdown', 'killall', '-switch'})
