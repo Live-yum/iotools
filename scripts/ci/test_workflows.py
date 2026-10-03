@@ -31,6 +31,7 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/feat/gateway-rejection-validation'",source)
         for command in ('flutter pub get --enforce-lockfile','flutter analyze','flutter test --reporter expanded'):
             self.assertIn(command,source)
+        self.assertIn('flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded',source)
         self.assertIn('adc901062556672b4138e18a4dc62a4be8f4b3c2',source)
         self.assertNotIn('continue-on-error',source)
     def test_full_release_candidate_matrix_remains(self):

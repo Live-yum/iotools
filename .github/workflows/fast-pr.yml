@@ -34,6 +34,7 @@ jobs:
           cd mobile
           flutter pub get --enforce-lockfile
           flutter analyze
+          flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded
           flutter test --reporter expanded
   checks:
     runs-on: ubuntu-24.04
