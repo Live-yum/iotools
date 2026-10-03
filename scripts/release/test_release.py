@@ -43,7 +43,7 @@ class SourceTests(unittest.TestCase):
         r.git('config', 'user.email', 'test@example.invalid', root=self.root)
         r.git('config', 'user.name', 'Test', root=self.root)
         (self.root/'mobile').mkdir()
-        (self.root/'mobile/pubspec.yaml').write_text('version: 0.3.1+4\n')
+        (self.root/'mobile/pubspec.yaml').write_text('version: 0.3.2+5\n')
         (self.root/'go.mod').write_text('module fixture\ngo 1.27.1\n')
         self.base = self.commit()
     def tearDown(self):
@@ -58,13 +58,13 @@ class SourceTests(unittest.TestCase):
             r.identity(self.base, 'v0.4.0', self.root)
     def test_utf8_version_file_is_read_explicitly(self):
         path=self.root/'mobile/pubspec.yaml'
-        path.write_text('# 中文应用\nversion: 0.3.1+4\n',encoding='utf-8')
+        path.write_text('# 中文应用\nversion: 0.3.2+5\n',encoding='utf-8')
         read=Path.read_text
         def guarded(path,*args,**kwargs):
             if path.name=='pubspec.yaml':self.assertEqual(kwargs.get('encoding'),'utf-8')
             return read(path,*args,**kwargs)
         with patch.object(Path,'read_text',guarded):
-            self.assertEqual(r.identity(self.base,root=self.root)['tag'],'v0.3.1')
+            self.assertEqual(r.identity(self.base,root=self.root)['tag'],'v0.3.2')
 
     def test_wrong_checkout_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'Checkout'):
@@ -186,6 +186,8 @@ class PublishRevalidationTests(unittest.TestCase):
             for key in r.EXPECTED:
                 (folder / r.filename(key)).write_bytes(('package-' + key).encode())
             r.write_json(folder / 'manifest.json', proof)
+            r.write_json(folder / 'source-sbom.cdx.json', {'fixture': True})
+            r.write_json(folder / 'build-provenance.json', {'fixture': True})
             (folder / 'RELEASE_NOTES.zh-CN.md').write_text('fixture notes', encoding='utf-8')
             (folder / 'SHA256SUMS').write_text(''.join(
                 f'{r.digest(path)}  {path.name}\n' for path in sorted(folder.iterdir())))
@@ -220,7 +222,7 @@ class PublishRevalidationTests(unittest.TestCase):
                  patch.dict(os.environ, {'GITHUB_RUN_ID':'7','GITHUB_RUN_ATTEMPT':'1','GITHUB_EVENT_NAME':'workflow_dispatch','GITHUB_REF':'refs/heads/main'}):
                 with self.assertRaisesRegex(RuntimeError, 'acceptance changed'):
                     r.publish(argparse.Namespace(folder=str(folder), sha=SHA))
-            self.assertEqual(len(api.uploads), 22)
+            self.assertEqual(len(api.uploads), 24)
             self.assertIn(('POST','/releases'), api.calls)
             self.assertFalse(any(method == 'PATCH' for method, _ in api.calls))
 
@@ -425,7 +427,7 @@ class AggregateTests(unittest.TestCase):
         p=self.first();d=json.loads(p.read_text());d[field]=value;r.write_json(p,d)
     def test_complete_19_assets_and_three_metadata(self):
         result=self.assemble();self.assertEqual(len(result['assets']),19)
-        self.assertEqual(len(list((self.root/'out').iterdir())),22)
+        self.assertEqual(len(list((self.root/'out').iterdir())),24)
     def test_missing_asset_rejected(self):
         self.first().unlink()
         with self.assertRaisesRegex(RuntimeError,'Missing release assets'):self.assemble()

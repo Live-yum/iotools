@@ -5,7 +5,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:iotools_mobile/app/app.dart';
 import 'package:iotools_mobile/core/engine.dart';
+import 'package:iotools_mobile/core/session.dart';
 import 'package:iotools_mobile/features/modbus/modbus_models.dart';
 
 /// Second acceptance batch. Every device operation is initiated from the actual
@@ -45,6 +47,9 @@ requests:
 ''';
       await engine.command({'op': 'config.save', 'source': source});
       await engine.close();
+      AppSession? failureSession;
+      Object? failure;
+      var surfaceConverted = false;
       try {
         await tester.pumpWidget(
           protocolTestApp(engine, platform),
@@ -53,6 +58,10 @@ requests:
           tester,
           () => find.text('Flutter Modbus 高级整体验收').evaluate().isNotEmpty,
         );
+        final session = tester
+            .widget<WorkspaceShell>(find.byType(WorkspaceShell))
+            .session;
+        failureSession = session;
         await _tap(tester, 'Flutter Modbus 高级整体验收');
         await _tap(tester, '工具');
         await _tap(tester, '寄存器、采样与高级工具');
@@ -64,8 +73,8 @@ requests:
         await _tap(tester, '取消');
         _same(before, await _metrics(), 'FC23 cancelled target review');
         await _fc23(tester);
-        await _tap(tester, '确认执行');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'read-write-registers',
+            () => _tap(tester, '确认执行'));
         _delta(
           before,
           await _metrics(),
@@ -82,8 +91,8 @@ requests:
         // M15: native object list receives the FC43 fixture's real object values.
         before = await _metrics();
         await _tap(tester, '读取设备标识');
-        await _tap(tester, '预览读取');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'read-device-id',
+            () => _tap(tester, '预览读取'));
         _delta(
           before,
           await _metrics(),
@@ -99,8 +108,8 @@ requests:
 
         // M16: read-PDU roundtrip, forbidden function in read mode, then raw write.
         before = await _metrics();
-        await _raw(tester, write: false, hex: '0300000002', count: '2');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'read-raw',
+            () => _raw(tester, write: false, hex: '0300000002', count: '2'));
         _delta(
           before,
           await _metrics(),
@@ -131,8 +140,8 @@ requests:
         await _tap(tester, '取消');
         _same(before, await _metrics(), 'raw write target cancellation');
         await _raw(tester, write: true, hex: '0600000007', count: '1');
-        await _tap(tester, '确认执行');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'write-raw',
+            () => _tap(tester, '确认执行'));
         _delta(
           before,
           await _metrics(),
@@ -148,8 +157,8 @@ requests:
         await _enter(tester, '结束地址（含）', '1');
         await _enter(tester, '每批数量', '1');
         await _enter(tester, '扫描周期', '1');
-        await _tap(tester, '预览完整范围');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'sweep-holding',
+            () => _tap(tester, '预览完整范围'));
         _delta(
           before,
           await _metrics(),
@@ -167,8 +176,8 @@ requests:
         before = await _metrics();
         await _tap(tester, '单元探测');
         await _enter(tester, '单元 ID 列表（逗号分隔）', '2,1');
-        await _tap(tester, '预览探测范围');
-        await _idle(tester, engine);
+        final scanRun = await _executeAndWait(tester, session, 'scan-units',
+            () => _tap(tester, '预览探测范围'));
         _delta(
           before,
           await _metrics(),
@@ -176,8 +185,13 @@ requests:
           writes: 0,
           reason: 'one valid unit and one exception-only probe',
         );
+        expectModbusUnitProbe(session, scanRun,
+            unit: 2, responsive: false, exception: true);
+        expectModbusUnitProbe(session, scanRun, unit: 1, responsive: true);
         await _reveal(tester, find.text('协议异常响应'));
-        expect(find.text('有响应'), findsOneWidget);
+        await _reveal(tester, find.text('有响应'));
+        expect(find.text('有响应'), findsOneWidget,
+            reason: modbusRunEvidence(session, runId: scanRun));
         final select = find.byKey(const ValueKey('select_modbus_unit_1'));
         before = await _metrics();
         await _tapFinder(tester, select);
@@ -191,8 +205,8 @@ requests:
         await _tap(tester, '临时应用');
         before = await _metrics();
         await _typedWrite(tester, '29');
-        await _tap(tester, '确认执行');
-        await _idle(tester, engine);
+        await _executeAndWait(tester, session, 'write-typed',
+            () => _tap(tester, '确认执行'), expectedStatus: 'failed');
         _same(before, await _metrics(), 'write audit open failure');
         await _tap(tester, '会话');
         await _reveal(tester, find.textContaining('设备操作未执行'));
@@ -309,54 +323,85 @@ requests:
         expect(find.text('本次应用会话累计'), findsOneWidget);
         await _tap(tester, '关闭');
         expect(tester.takeException(), isNull);
-        if (Platform.isAndroid) await binding.convertFlutterSurfaceToImage();
+        if (Platform.isAndroid) {
+          await binding.convertFlutterSurfaceToImage();
+          surfaceConverted = true;
+        }
         await tester.pump();
-        await takeProtocolScreenshot(tester, binding, 
+        await takeProtocolScreenshot(tester, binding,
           'flutter-modbus-04-advanced-fixture-complete',
         );
-      } finally {
-        // Only the disposable fixture is restored. No external endpoint is used.
-        final state = mbMap(await engine.command({'op': 'state'}));
-        if (state['running'] == true) {
-          await engine.command({'op': 'cancel', 'run_id': state['run_id']});
-          await _idle(tester, engine);
+      } catch (error) {
+        failure = error;
+        // Capture the failing UI and retained events before fixture restoration
+        // replaces the active run. Evidence must never replace the test failure.
+        try {
+          final session = failureSession;
+          if (session != null) {
+            debugPrint('MODBUS_ADVANCED_FAILURE ${modbusRunEvidence(session)}');
+          }
+          if (Platform.isAndroid && !surfaceConverted) {
+            await binding.convertFlutterSurfaceToImage()
+                .timeout(const Duration(seconds: 5));
+          }
+          await tester.pump();
+          await takeProtocolScreenshot(tester, binding,
+              'flutter-modbus-04-advanced-fixture-failure')
+              .timeout(const Duration(seconds: 5));
+        } catch (evidenceError) {
+          debugPrint('MODBUS_ADVANCED_EVIDENCE_FAILED '
+              '${boundedModbusEvidence(evidenceError)}');
         }
-        await tester.pumpWidget(const SizedBox());
-        await tester.pump(const Duration(milliseconds: 100));
-        await engine.open();
-        final preview = mbMap(
-          await engine.command({
-            'op': 'preview',
-            'request': {
-              'id': 'advanced-fixture-restore',
-              'protocol': 'modbus',
-              'action': 'write-registers',
-              'endpoint': 'tcp://127.0.0.1:48415',
-              'timeout': '5s',
-              'params': {
-                'unit': 1,
-                'address': 0,
-                'count': 2,
-                'values': [7, 42],
+        rethrow;
+      } finally {
+        try {
+          // Only the disposable fixture is restored. No external endpoint is used.
+          final state = mbMap(await engine.command({'op': 'state'}));
+          if (state['running'] == true) {
+            await engine.command({'op': 'cancel', 'run_id': state['run_id']});
+            await _idle(tester, engine);
+          }
+          await tester.pumpWidget(const SizedBox());
+          await tester.pump(const Duration(milliseconds: 100));
+          await engine.open();
+          final preview = mbMap(
+            await engine.command({
+              'op': 'preview',
+              'request': {
+                'id': 'advanced-fixture-restore',
+                'protocol': 'modbus',
+                'action': 'write-registers',
+                'endpoint': 'tcp://127.0.0.1:48415',
+                'timeout': '5s',
+                'params': {
+                  'unit': 1,
+                  'address': 0,
+                  'count': 2,
+                  'values': [7, 42],
+                },
               },
-            },
-          }),
-        );
-        await engine.command({
-          'op': 'run',
-          'token': preview['token'],
-          'confirmed': true,
-        });
-        await _idle(tester, engine);
-        await engine.command({
-          'op': 'config.save',
-          'source': original['source'],
-        });
-        await engine.close();
-        await platform.invoke('settings.save', {
-          for (final key in ['readOnly', 'history', 'collection'])
-            if (settings.containsKey(key)) key: settings[key],
-        });
+            }),
+          );
+          await engine.command({
+            'op': 'run',
+            'token': preview['token'],
+            'confirmed': true,
+          });
+          await _idle(tester, engine);
+          await engine.command({
+            'op': 'config.save',
+            'source': original['source'],
+          });
+          await engine.close();
+          await platform.invoke('settings.save', {
+            for (final key in ['readOnly', 'history', 'collection'])
+              if (settings.containsKey(key)) key: settings[key],
+          });
+        } catch (cleanupError) {
+          if (failure == null) rethrow;
+          debugPrint('MODBUS_ADVANCED_CLEANUP_FAILED '
+              '${boundedModbusEvidence(cleanupError)}');
+        }
       }
     },
     timeout: const Timeout(Duration(minutes: 7)),
@@ -367,6 +412,25 @@ void main() {
   WidgetController.hitTestWarningShouldBeFatal = true;
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   registerAdvancedModbusIntegrationTests();
+}
+
+Future<String> _executeAndWait(
+  WidgetTester tester,
+  AppSession session,
+  String action,
+  Future<void> Function() execute, {
+  String expectedStatus = 'completed',
+}) async {
+  final operation = ModbusOperationWait(session);
+  try {
+    await execute();
+    final run = await operation.wait(tester,
+        action: action, expectedStatus: expectedStatus);
+    await tester.pump();
+    return run;
+  } finally {
+    await operation.dispose();
+  }
 }
 
 Future<void> _fc23(WidgetTester t) async {

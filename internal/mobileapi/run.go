@@ -118,7 +118,6 @@ func (s *Session) run(c command) (any, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.runID, s.runDone = cancel, runID, done
-	historyReadOnly := p.Request.Protocol == "http" && s.options.History && s.options.ReadOnly && p.Request.Params["persist"] != false
 	controller := engine.NewModbusPauseController()
 	if p.Request.Protocol == "modbus" && !p.Request.Mutates() {
 		s.modbusPause = controller
@@ -191,9 +190,6 @@ func (s *Session) run(c command) (any, error) {
 			return
 		}
 		runErr = engine.RunCollection(ctx, p.Collection, p.Request, p.Profile, c.Confirmed, func(ev engine.Event) { s.emit(runID, ev.Kind, normalizeEvent(ev.Data)) })
-		if historyReadOnly {
-			s.emit(runID, "history_status", map[string]any{"recorded": false, "reason": "read_only", "message": "只读保护，本次未记录"})
-		}
 	}()
 	return map[string]any{"run_id": runID}, nil
 }

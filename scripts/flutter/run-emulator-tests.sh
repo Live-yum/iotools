@@ -129,7 +129,12 @@ for suite in main opcua; do
   break
  fi
  start_graphics_watchdog "$suite-pretimeout" "$diagnostics_delay"
- (cd mobile && timeout --kill-after=30s "$budget" flutter drive --driver=test_driver/integration_test.dart --target="$target" --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true) 2>&1 | tee "android-evidence/flutter-$suite.log"
+ # integration_test retains all results/screenshots until the host requests
+ # them. Do not make its startup depend on drive's default debugger pause:
+ # a recorded run stalled before its first test in the isolate-runnable RPC.
+ # The pinned Flutter driver supports an already running isolate. This is a
+ # launch mitigation, not a proven VM fix; every app-side gate below still runs.
+ (cd mobile && timeout --kill-after=30s "$budget" flutter drive --driver=test_driver/integration_test.dart --target="$target" --no-start-paused --no-enable-impeller --dart-define=IOTOOLS_TEST_FIXTURES=true) 2>&1 | tee "android-evidence/flutter-$suite.log"
  pipeline_results=("${PIPESTATUS[@]}")
  flutter_result=${pipeline_results[0]}
  driver_result=$flutter_result

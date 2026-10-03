@@ -63,7 +63,7 @@ Events are `subscription.started`, `subscription.event` with `{subscription_id,k
 - `history.preview {sql}` → `{database,sql,token,backup_bytes,statements}`
 - `history.execute {sql,token,backup,confirmed:true}` → `{backup,results}`. Requires unchanged preview and a new private backup path. Blocked by read-only mode
 
-HTTP history is opt-in. Neither startup nor an ordinary history list creates an empty history database. HTTP workflow options preserve separate prompts, selections, TLS approvals, root-write authorization and dependency-write authorization. Optional engine sandbox hooks enforce private files after dynamic rendering and before file reads/network execution; desktop callers retain original behavior when hooks are nil.
+The core API requires the explicit `History` option; Flutter hosts enable it by default while preserving saved opt-outs. CLI/TUI persistence remains opt-in. Neither startup nor an ordinary history list creates an empty history database. HTTP workflow options preserve separate prompts, selections, TLS approvals, root-write authorization and dependency-write authorization. Optional engine sandbox hooks enforce private files after dynamic rendering and before file reads/network execution; desktop callers retain original behavior when hooks are nil.
 
 ## Modbus local tools
 
@@ -109,3 +109,13 @@ Large events include `result_id` alongside their bounded inline preview. `result
 - Kafka record events preserve `raw_key_base64`, `raw_value_base64`, `key_is_null` and `value_is_null` alongside decoded values, headers and timestamp.
 
 OPC UA 读取中的非有限 IEEE 浮点值以 `NaN`、`+Infinity`、`-Infinity` 文本传输，并保留 `value_type_name`、质量状态和时间戳；浮点数组保留原位置，避免因 JSON 不支持非有限数字而丢弃整个设备读值事件。写入值的校验范围保持不变。
+
+## Database capacity and retention
+
+`history.status` additionally returns `storage`: `entries`, `payload_bytes`, actual `database_bytes`, `sidecar_bytes`, `total_bytes`, `reusable_bytes`, and database-wide `policy`. Reading never creates a missing database. `policy` has `mode` (`stop` or `prune`), `max_age_days`, `max_entries`, `max_bytes`; 0 means unbounded. Default is stop / 0 days / 10000 entries / 134217728 content bytes. Counts include all collections.
+
+- `history.retention.preview {policy}` returns a five-minute token and explicit deletion/retained counts and content bytes
+- `history.retention.apply {token,confirmed:true}` requires unchanged data and policy. `prune` authorizes immediate and subsequent automatic permanent deletion; `stop` never removes existing records
+- `history.compact {confirmed:true}` explicitly reclaims unused SQLite pages while idle. It requires temporary disk space and may block writers; it never removes live records
+
+Mutations are blocked by read-only protection. A capacity-limited response still completes normally and emits `history_status` with reason `capacity`. Read-only notices are emitted only for an actual response that otherwise qualifies for persistence, including eligible dependency requests. Transport failures and `persist:false` emit no such notice.

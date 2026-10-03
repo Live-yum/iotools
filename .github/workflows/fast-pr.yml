@@ -1,0 +1,85 @@
+name: Fast pull request checks
+on:
+  pull_request:
+  # Exercise the same fail-closed fast gates before advancing the release PR.
+  push:
+    branches: ['feat/gateway-rejection-validation']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fast-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+jobs:
+  flutter-validation:
+    # Validate changed test harnesses before advancing the release PR and
+    # starting its full real-device/platform matrix. This is not acceptance.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/gateway-rejection-validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - name: Install pinned official Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Locked Flutter analysis and widget regressions
+        run: |
+          cd mobile
+          flutter pub get --enforce-lockfile
+          flutter analyze
+          set +e
+          flutter test test/fixtures/failure_reporting_fixture.dart --reporter expanded > "$RUNNER_TEMP/failure-reporting-fixture.log" 2>&1
+          fixture_status=$?
+          set -e
+          cat "$RUNNER_TEMP/failure-reporting-fixture.log"
+          test "$fixture_status" -ne 0
+          python3 ../scripts/flutter/verify-failure-report.py "$RUNNER_TEMP/failure-reporting-fixture.log"
+          flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded
+          flutter test --reporter expanded
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Verify locked modules
+        run: go mod verify
+      - name: Vet and unit tests
+        run: |
+          go vet ./...
+          go test -count=1 -timeout 5m ./...
+      - name: Go vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck -show verbose ./...
+      - name: Release and workflow fail-closed contracts
+        run: |
+          python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/flutter -p 'test_*.py' -v
+          python3 -m unittest discover -s scripts/flutter-platforms -p 'test_*.py' -v
+      - name: Capture Go formatting for review
+        if: always()
+        run: |
+          mkdir -p formatting
+          git ls-files -z '*.go' | xargs -0 gofmt -w
+          git diff -- '*.go' > formatting/gofmt.patch
+          test ! -s formatting/gofmt.patch
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: fast-pr-format-${{ env.IOTOOLS_SHA }}
+          path: formatting/
+          if-no-files-found: error

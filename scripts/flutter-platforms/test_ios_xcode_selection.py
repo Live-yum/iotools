@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("select_ios_xcode", Path(__file__).with_name("select-ios-xcode.py"))
@@ -48,6 +49,55 @@ ACTUAL_622_26_DEVICES = {"com.apple.CoreSimulator.SimRuntime.iOS-26-2": [{
     "udid": "48B2DA2E-AF18-4E36-BB25-B25969A4EBCF", "isAvailable": True,
     "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation",
     "state": "Shutdown", "name": "iPhone SE (3rd generation)"}]}
+
+
+# Exact stdout from the failed a99f24277b9c200de206d48abd8adf0b5712b222 frozen
+# selection, observed 2026-10-02T22:51:28.682062+00:00. The archive SHA-256 is
+# 28dad3c8570c8606f2a34a2f4cb3c51645e72aaf8c04f09e10b4312c181d369f.
+# simctl exited by its 30-second timeout with empty stdout; every other query
+# succeeded, but xcdevice listed only the Mac and destinations only placeholders.
+ACTUAL_A99_STARTUP_OUTPUTS = {'version': 'Xcode 26.2\nBuild version 17C52\n',
+ 'sdk': '26.2\n',
+ 'xcdevice': '[\n'
+             '  {\n'
+             '    "ignored" : false,\n'
+             '    "modelCode" : "VirtualMac2,1",\n'
+             '    "simulator" : false,\n'
+             '    "modelName" : "Apple Virtual Machine 1",\n'
+             '    "operatingSystemVersion" : "15.7.9 (24G830)",\n'
+             '    "identifier" : "ef69742d45106fef6fd0eea68bb6a577435936e6",\n'
+             '    "platform" : "com.apple.platform.macosx",\n'
+             '    "architecture" : "arm64e",\n'
+             '    "interface" : "usb",\n'
+             '    "available" : true,\n'
+             '    "name" : "My Mac",\n'
+             '    "modelUTI" : "com.apple.virtual-machine"\n'
+             '  }\n'
+             ']\n',
+ 'destinations': 'Command line invocation:\n'
+                 '    /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -workspace '
+                 '/Users/runner/work/iotools/iotools/mobile/ios/Runner.xcworkspace -scheme Runner '
+                 '-configuration Debug -sdk iphonesimulator ARCHS=arm64 ONLY_ACTIVE_ARCH=YES '
+                 'CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= -showdestinations\n'
+                 '\n'
+                 'Build settings from command line:\n'
+                 '    ARCHS = arm64\n'
+                 '    CODE_SIGN_IDENTITY = \n'
+                 '    CODE_SIGNING_ALLOWED = NO\n'
+                 '    CODE_SIGNING_REQUIRED = NO\n'
+                 '    ONLY_ACTIVE_ARCH = YES\n'
+                 '    SDKROOT = iphonesimulator26.2\n'
+                 '\n'
+                 '\n'
+                 '\n'
+                 '\tAvailable destinations for the "Runner" scheme:\n'
+                 '\t\t{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], '
+                 'id:ef69742d45106fef6fd0eea68bb6a577435936e6, name:My Mac }\n'
+                 '\t\t{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS '
+                 'Device }\n'
+                 '\t\t{ platform:iOS Simulator, '
+                 'id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS '
+                 'Simulator Device }\n'}
 
 
 class XcodeSelectionTests(unittest.TestCase):
@@ -381,6 +431,298 @@ class FrozenXcodeSelectionTests(unittest.TestCase):
             self.assertEqual(report["status"], "failed")
             self.assertEqual(len(report["candidates"]), 1)
             self.assertNotIn("simulator", report)
+
+
+class ColdHostDiscoveryRecoveryTests(unittest.TestCase):
+    inventory = FrozenXcodeSelectionTests.inventory
+
+    def observe(self, observations, budget=300, durations=None, freeze=True):
+        """Script whole observations with a deterministic monotonic/wall clock."""
+        commands = selector.probe_commands("arm64")
+        elapsed = [0.0]
+        calls = []
+        base = datetime(2026, 10, 3, tzinfo=timezone.utc)
+        durations = durations or {}
+
+        def run(command, **kwargs):
+            observation = len(calls) // 5
+            name = next(name for name, expected in commands.items() if command == expected)
+            calls.append((name, command, kwargs))
+            value = observations[observation][name]
+            duration = durations.get((observation, name), 1)
+            if isinstance(value, subprocess.TimeoutExpired):
+                elapsed[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=value.stdout, stderr=value.stderr)
+            if duration >= kwargs["timeout"]:
+                elapsed[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            elapsed[0] += duration
+            if isinstance(value, subprocess.CompletedProcess):
+                return value
+            return subprocess.CompletedProcess(command, 0, value, f"observation {observation + 1}: {name} stderr\n")
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(Path, "is_dir", return_value=True), \
+                patch.object(selector, "DISCOVERY_BUDGET_SECONDS", budget), \
+                patch.object(selector.time, "monotonic", side_effect=lambda: elapsed[0]), \
+                patch.object(selector, "timestamp", side_effect=lambda: (base + timedelta(seconds=elapsed[0])).isoformat()), \
+                patch.object(selector, "datetime", wraps=datetime) as date, \
+                patch.object(selector.subprocess, "run", side_effect=run):
+            date.now.return_value = base
+            candidate = selector.probe(selector.FROZEN_DEVELOPER_DIR, "xcode-26.2", Path(directory),
+                                       "arm64", freeze_xcode_26_2=freeze)
+            logs = {path.name: path.read_text() for path in Path(directory).iterdir()}
+        return candidate, calls, logs
+
+    def cold_inventory(self):
+        return dict(self.inventory(), xcdevice=json.dumps(ACTUAL_622_CURRENT_XCDEVICES),
+                    simctl=subprocess.TimeoutExpired([], 30, output=b"partial simctl", stderr=b"starting CoreSimulator"))
+
+    def test_cold_host_gets_one_fresh_observation_and_preserves_first_failure(self):
+        fresh_id = "f107b59b-9864-4ae7-a12a-9104c143c89d"
+        original_environment = dict(os.environ)
+        candidate, calls, logs = self.observe([self.cold_inventory(), self.inventory(fresh_id)])
+        self.assertNotIn("error", candidate)
+        self.assertTrue(candidate["resampled"])
+        self.assertEqual(candidate["eligible_simulators"][0]["udid"], fresh_id)
+        self.assertEqual(candidate["duration_seconds"], 39)
+        self.assertEqual(candidate["total_budget_seconds"], 300)
+        self.assertEqual(candidate["deadline_at"], "2026-10-03T00:05:00+00:00")
+        self.assertEqual(candidate["first_failure"]["error"], "Read-only discovery failed: simctl")
+        self.assertIn("Mac-only", candidate["first_failure"]["startup_retry_reason"])
+        self.assertEqual(candidate["first_failure"]["duration_seconds"], 34)
+        self.assertEqual(candidate["first_failure"]["started_at"], "2026-10-03T00:00:00+00:00")
+        self.assertEqual(candidate["first_failure"]["finished_at"], "2026-10-03T00:00:34+00:00")
+        self.assertEqual(len(candidate["attempts"]), 2)
+        self.assertEqual(len(calls), 10)
+        self.assertEqual([kwargs["timeout"] for _, _, kwargs in calls], [30, 30, 30, 30, 90] * 2)
+        self.assertEqual(len(logs), 20)
+        self.assertEqual(logs["xcode-26.2-simctl.txt"], "partial simctl")
+        self.assertIn("starting CoreSimulator", logs["xcode-26.2-simctl-stderr.txt"])
+        self.assertIn("timed out after 30", logs["xcode-26.2-simctl-stderr.txt"])
+        self.assertEqual(json.loads(logs["xcode-26.2-xcdevice.txt"]), ACTUAL_622_CURRENT_XCDEVICES)
+        self.assertIn(fresh_id, logs["xcode-26.2-retry1-xcdevice.txt"])
+        self.assertIn("observation 1", logs["xcode-26.2-destinations-stderr.txt"])
+        self.assertIn("observation 2", logs["xcode-26.2-retry1-destinations-stderr.txt"])
+        for attempt in candidate["attempts"]:
+            for query in attempt["queries"].values():
+                self.assertLessEqual(datetime.fromisoformat(query["started_at"]), datetime.fromisoformat(query["finished_at"]))
+                self.assertGreaterEqual(query["duration_seconds"], 0)
+        for _, command, kwargs in calls:
+            self.assertEqual(kwargs["env"]["DEVELOPER_DIR"], str(selector.FROZEN_DEVELOPER_DIR))
+            self.assertEqual(command[0], "xcrun")
+        self.assertEqual(dict(os.environ), original_environment)
+
+    def test_exact_a99_startup_shape_recovers_only_from_complete_fresh_second_pass(self):
+        first = dict(ACTUAL_A99_STARTUP_OUTPUTS, simctl=subprocess.TimeoutExpired([], 30, output=b""))
+        fresh_id = "f107b59b-9864-4ae7-a12a-9104c143c89d"
+        candidate, calls, logs = self.observe([first, self.inventory(fresh_id)])
+        self.assertNotIn("error", candidate)
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(candidate["eligible_simulators"][0]["udid"], fresh_id)
+        self.assertEqual(candidate["first_failure"]["error"], "Read-only discovery failed: simctl")
+        self.assertIn("only the generic iOS Simulator placeholder", candidate["first_failure"]["startup_retry_reason"])
+        for name, output in ACTUAL_A99_STARTUP_OUTPUTS.items():
+            self.assertEqual(logs[f"xcode-26.2-{name}.txt"], output)
+        self.assertEqual(logs["xcode-26.2-simctl.txt"], "")
+        for second in (first, dict(self.inventory(fresh_id), destinations=ACTUAL_A99_STARTUP_OUTPUTS["destinations"])):
+            with self.subTest(second=second):
+                candidate, calls, _ = self.observe([first, second])
+                self.assertIn("error", candidate)
+                self.assertEqual(candidate["eligible_simulators"], [])
+                self.assertEqual(len(calls), 10)
+
+    def test_only_exact_valid_placeholder_is_startup_absence_not_contrary_evidence(self):
+        concrete = HEADER + ACTUAL_622_26_DESTINATION
+        bad_destinations = [HEADER, "", PLACEHOLDERS.replace(selector.SIMULATOR_PLACEHOLDER, "unknown:placeholder"),
+                            PLACEHOLDERS.replace("Any iOS Simulator Device", "Unknown device"),
+                            PLACEHOLDERS.replace(" }", ", error:unavailable }"),
+                            PLACEHOLDERS.replace(" }", ""),
+                            concrete.replace("iPhone SE (3rd generation)", "iPhone 16"),
+                            concrete.replace("OS:26.2", "OS:18.5"),
+                            PLACEHOLDERS + concrete.replace("iPhone SE (3rd generation)", "iPhone 16")]
+        for destinations in bad_destinations:
+            with self.subTest(destinations=destinations):
+                first = dict(ACTUAL_A99_STARTUP_OUTPUTS, destinations=destinations,
+                             simctl=subprocess.TimeoutExpired([], 30))
+                candidate, calls, _ = self.observe([first, self.inventory()])
+                self.assertIn("error", candidate)
+                self.assertFalse(candidate["resampled"])
+                self.assertEqual(len(calls), 5)
+
+    def test_valid_empty_or_mac_only_xcdevice_can_recover_without_timeout(self):
+        for rows in ([], ACTUAL_622_CURRENT_XCDEVICES):
+            with self.subTest(rows=rows):
+                candidate, calls, _ = self.observe([dict(self.inventory(), xcdevice=json.dumps(rows)), self.inventory()])
+                self.assertNotIn("error", candidate)
+                self.assertTrue(candidate["resampled"])
+                self.assertEqual(len(calls), 10)
+
+    def test_each_discovery_timeout_is_retryable_but_no_other_command_is(self):
+        for name in selector.probe_commands("arm64"):
+            with self.subTest(name=name):
+                first = dict(self.inventory(), **{name: subprocess.TimeoutExpired([], 30)})
+                candidate, calls, _ = self.observe([first, self.inventory()])
+                expected_retry = name in selector.DISCOVERY_QUERIES
+                self.assertEqual(candidate["resampled"], expected_retry)
+                self.assertEqual(len(calls), 10 if expected_retry else 5)
+                self.assertEqual("error" in candidate, not expected_retry)
+
+    def test_repeated_startup_failure_stops_after_second_complete_observation(self):
+        candidate, calls, _ = self.observe([self.cold_inventory(), self.cold_inventory()])
+        self.assertIn("Read-only discovery failed: simctl", candidate["error"])
+        self.assertEqual(candidate["eligible_simulators"], [])
+        self.assertTrue(candidate["resampled"])
+        self.assertEqual(len(calls), 10)
+        with self.assertRaisesRegex(RuntimeError, "no fallback"):
+            selector.choose_candidate([candidate], freeze_xcode_26_2=True)
+
+    def test_source_conflicts_do_not_retry_even_with_a_startup_timeout(self):
+        other = "00000000-0000-0000-0000-000000000001"
+        cases = [dict(self.inventory(), xcdevice=self.inventory(other)["xcdevice"]),
+                 dict(self.inventory(), xcdevice="[]", destinations=self.inventory(other)["destinations"]),
+                 dict(self.inventory(), xcdevice=self.inventory(other)["xcdevice"],
+                      destinations=subprocess.TimeoutExpired([], 90))]
+        for first in cases:
+            with self.subTest(first=first):
+                candidate, calls, _ = self.observe([first, self.inventory()])
+                self.assertIn("error", candidate)
+                self.assertFalse(candidate["resampled"])
+                self.assertEqual(len(calls), 5)
+
+    def test_second_observation_cannot_reuse_first_observations_matching_uuid(self):
+        second = dict(self.inventory("00000000-0000-0000-0000-000000000001"),
+                      destinations=self.inventory()["destinations"])
+        candidate, calls, _ = self.observe([self.cold_inventory(), second])
+        self.assertIn("No available", candidate["error"])
+        self.assertEqual(candidate["eligible_simulators"], [])
+        self.assertEqual(len(calls), 10)
+
+    def test_malformed_or_ambiguous_successful_evidence_never_retries(self):
+        valid = self.inventory()
+        bad = [("xcdevice", "{bad"), ("xcdevice", "[null]"), ("xcdevice", "[{}]"),
+               ("simctl", "{bad"), ("simctl", '{"devices": []}'),
+               ("simctl", '{"devices": {"runtime": [null]}}'),
+               ("destinations", "not destinations"),
+               ("xcdevice", json.dumps(json.loads(valid["xcdevice"]) * 2)),
+               ("destinations", valid["destinations"] + valid["destinations"].splitlines()[1])]
+        for name, value in bad:
+            with self.subTest(name=name, value=value):
+                first = dict(valid, **{name: value})
+                timeout_source = "simctl" if name != "simctl" else "xcdevice"
+                first[timeout_source] = subprocess.TimeoutExpired([], 30)
+                candidate, calls, _ = self.observe([first, valid])
+                self.assertIn("Invalid discovery evidence", candidate["error"])
+                self.assertFalse(candidate["resampled"])
+                self.assertEqual(len(calls), 5)
+
+    def test_generic_nonzero_exit_or_wrong_frozen_target_never_retries(self):
+        cases = [dict(self.cold_inventory(), xcdevice=subprocess.CompletedProcess([], 1, "", "unknown failure")),
+                 dict(self.cold_inventory(), destinations=self.inventory()["destinations"].replace("iPhone SE (3rd generation)", "iPhone 16")),
+                 dict(self.inventory(), simctl=subprocess.TimeoutExpired([], 30),
+                      xcdevice=self.inventory()["xcdevice"].replace("iPhone14,6", "iPhone17,1"))]
+        for first in cases:
+            with self.subTest(first=first):
+                candidate, calls, _ = self.observe([first, self.inventory()])
+                self.assertIn("error", candidate)
+                self.assertFalse(candidate["resampled"])
+                self.assertEqual(len(calls), 5)
+
+    def test_wrong_toolchain_or_sdk_never_retries_and_revalidated_on_second_pass(self):
+        for field, value in (("version", "Xcode 16.4\nBuild version 16F6\n"), ("sdk", "18.5\n")):
+            with self.subTest(field=field):
+                first = dict(self.cold_inventory(), **{field: value})
+                candidate, calls, _ = self.observe([first, self.inventory()])
+                self.assertIn("Frozen selection requires exactly", candidate["error"])
+                self.assertFalse(candidate["resampled"])
+                self.assertEqual(len(calls), 5)
+                candidate, calls, _ = self.observe([self.cold_inventory(), dict(self.inventory(), **{field: value})])
+                self.assertIn("Frozen selection requires exactly", candidate["error"])
+                self.assertEqual(candidate["eligible_simulators"], [])
+                self.assertEqual(len(calls), 10)
+                self.assertTrue(all(kwargs["env"]["DEVELOPER_DIR"] == str(selector.FROZEN_DEVELOPER_DIR)
+                                    for _, _, kwargs in calls))
+
+    def test_remaining_total_budget_shortens_timeout_and_rejects_late_result(self):
+        candidate, calls, _ = self.observe([self.cold_inventory(), self.inventory()], budget=40,
+                                           durations={(1, "destinations"): 10})
+        self.assertIn("total deadline exhausted", candidate["error"])
+        self.assertEqual(candidate["duration_seconds"], 40)
+        self.assertEqual(candidate["eligible_simulators"], [])
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(calls[-1][2]["timeout"], 2)
+        self.assertEqual(candidate["queries"]["destinations"]["original_timeout_seconds"], 90)
+        self.assertTrue(candidate["queries"]["destinations"]["deadline_exhausted"])
+
+    def test_no_command_starts_after_total_budget_is_consumed(self):
+        candidate, calls, logs = self.observe([self.cold_inventory(), self.inventory()], budget=35,
+                                             durations={(1, "version"): 2})
+        self.assertIn("total deadline exhausted", candidate["error"])
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(candidate["duration_seconds"], 35)
+        self.assertEqual(candidate["eligible_simulators"], [])
+        for name in ("sdk", "xcdevice", "simctl", "destinations"):
+            self.assertTrue(candidate["queries"][name]["skipped"])
+            self.assertEqual(candidate["queries"][name]["timeout_seconds"], 0)
+            self.assertIn("command not run", logs[f"xcode-26.2-retry1-{name}-stderr.txt"])
+
+    def test_cli_recovery_only_exports_final_complete_success_and_retains_report(self):
+        fresh_id = "f107b59b-9864-4ae7-a12a-9104c143c89d"
+        for recover in (True, False):
+            with self.subTest(recover=recover), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "mobile/ios/Pods/Pods.xcodeproj").mkdir(parents=True)
+                github_env = root / "github-env"
+                github_env.write_text("EXISTING=value\n")
+                first = self.cold_inventory()
+                observations = [first, self.inventory(fresh_id) if recover else first]
+                calls = []
+
+                def run(command, **kwargs):
+                    observation = len(calls) // 5
+                    calls.append((command, kwargs))
+                    commands = selector.probe_commands("arm64")
+                    name = next(name for name, expected in commands.items() if command == expected)
+                    value = observations[observation][name]
+                    if isinstance(value, subprocess.TimeoutExpired):
+                        raise value
+                    # Xcode can put the destinations inventory on stderr.
+                    return subprocess.CompletedProcess(command, 0, "" if name == "destinations" else value,
+                                                       value if name == "destinations" else "")
+
+                with patch.object(selector, "ROOT", root), \
+                        patch.object(Path, "is_dir", return_value=True), \
+                        patch.object(selector.platform, "system", return_value="Darwin"), \
+                        patch.object(selector.platform, "machine", return_value="arm64"), \
+                        patch.dict(os.environ, {"GITHUB_ENV": str(github_env), "DEVELOPER_DIR": str(PREVIOUS_DEVELOPER_DIR)}), \
+                        patch.object(selector.subprocess, "check_output") as current_xcode, \
+                        patch.object(selector.subprocess, "run", side_effect=run), redirect_stdout(io.StringIO()):
+                    if recover:
+                        selector.main(["--freeze-xcode-26.2"])
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "no fallback"):
+                            selector.main(["--freeze-xcode-26.2"])
+                    self.assertEqual(os.environ["DEVELOPER_DIR"], str(PREVIOUS_DEVELOPER_DIR))
+                current_xcode.assert_not_called()
+                self.assertEqual(len(calls), 10)
+                report = json.loads((root / "platform-evidence/ios/xcode-selection.json").read_text())
+                self.assertEqual(report["status"], "selected" if recover else "failed")
+                self.assertEqual(len(report["candidates"]), 1)
+                self.assertEqual(len(report["candidates"][0]["attempts"]), 2)
+                self.assertIn("first_failure", report["candidates"][0])
+                expected = "EXISTING=value\n"
+                if recover:
+                    expected += f"DEVELOPER_DIR={selector.FROZEN_DEVELOPER_DIR}\nIOTOOLS_IOS_SIMULATOR_UDID={fresh_id}\n"
+                    self.assertEqual(report["simulator"]["udid"], fresh_id)
+                else:
+                    self.assertNotIn("simulator", report)
+                self.assertEqual(github_env.read_text(), expected)
+
+    def test_default_mode_remains_one_observation_without_startup_retry(self):
+        candidate, calls, _ = self.observe([self.cold_inventory(), self.inventory()], freeze=False)
+        self.assertFalse(candidate["resampled"])
+        self.assertIn("error", candidate)
+        self.assertEqual(len(calls), 5)
 
 
 if __name__ == "__main__":

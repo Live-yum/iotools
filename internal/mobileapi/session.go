@@ -83,6 +83,7 @@ type modbusTotals struct {
 	DurationMS float64 `json:"duration_ms"`
 }
 type Session struct {
+	historyPreview               *engine.HTTPHistoryRetentionPreview
 	modbusTotals                 modbusTotals
 	results                      map[string]cachedResult
 	resultOrder                  []string

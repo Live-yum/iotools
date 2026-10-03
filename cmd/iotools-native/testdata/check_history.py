@@ -251,7 +251,11 @@ class NativeHistoryTests(unittest.TestCase):
         done, _ = s.run(self.request())
         self.assertEqual(done["status"], "completed")
         self.assertEqual(self.count_sql(), 1)
-        self.assertEqual(s.command(op="history.status"), {"exists": True, "enabled": False})
+        status = s.command(op="history.status")
+        self.assertEqual({k: status[k] for k in ("exists", "enabled")}, {"exists": True, "enabled": False})
+        self.assertEqual(status["storage"]["entries"], 1)
+        self.assertEqual(status["storage"]["database_bytes"], (self.root / "history.sqlite").stat().st_size)
+        self.assertEqual(status["storage"]["policy"]["mode"], "stop")
         self.assertEqual(len(s.rows()), 1)
 
     def test_readonly_history_skips_database_then_records_future_only(self):
@@ -262,7 +266,7 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertEqual(s.rows(), [])
         self.assertEqual(s.command(op="history.status"), {"enabled": True, "exists": False})
         self.assertEqual([e["data"] for e in events if e["kind"] == "history_status"],
-                         [{"recorded": False, "reason": "read_only", "message": "只读保护，本次未记录"}])
+                         [{"recorded": False, "reason": "read_only", "message": "只读保护，本次未记录", "request_id": "fixture"}])
         self.assertTrue(s.command(op="state")["options"]["history"])
         s.command(op="options.set", options={"history": True, "read_only": False})
         done, events = s.run(self.request())
@@ -306,7 +310,7 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertEqual(json.loads(detail["body"])["text"], "历史 中文 😀")
         self.assertEqual((self.root / "history.sqlite").read_bytes(), before)
         self.assertEqual([e["data"] for e in events if e["kind"] == "history_status"],
-                         [{"recorded": False, "reason": "read_only", "message": "只读保护，本次未记录"}])
+                         [{"recorded": False, "reason": "read_only", "message": "只读保护，本次未记录", "request_id": "fixture"}])
 
     def test_readonly_does_not_override_explicit_history_off_or_persist_false(self):
         s = self.session()
@@ -378,6 +382,58 @@ class NativeHistoryTests(unittest.TestCase):
         self.assertEqual(row["body_bytes"], 0)
         self.assertEqual(row["method"], "HEAD")
         self.assertEqual(self.count_sql(), 1)
+
+    def test_capacity_stop_preserves_rows_and_response_completion(self):
+        s = self.session(history=True)
+        s.run(self.request())
+        policy = {"mode": "stop", "max_age_days": 0, "max_entries": 1, "max_bytes": 0}
+        plan = s.command(op="history.retention.preview", policy=policy)
+        self.assertEqual(plan["delete_entries"], 0)
+        s.command(op="history.retention.apply", token=plan["token"], confirmed=True)
+        original = s.rows()
+        done, events = s.run(self.request())
+        self.assertEqual(done["status"], "completed")
+        self.assertEqual(s.rows(), original)
+        self.assertEqual([e["data"]["reason"] for e in events if e["kind"] == "history_status"], ["capacity"])
+        self.assertEqual(s.command(op="history.status")["storage"]["policy"], policy)
+
+    def test_prune_confirmation_staleness_and_readonly_compaction(self):
+        s = self.session(history=True)
+        s.run(self.request())
+        s.run(self.request())
+        policy = {"mode": "prune", "max_age_days": 0, "max_entries": 1, "max_bytes": 0}
+        plan = s.command(op="history.retention.preview", policy=policy)
+        self.assertEqual(plan["delete_entries"], 1)
+        self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"])["ok"])
+        self.assertEqual(self.count_sql(), 2)
+        plan = s.command(op="history.retention.preview", policy=policy)
+        s.run(self.request())
+        self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"], confirmed=True)["ok"])
+        self.assertEqual(self.count_sql(), 3)
+        plan = s.command(op="history.retention.preview", policy=policy)
+        with closing(sqlite3.connect(self.root / "history.sqlite")) as db, db:
+            db.execute("UPDATE http_history SET status=201 WHERE id=1")
+        self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"], confirmed=True)["ok"])
+        self.assertEqual(self.count_sql(), 3)
+        plan = s.command(op="history.retention.preview", policy=policy)
+        s.command(op="history.retention.apply", token=plan["token"], confirmed=True)
+        self.assertEqual(self.count_sql(), 1)
+        s.run(self.request())
+        self.assertEqual(self.count_sql(), 1)
+        self.assertFalse(s.raw(op="history.compact")["ok"])
+        s.command(op="history.compact", confirmed=True)
+        self.assertEqual(self.count_sql(), 1)
+        s.command(op="options.set", options={"history": True, "read_only": True})
+        self.assertFalse(s.raw(op="history.compact", confirmed=True)["ok"])
+        plan = s.command(op="history.retention.preview", policy=policy)
+        self.assertFalse(s.raw(op="history.retention.apply", token=plan["token"], confirmed=True)["ok"])
+
+    def test_readonly_connection_failure_has_no_recording_notice(self):
+        s = self.session(history=True, read_only=True)
+        done, events = s.run(self.request(endpoint="http://127.0.0.1:1", timeout="100ms"))
+        self.assertEqual(done["status"], "failed")
+        self.assertFalse(any(e["kind"] == "history_status" for e in events))
+        self.assertFalse((self.root / "history.sqlite").exists())
 
     def test_request_preview_masks_synthetic_credentials_without_io(self):
         s = self.session()

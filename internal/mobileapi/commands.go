@@ -18,55 +18,56 @@ import (
 )
 
 type command struct {
-	RequestIDs      []string                 `json:"request_ids,omitempty"`
-	SelectionIndex  *int                     `json:"selection_index,omitempty"`
-	ExecuteTriggers bool                     `json:"execute_triggers,omitempty"`
-	ResultID        string                   `json:"result_id,omitempty"`
-	RunID           string                   `json:"run_id,omitempty"`
-	SubscriptionID  string                   `json:"subscription_id,omitempty"`
-	ApplicationURI  string                   `json:"application_uri,omitempty"`
-	CertPath        string                   `json:"cert_path,omitempty"`
-	KeyPath         string                   `json:"key_path,omitempty"`
-	Target          string                   `json:"target,omitempty"`
-	Port            int                      `json:"port,omitempty"`
-	TimeoutMS       int                      `json:"timeout_ms,omitempty"`
-	Concurrency     int                      `json:"concurrency,omitempty"`
-	Method          string                   `json:"method,omitempty"`
-	Listen          string                   `json:"listen,omitempty"`
-	Scope           *engine.ModbusWriteScope `json:"scope,omitempty"`
-	Snapshot        *engine.RegisterSnapshot `json:"snapshot,omitempty"`
-	Before          *engine.RegisterSnapshot `json:"before,omitempty"`
-	After           *engine.RegisterSnapshot `json:"after,omitempty"`
-	Words           map[int]uint16           `json:"words,omitempty"`
-	HexAddress      bool                     `json:"hex_address,omitempty"`
-	Op              string                   `json:"op"`
-	Source          string                   `json:"source,omitempty"`
-	Format          string                   `json:"format,omitempty"`
-	Profile         string                   `json:"profile,omitempty"`
-	RequestID       string                   `json:"request_id,omitempty"`
-	OriginalID      string                   `json:"original_id,omitempty"`
-	Request         *config.Request          `json:"request,omitempty"`
-	Token           string                   `json:"token,omitempty"`
-	Confirmed       bool                     `json:"confirmed,omitempty"`
-	InteractionID   string                   `json:"interaction_id,omitempty"`
-	Value           any                      `json:"value,omitempty"`
-	Options         *Options                 `json:"options,omitempty"`
-	HistoryID       int64                    `json:"history_id,omitempty"`
-	IDs             []int64                  `json:"ids,omitempty"`
-	Query           string                   `json:"query,omitempty"`
-	Data            string                   `json:"data,omitempty"`
-	Direction       string                   `json:"direction,omitempty"`
-	Codec           codec.Config             `json:"codec,omitempty"`
-	Codecs          map[string]codec.Config  `json:"codecs,omitempty"`
-	Rules           []codec.Rule             `json:"rules,omitempty"`
-	SQL             string                   `json:"sql,omitempty"`
-	Backup          string                   `json:"backup,omitempty"`
-	Path            string                   `json:"path,omitempty"`
-	Kind            string                   `json:"kind,omitempty"`
-	Address         int                      `json:"address,omitempty"`
-	WordOrder       string                   `json:"word_order,omitempty"`
-	Prefix          string                   `json:"prefix,omitempty"`
-	Overrides       *engine.HTTPOverrides    `json:"overrides,omitempty"`
+	Policy          *engine.HTTPHistoryPolicy `json:"policy,omitempty"`
+	RequestIDs      []string                  `json:"request_ids,omitempty"`
+	SelectionIndex  *int                      `json:"selection_index,omitempty"`
+	ExecuteTriggers bool                      `json:"execute_triggers,omitempty"`
+	ResultID        string                    `json:"result_id,omitempty"`
+	RunID           string                    `json:"run_id,omitempty"`
+	SubscriptionID  string                    `json:"subscription_id,omitempty"`
+	ApplicationURI  string                    `json:"application_uri,omitempty"`
+	CertPath        string                    `json:"cert_path,omitempty"`
+	KeyPath         string                    `json:"key_path,omitempty"`
+	Target          string                    `json:"target,omitempty"`
+	Port            int                       `json:"port,omitempty"`
+	TimeoutMS       int                       `json:"timeout_ms,omitempty"`
+	Concurrency     int                       `json:"concurrency,omitempty"`
+	Method          string                    `json:"method,omitempty"`
+	Listen          string                    `json:"listen,omitempty"`
+	Scope           *engine.ModbusWriteScope  `json:"scope,omitempty"`
+	Snapshot        *engine.RegisterSnapshot  `json:"snapshot,omitempty"`
+	Before          *engine.RegisterSnapshot  `json:"before,omitempty"`
+	After           *engine.RegisterSnapshot  `json:"after,omitempty"`
+	Words           map[int]uint16            `json:"words,omitempty"`
+	HexAddress      bool                      `json:"hex_address,omitempty"`
+	Op              string                    `json:"op"`
+	Source          string                    `json:"source,omitempty"`
+	Format          string                    `json:"format,omitempty"`
+	Profile         string                    `json:"profile,omitempty"`
+	RequestID       string                    `json:"request_id,omitempty"`
+	OriginalID      string                    `json:"original_id,omitempty"`
+	Request         *config.Request           `json:"request,omitempty"`
+	Token           string                    `json:"token,omitempty"`
+	Confirmed       bool                      `json:"confirmed,omitempty"`
+	InteractionID   string                    `json:"interaction_id,omitempty"`
+	Value           any                       `json:"value,omitempty"`
+	Options         *Options                  `json:"options,omitempty"`
+	HistoryID       int64                     `json:"history_id,omitempty"`
+	IDs             []int64                   `json:"ids,omitempty"`
+	Query           string                    `json:"query,omitempty"`
+	Data            string                    `json:"data,omitempty"`
+	Direction       string                    `json:"direction,omitempty"`
+	Codec           codec.Config              `json:"codec,omitempty"`
+	Codecs          map[string]codec.Config   `json:"codecs,omitempty"`
+	Rules           []codec.Rule              `json:"rules,omitempty"`
+	SQL             string                    `json:"sql,omitempty"`
+	Backup          string                    `json:"backup,omitempty"`
+	Path            string                    `json:"path,omitempty"`
+	Kind            string                    `json:"kind,omitempty"`
+	Address         int                       `json:"address,omitempty"`
+	WordOrder       string                    `json:"word_order,omitempty"`
+	Prefix          string                    `json:"prefix,omitempty"`
+	Overrides       *engine.HTTPOverrides     `json:"overrides,omitempty"`
 }
 
 func (s *Session) command(c command) (any, error) {
@@ -250,7 +251,7 @@ func (s *Session) command(c command) (any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		return engine.FilterJSON(ctx, c.Query, []byte(c.Data))
-	case "history.status", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
+	case "history.retention.preview", "history.retention.apply", "history.compact", "history.status", "history.list", "history.get", "history.delete", "history.collections", "history.query", "history.preview", "history.execute", "history.collection.preview":
 		return s.history(c)
 	case "crypto.convert":
 		if len(c.Data) > 4<<20 {
@@ -485,7 +486,7 @@ func (s *Session) selected(c command) (*config.Collection, config.Request, strin
 	return collection, r, profile, nil
 }
 func (s *Session) history(c command) (any, error) {
-	if s.options.ReadOnly && (c.Op == "history.delete" || c.Op == "history.execute") {
+	if s.options.ReadOnly && (c.Op == "history.delete" || c.Op == "history.execute" || c.Op == "history.retention.apply" || c.Op == "history.compact") {
 		return nil, errors.New("只读模式禁止修改历史数据库")
 	}
 	path := filepath.Join(s.root, "history.sqlite")
@@ -498,7 +499,17 @@ func (s *Session) history(c command) (any, error) {
 	}
 	exists := statErr == nil && info.Mode().IsRegular()
 	if c.Op == "history.status" {
-		return map[string]any{"exists": exists, "enabled": s.options.History}, nil
+		out := map[string]any{"exists": exists, "enabled": s.options.History}
+		if exists {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			status, err := engine.HTTPHistoryStorageStatus(ctx, path)
+			if err != nil {
+				return nil, err
+			}
+			out["storage"] = status
+		}
+		return out, nil
 	}
 	if !exists {
 		if c.Op == "history.list" || c.Op == "history.collections" {
@@ -509,6 +520,30 @@ func (s *Session) history(c command) (any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	switch c.Op {
+	case "history.retention.preview":
+		if c.Policy == nil {
+			return nil, errors.New("policy is required")
+		}
+		plan, err := engine.PreviewHTTPHistoryRetention(ctx, path, *c.Policy)
+		if err == nil {
+			s.historyPreview = &plan
+		}
+		return plan, err
+	case "history.retention.apply":
+		if e := s.idle(); e != nil {
+			return nil, e
+		}
+		if s.historyPreview == nil || c.Token != s.historyPreview.Token {
+			return nil, errors.New("请先预览当前历史策略")
+		}
+		plan := *s.historyPreview
+		s.historyPreview = nil
+		return engine.ApplyHTTPHistoryRetention(ctx, path, plan, c.Confirmed)
+	case "history.compact":
+		if e := s.idle(); e != nil {
+			return nil, e
+		}
+		return engine.CompactHTTPHistory(ctx, path, c.Confirmed)
 	case "history.list":
 		return engine.ListHTTPHistory(ctx, path, s.path, c.RequestID)
 	case "history.get":
