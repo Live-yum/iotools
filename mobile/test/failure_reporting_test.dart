@@ -5,7 +5,9 @@ import '../integration_test/failure_reporting.dart';
 void main() {
   test('disposed diagnostic tree preserves original exception, stack and failure', () {
     final original = StateError('original application failure');
-    final stack = StackTrace.fromString('original application stack');
+    final stack = StackTrace.fromString(
+      '#0      originalApplication (package:iotools_mobile/failure_fixture.dart:17:3)',
+    );
     var calls = 0;
     final messages = <String>[];
     final report = preserveOriginalFailure((details, description) {
@@ -14,7 +16,7 @@ void main() {
       expect(identical(details.stack, stack), isTrue);
       expect(description, 'failed case');
       expect(details.toString(), contains('original application failure'));
-      expect(details.toString(), contains('original application stack'));
+      expect(details.toString(), contains('originalApplication'));
       expect(details.toString(), contains('IOTOOLS_DIAGNOSTIC_SERIALIZATION_FAILED'));
     }, emit: messages.add);
     report(FlutterErrorDetails(
@@ -24,7 +26,7 @@ void main() {
     ), 'failed case');
     expect(calls, 1);
     expect(messages.single, contains('original application failure'));
-    expect(messages.single, contains('original application stack'));
+    expect(messages.single, contains(stack.toString()));
   });
 
   test('live diagnostic text is frozen and a failing delegate still fails', () {

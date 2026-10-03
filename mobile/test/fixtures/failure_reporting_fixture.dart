@@ -11,7 +11,9 @@ void main() {
     await t.pumpWidget(const MaterialApp(home: Text('live tree')));
     FlutterError.reportError(FlutterErrorDetails(
       exception: StateError('IOTOOLS_INTENTIONAL_ORIGINAL_FAILURE'),
-      stack: StackTrace.fromString('IOTOOLS_ORIGINAL_STACK_MARKER'),
+      stack: StackTrace.fromString(
+        '#0      IOTOOLS_ORIGINAL_STACK_MARKER (package:iotools_mobile/failure_fixture.dart:17:3)',
+      ),
       informationCollector: () => throw StateError('disposed render tree'),
     ));
     await t.pumpWidget(const SizedBox());
