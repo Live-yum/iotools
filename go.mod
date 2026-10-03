@@ -8,7 +8,7 @@ require (
 	github.com/goburrow/modbus v0.1.0
 	github.com/gopcua/opcua v0.9.1
 	github.com/itchyny/gojq v0.12.19
-	github.com/linkedin/goavro/v2 v2.14.1
+	github.com/linkedin/goavro/v2 v2.15.0
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/rivo/tview v0.42.0
