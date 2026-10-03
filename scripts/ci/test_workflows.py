@@ -26,6 +26,13 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('go install golang.org/x/vuln/cmd/govulncheck@v1.8.0',source)
         self.assertIn('govulncheck -show verbose ./...',source)
         self.assertNotIn('continue-on-error',source)
+    def test_validation_branch_checks_flutter_before_full_matrix(self):
+        source=(ROOT/'.github/workflows/fast-pr.yml').read_text()
+        self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/feat/gateway-rejection-validation'",source)
+        for command in ('flutter pub get --enforce-lockfile','flutter analyze','flutter test --reporter expanded'):
+            self.assertIn(command,source)
+        self.assertIn('adc901062556672b4138e18a4dc62a4be8f4b3c2',source)
+        self.assertNotIn('continue-on-error',source)
     def test_full_release_candidate_matrix_remains(self):
         source=(ROOT/'.github/workflows/flutter-platforms.yml').read_text()
         self.assertEqual(source.count("contains(github.event.pull_request.labels.*.name, 'release-candidate')"),4)

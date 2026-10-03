@@ -13,6 +13,28 @@ concurrency:
 env:
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  flutter-validation:
+    # Validate changed test harnesses before advancing the release PR and
+    # starting its full real-device/platform matrix. This is not acceptance.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/gateway-rejection-validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          persist-credentials: false
+      - name: Install pinned official Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Locked Flutter analysis and widget regressions
+        run: |
+          cd mobile
+          flutter pub get --enforce-lockfile
+          flutter analyze
+          flutter test --reporter expanded
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
