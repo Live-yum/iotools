@@ -1,6 +1,7 @@
 import 'runtime_adapter.dart';
 import 'action_interaction.dart';
 import 'http_fixture_diagnostics.dart';
+import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'kafka_management_test.dart';
 void main() {
   WidgetController.hitTestWarningShouldBeFatal = true;
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  installOriginalFailureReporter();
   testWidgets(
     'Flutter HTTP native AES controls, exact wire bytes, history, SQL and privacy',
     (tester) async {

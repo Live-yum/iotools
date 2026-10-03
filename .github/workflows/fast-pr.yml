@@ -34,6 +34,13 @@ jobs:
           cd mobile
           flutter pub get --enforce-lockfile
           flutter analyze
+          set +e
+          flutter test test/fixtures/failure_reporting_fixture.dart --reporter expanded > "$RUNNER_TEMP/failure-reporting-fixture.log" 2>&1
+          fixture_status=$?
+          set -e
+          cat "$RUNNER_TEMP/failure-reporting-fixture.log"
+          test "$fixture_status" -ne 0
+          python3 ../scripts/flutter/verify-failure-report.py "$RUNNER_TEMP/failure-reporting-fixture.log"
           flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded
           flutter test --reporter expanded
   checks:

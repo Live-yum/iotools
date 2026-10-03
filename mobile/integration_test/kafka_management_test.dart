@@ -1,4 +1,5 @@
 import 'runtime_adapter.dart';
+import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -93,6 +94,29 @@ void registerKafkaManagementTests() {
         }),
       });
       await engine.close();
+      Object? primaryFailure;
+      var frameworkFailure = false, failureCaptured = false;
+      final previousErrorHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        frameworkFailure = true;
+        debugPrintSynchronously('KAFKA_FRAMEWORK_ERROR_PRIMARY '
+            '${boundedFailureText(details.exception)}\n'
+            '${boundedFailureText(details.stack)}');
+        previousErrorHandler?.call(details);
+      };
+      Future<void> captureFailure() async {
+        if (failureCaptured) return;
+        failureCaptured = true;
+        try {
+          debugPrintSynchronously('KAFKA_FAILURE_METRICS '
+              '${await metrics().timeout(const Duration(seconds: 3))}');
+          await takeProtocolScreenshot(t, binding, 'flutter-kafka-failure')
+              .timeout(const Duration(seconds: 5));
+        } catch (error) {
+          debugPrintSynchronously('KAFKA_EVIDENCE_FAILED '
+              '${boundedFailureText(error, limit: 1024)}');
+        }
+      }
       try {
         await t.pumpWidget(
           protocolTestApp(engine, platform),
@@ -175,15 +199,30 @@ void registerKafkaManagementTests() {
           'flutter-kafka-04-connector-native-actions',
         );
         expect(after['http_mutations'], (before['http_mutations'] as int) + 6);
+      } catch (error, stack) {
+        primaryFailure = error;
+        debugPrintSynchronously('KAFKA_CASE_FAILURE '
+            '${boundedFailureText(error)}\n${boundedFailureText(stack)}');
+        await captureFailure();
+        rethrow;
       } finally {
-        await t.pumpWidget(const SizedBox());
-        await t.pump(const Duration(milliseconds: 300));
-        await engine.open();
-        await engine.command({
-          'op': 'config.save',
-          'source': original['source'],
-        });
-        await engine.close();
+        try {
+          if (frameworkFailure) await captureFailure();
+          await t.pumpWidget(const SizedBox());
+          await t.pump(const Duration(milliseconds: 300));
+          await engine.open();
+          await engine.command({
+            'op': 'config.save',
+            'source': original['source'],
+          });
+          await engine.close();
+        } catch (cleanupError) {
+          if (primaryFailure == null && !frameworkFailure) rethrow;
+          debugPrintSynchronously('KAFKA_CLEANUP_FAILED '
+              '${boundedFailureText(cleanupError, limit: 1024)}');
+        } finally {
+          FlutterError.onError = previousErrorHandler;
+        }
       }
     },
     timeout: const Timeout(Duration(minutes: 4)),
@@ -211,6 +250,7 @@ Future<void> wait(WidgetTester t, bool Function() ready) async {
 }
 
 Future<void> tap(WidgetTester t, Finder f) async {
+  debugPrintSynchronously('KAFKA_STAGE tap ${boundedFailureText(f, limit: 256)}');
   await wait(t, () => f.evaluate().isNotEmpty);
   await t.ensureVisible(f);
   await t.pump();
@@ -219,6 +259,7 @@ Future<void> tap(WidgetTester t, Finder f) async {
 }
 
 Future<void> enter(WidgetTester t, String key, String value) async {
+  debugPrintSynchronously('KAFKA_STAGE enter $key');
   final f = find.byKey(ValueKey(key));
   await wait(t, () => f.evaluate().isNotEmpty);
   await t.ensureVisible(f);
@@ -243,6 +284,7 @@ Future<void> run(
   bool write = true,
   bool cancel = false,
 }) async {
+  debugPrintSynchronously('KAFKA_STAGE run write=$write cancel=$cancel');
   final previous = mapOf(await e.command({'op': 'state'}))['run_id'];
   await tap(t, find.byKey(const ValueKey('run_request')));
   if (write) {
