@@ -9,11 +9,32 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = Path(__file__).with_name('android_dependency_baseline.json')
+UPDATES = Path(__file__).with_name('android_dependency_updates.json')
 JNI = {'jni', 'jni_flutter', 'jni_util'}
 
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+def reviewed_baseline(baseline, updates):
+    """Apply only checked-in exact changes; keep the original evidence intact."""
+    baseline = json.loads(json.dumps(baseline))
+    require(updates['baseline_source_commit'] == baseline['source_commit'], 'Wrong update baseline')
+    for name, change in updates['lock_updates'].items():
+        require(name not in JNI | {'path_provider_android'}, 'Protected Android dependency update')
+        require(baseline['lock_versions'].get(name) == change['from'], 'Wrong prior dependency version')
+        require(re.fullmatch(r'[0-9a-f]{64}', change['lock_entry_sha256']), 'Invalid updated lock hash')
+        baseline['lock_versions'][name] = change['to']
+        baseline['lock_entry_sha256'][name] = change['lock_entry_sha256']
+    coordinates = baseline['resolved_maven_coordinates']
+    for before, after in updates['maven_updates'].items():
+        require(before in coordinates, 'Wrong prior Maven coordinate')
+        require(before.rsplit(':', 1)[0] == after.rsplit(':', 1)[0], 'Changed Maven artifact identity')
+        coordinates[coordinates.index(before)] = after
+    for coordinate in updates.get('maven_added', []):
+        require(coordinate not in coordinates, 'Duplicate added Maven coordinate')
+        coordinates.append(coordinate)
+    return baseline
 
 def lock_versions(text):
     # pub's generated lockfile uses exactly these indentation levels. Reject
@@ -111,9 +132,11 @@ def main():
     parser.add_argument('--apk', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    baseline = json.loads(BASELINE.read_text())
-    report = {'status': 'failed', 'baseline_source_commit': baseline['source_commit']}
+    report = {'status': 'failed'}
     try:
+        baseline = reviewed_baseline(json.loads(BASELINE.read_text()), json.loads(UPDATES.read_text()))
+        report['baseline_source_commit'] = baseline['source_commit']
+        report['reviewed_updates_sha256'] = hashlib.sha256(UPDATES.read_bytes()).hexdigest()
         mobile = args.root / 'mobile'
         report['lock'] = audit_lock((mobile / 'pubspec.lock').read_text(), baseline)
         audit_graph(json.loads(args.deps.read_text()), report['lock']['versions'])

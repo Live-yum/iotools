@@ -68,8 +68,8 @@ jobs:
           gradle-version: '8.11.1'
       - name: Install pinned official Flutter SDK
         run: |
-          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          git clone --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           echo "FLUTTER_ROOT=$RUNNER_TEMP/flutter" >> "$GITHUB_ENV"
           "$RUNNER_TEMP/flutter/bin/flutter" --version
@@ -97,6 +97,7 @@ jobs:
         run: |
           python3 scripts/flutter/verify-mobile.py
           python3 scripts/flutter/test_emulator_runner.py
+          python3 scripts/flutter/test_emulator_ui_readiness.py
           python3 scripts/flutter/test_release_apk_gate.py
           bash scripts/android/build-native.sh
           bash scripts/flutter/prepare-assets.sh

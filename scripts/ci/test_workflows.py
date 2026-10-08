@@ -32,8 +32,23 @@ class WorkflowContracts(unittest.TestCase):
         for command in ('flutter pub get --enforce-lockfile','flutter analyze','flutter test --reporter expanded'):
             self.assertIn(command,source)
         self.assertIn('flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded',source)
-        self.assertIn('adc901062556672b4138e18a4dc62a4be8f4b3c2',source)
+        self.assertIn('6b182d2c7585eba26d4edce0f97630effd256c33',source)
         self.assertNotIn('continue-on-error',source)
+    def test_all_flutter_jobs_use_the_reviewed_sdk(self):
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location('release_config', ROOT/'scripts/release/release_config.py')
+        config = module_from_spec(spec)
+        spec.loader.exec_module(config)
+        for path in (ROOT/'.github/workflows').glob('*.yml'):
+            source = path.read_text()
+            installs = source.count('https://github.com/flutter/flutter.git')
+            if installs:
+                self.assertEqual(source.count('--branch 3.44.9 '), installs, str(path))
+                self.assertEqual(source.count(config.FLUTTER_REVISION), installs, str(path))
+        pubspec = (ROOT/'mobile/pubspec.yaml').read_text()
+        self.assertIn('sdk: ">=3.12.0 <4.0.0"', pubspec)
+        self.assertIn('flutter: ">=3.44.0"', pubspec)
+
     def test_full_release_candidate_matrix_remains(self):
         source=(ROOT/'.github/workflows/flutter-platforms.yml').read_text()
         self.assertEqual(source.count("contains(github.event.pull_request.labels.*.name, 'release-candidate')"),4)

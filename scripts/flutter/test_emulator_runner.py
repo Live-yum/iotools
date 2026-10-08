@@ -13,7 +13,7 @@ RUNNER = Path(__file__).with_name('run-emulator-tests.sh')
 WORKFLOW = RUNNER.parents[2]/'.github/workflows/android.yml'
 
 class RunnerTests(unittest.TestCase):
-    def run_case(self, *, drive=0, opcua=0, stop=0, plugin=0, instrument=0, verification=0, cleanup=0, renderer=0,
+    def run_case(self, *, drive=0, opcua=0, stop=0, plugin=0, instrument=0, verification=0, cleanup=0, renderer=0, readiness=0,
                  drive_log='I/flutter ( 123): 16:17 +6: All tests passed!',
                  opcua_log='I/flutter ( 456): 07:20 +2: All tests passed!'):
         with tempfile.TemporaryDirectory(prefix='iotools-runner-') as directory:
@@ -55,9 +55,10 @@ if test "$1" = reverse && test "${2:-}" = --remove; then exit "$CLEANUP_RESULT";
             script(root/'bin/python3', '''printf 'verify %s\\n' "$*" >> "$TRACE"
 if test "$1" = scripts/flutter/verify-mobile.py; then exit "$PLUGIN_RESULT"; fi
 if test "$1" = scripts/flutter/verify-aot-device.py; then exit "$VERIFY_RESULT"; fi
+if test "$1" = scripts/flutter/emulator_ui_readiness.py; then exit "$READINESS_RESULT"; fi
 exit 99''')
             trace = root/'trace.txt'
-            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'ANDROID_HOME':str(root/'android-sdk'), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer)}
+            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'ANDROID_HOME':str(root/'android-sdk'), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer), 'READINESS_RESULT':str(readiness)}
             result = subprocess.run(['bash',str(root/'scripts/flutter/run-emulator-tests.sh')], env=env, cwd=root, capture_output=True, timeout=15)
             recorded=trace.read_text()
             self.assertEqual(recorded.count('emulator -version'),1)
@@ -79,6 +80,11 @@ exit 99''')
             self.assertEqual(recorded.count('adb shell am force-stop'),3)
             self.assertIn('adb install -r android-dist/'+apk.name,recorded)
             self.assertIn('adb install -r android-evidence/aot-test/instrumentation.apk',recorded)
+            if readiness:
+                self.assertNotIn('adb shell am instrument',recorded)
+                self.assertNotIn('verify scripts/flutter/verify-aot-device.py',recorded)
+                return result.returncode,recorded
+            self.assertLess(recorded.index('verify scripts/flutter/emulator_ui_readiness.py'),recorded.index('adb shell am instrument'))
             self.assertIn('-e apk_sha256 '+hashlib.sha256(apk.read_bytes()).hexdigest(),recorded)
             self.assertIn('-e build_sha '+'a'*40,recorded)
             self.assertLess(recorded.index('adb shell am force-stop'),recorded.index('adb install -r android-dist/'))
@@ -93,6 +99,9 @@ exit 99''')
                 self.assertIn('app_outcome=',outcome)
                 recorded += f'\n{suite} outcome:\n{outcome}'
             return result.returncode, recorded
+
+    def test_unhealthy_foreground_prevents_aot_acceptance(self):
+        self.assertEqual(self.run_case(readiness=48)[0],48)
 
     def test_all_pass_reinstalls_exact_saved_apk(self):
         for renderer in (0,13):

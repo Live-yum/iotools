@@ -482,9 +482,10 @@ Future<void> revealOpcuaAttribute(
   final viewport = tester.renderObject<RenderViewport>(
     find.descendant(of: body, matching: find.byType(Viewport)).first,
   );
+  final extent = viewport.scrollCacheExtent;
   final cache =
-      (viewport.cacheExtent ?? RenderAbstractViewport.defaultCacheExtent) *
-      (viewport.cacheExtentStyle == CacheExtentStyle.viewport
+      extent.value *
+      (extent.style == CacheExtentStyle.viewport
           ? position.viewportDimension
           : 1);
   // Adjacent viewport-plus-cache windows overlap, so even a short card cannot

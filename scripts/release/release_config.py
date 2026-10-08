@@ -1,7 +1,7 @@
 """Reviewed release version, package inventory and mandatory runtime gates."""
 REPOSITORY = 'Live-yum/iotools'
 VERSION = 'v0.3.2'
-FLUTTER_REVISION = 'adc901062556672b4138e18a4dc62a4be8f4b3c2'
+FLUTTER_REVISION = '6b182d2c7585eba26d4edce0f97630effd256c33'
 PLATFORMS = ('linux-amd64', 'linux-arm64', 'windows-amd64', 'macos-amd64', 'macos-arm64')
 EXPECTED = {f'{kind}-{platform}': '.zip' for kind in ('tui', 'flutter', 'web') for platform in PLATFORMS}
 EXPECTED.update({'android-arm64-v8a-aot-test-signed': '.apk', 'android-universal-arm64-x86_64-aot-test-signed': '.apk',

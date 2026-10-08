@@ -26,6 +26,6 @@ manifest=json.loads(manifest_path.read_text())
 manifest=[family for family in manifest if family.get('family')!='Roboto']
 manifest.append({'family':'Roboto','fonts':[{'asset':'fonts/Roboto-Regular.ttf'}]})
 manifest_path.write_text(json.dumps(manifest,separators=(',',':')))
-records.append({'file':'../assets/fonts/Roboto-Regular.ttf','sha256':expected,'source':'Pinned official Flutter 3.35.7 material_fonts/Roboto-Regular.ttf'})
+records.append({'file':'../assets/fonts/Roboto-Regular.ttf','sha256':expected,'source':'Pinned official Flutter 3.44.9 material_fonts/Roboto-Regular.ttf'})
 (out/'manifest.json').write_text(json.dumps(records,indent=2)+'\n')
 print('Verified same-origin Noto fonts and complete OFL notices')
