@@ -175,6 +175,10 @@ aot_sha="$(sha256sum "$aot" | cut -d ' ' -f 1)"
 adb shell am force-stop io.github.liveyum.iotools
 adb install -r "$aot"
 adb install -r android-evidence/aot-test/instrumentation.apk
+# Software-emulated boot may leave a recovered System UI ANR covering the app.
+# Check the actual foreground and recover only that known system dialog once.
+# Business assertions, their timeouts, and app ANRs are never bypassed.
+python3 scripts/flutter/emulator_ui_readiness.py android-evidence/aot-ui-readiness
 set +e
 start_graphics_watchdog aot-pretimeout 420
 timeout --kill-after=20s 10m adb shell am instrument -w -r -e class io.github.liveyum.iotools.AotAcceptanceTest -e apk_sha256 "$aot_sha" -e build_sha "$IOTOOLS_SHA" io.github.liveyum.iotools.test/androidx.test.runner.AndroidJUnitRunner > android-evidence/aot-instrumentation.txt 2>&1

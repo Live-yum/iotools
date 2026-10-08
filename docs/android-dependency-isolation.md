@@ -12,10 +12,10 @@ through a normal direct dependency (no dependency override). Keep `path_provider
 2.1.5 and its compatible platform-interface 2.1.2. The official package's
 [release history](https://pub.dev/packages/path_provider_android/changelog)
 places the JNI implementation change at 2.3.0; 2.2.23 uses the supported Java /
-Pigeon implementation and requires Flutter 3.35 / Dart 3.9. The repository's
-Flutter 3.35.7 / Dart 3.9 toolchain satisfies those requirements. The resolver
-lowers the lockfile Flutter minimum from 3.35.6 to 3.35.0 as a consequence of
-removing JNI; the actual pinned SDK is unchanged.
+Pigeon implementation and requires Flutter 3.35 / Dart 3.9. The original isolation used Flutter 3.35.7 / Dart 3.9. The subsequent
+cupertino_icons 2.0.0 update requires Dart >=3.12, so the repository now pins
+Flutter 3.44.9 / Dart 3.12.2. This stable SDK keeps the existing Android
+Gradle, AGP, Kotlin and JDK versions within Flutter's supported minimums.
 
 `mobile/lib/core/runtime_native.dart` selects the existing `MethodChannelEngine`
 and `MethodChannelPlatform` on Android. The path-provider feature calls live in
@@ -34,10 +34,13 @@ lock Git blob and dependency-report hash. The audit requires:
 
 - Exactly path-provider Android 2.3.1 → 2.2.23
 - Only the unused `jni`, `jni_flutter`, `jni_util`, `args`, `package_config`
-  closure removed, with every other locked version unchanged
+  closure removed; other versions must match the historical baseline plus the
+  exact reviewed updates in `android_dependency_updates.json`
 - The actual resolver graph equal to the generated lockfile, with the official
   Java path-provider and file-selector plugins retained
-- The resolved external Maven coordinates unchanged
+- The resolved external Maven coordinates match the historical baseline plus
+  the exact reviewed SDK engine coordinates and its ExifInterface/jspecify
+  dependencies
 - No external Dart JNI native library or Java classes in the built normal AOT
   APK, while the app's own `libiotools.so` remains present
 
@@ -48,3 +51,16 @@ entry AOT tests must still pass on the exact candidate commit. Graphics backend,
 renderer, system-image selection, emulator resources and time budgets are not
 changed by this experiment. A failure must be reported as a failure rather than
 attributed to JNI, graphics, emulator initialization or memory without evidence.
+
+## Cupertino icons and SDK update
+
+The historical baseline and its evidence hashes remain unchanged.
+`android_dependency_updates.json` records only the reviewed package versions,
+complete lock-entry SHA256 values, and Maven coordinate replacements/additions needed
+for this update. Unlisted package additions/removals, version/source/archive
+drift, JNI reintroduction, changed Android plugins and Maven drift still fail.
+The lockfile is resolved with the pinned official SDK and CI continues to use
+`flutter pub get --enforce-lockfile`. This upgrade does not demonstrate runtime
+acceptance; the real APK, emulator and desktop checks remain required.
+
+Official SDK: [Flutter 3.44.9](https://github.com/flutter/flutter/tree/6b182d2c7585eba26d4edce0f97630effd256c33).

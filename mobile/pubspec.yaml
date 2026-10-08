@@ -3,7 +3,8 @@ description: 共享协议内核的跨平台工业与网络调试工具
 publish_to: none
 version: 0.3.2+5
 environment:
-  sdk: ">=3.9.0 <4.0.0"
+  sdk: ">=3.12.0 <4.0.0"
+  flutter: ">=3.44.0"
 dependencies:
   flutter:
     sdk: flutter

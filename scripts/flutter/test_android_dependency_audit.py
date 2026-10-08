@@ -23,6 +23,47 @@ class DependencyAuditTests(unittest.TestCase):
     def test_exact_isolation(self):
         self.assertEqual(audit.audit_lock(self.lock(), self.baseline)['versions'], self.versions)
 
+    def test_reviewed_sdk_update_matches_real_lock(self):
+        original = json.loads(audit.BASELINE.read_text())
+        updates = json.loads(audit.UPDATES.read_text())
+        baseline = audit.reviewed_baseline(original, updates)
+        text = (audit.ROOT / 'mobile/pubspec.lock').read_text()
+        audit.audit_lock(text, baseline)
+        self.assertEqual(original, json.loads(audit.BASELINE.read_text()))
+        for name, change in updates['lock_updates'].items():
+            changed = text.replace(f'    version: "{change["to"]}"',
+                                   '    version: "999.0.0"', 1)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                audit.audit_lock(changed, baseline)
+        bad = json.loads(json.dumps(updates))
+        bad['lock_updates']['path_provider_android'] = next(iter(updates['lock_updates'].values()))
+        with self.assertRaises(ValueError): audit.reviewed_baseline(original, bad)
+
+    def test_reviewed_update_metadata_fails_closed(self):
+        original = json.loads(audit.BASELINE.read_text())
+        updates = json.loads(audit.UPDATES.read_text())
+        for mode in ('baseline', 'from', 'hash', 'maven_identity', 'maven_prior'):
+            bad = json.loads(json.dumps(updates))
+            change = next(iter(bad['lock_updates'].values()))
+            coordinate = next(iter(bad['maven_updates']))
+            if mode == 'baseline': bad['baseline_source_commit'] = 'wrong'
+            if mode == 'from': change['from'] = '0.0.0'
+            if mode == 'hash': change['lock_entry_sha256'] = 'not-a-hash'
+            if mode == 'maven_identity': bad['maven_updates'][coordinate] = 'other:artifact:1.0'
+            if mode == 'maven_prior': bad['maven_updates']['unknown:artifact:1.0'] = 'unknown:artifact:2.0'
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                audit.reviewed_baseline(original, bad)
+
+    def test_reviewed_maven_update_remains_exact(self):
+        baseline = audit.reviewed_baseline(json.loads(audit.BASELINE.read_text()),
+                                          json.loads(audit.UPDATES.read_text()))
+        text = 'releaseRuntimeClasspath - Resolved\n' + ''.join(
+            '+--- ' + coordinate + '\n' for coordinate in baseline['resolved_maven_coordinates']) + 'BUILD SUCCESSFUL'
+        audit.audit_maven(text, baseline)
+        for changed in (text.replace('io.flutter:', 'unknown.flutter:'),
+                        text.replace('BUILD SUCCESSFUL', '+--- example:extra:1.0\nBUILD SUCCESSFUL')):
+            with self.assertRaises(ValueError): audit.audit_maven(changed, baseline)
+
     def test_archive_and_unrelated_lock_integrity(self):
         text = self.lock().replace('  path_provider_android:\n    dependency: transitive\n',
             '  path_provider_android:\n    dependency: "direct main"\n'
