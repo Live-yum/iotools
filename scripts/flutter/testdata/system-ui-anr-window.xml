@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<hierarchy rotation="0">
+  <node index="0" text="System UI isn't responding" resource-id="android:id/alertTitle" class="android.widget.TextView" package="android" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" visible-to-user="true" bounds="[132,126][348,151]" drawing-order="2" hint="" />
+  <node index="0" text="Close app" resource-id="android:id/aerr_close" class="android.widget.Button" package="android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" visible-to-user="true" bounds="[60,196][372,603]" drawing-order="1" hint="" />
+  <node index="1" text="Wait" resource-id="android:id/aerr_wait" class="android.widget.Button" package="android" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" visible-to-user="true" bounds="[60,603][372,656]" drawing-order="2" hint="" />
+</hierarchy>

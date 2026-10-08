@@ -97,6 +97,7 @@ jobs:
         run: |
           python3 scripts/flutter/verify-mobile.py
           python3 scripts/flutter/test_emulator_runner.py
+          python3 scripts/flutter/test_emulator_ui_readiness.py
           python3 scripts/flutter/test_release_apk_gate.py
           bash scripts/android/build-native.sh
           bash scripts/flutter/prepare-assets.sh
