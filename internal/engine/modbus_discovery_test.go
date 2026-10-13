@@ -117,6 +117,22 @@ func TestModbusBoundedSweepSearchAndUnitProbe(t *testing.T) {
 	}
 }
 func TestModbusRawClassificationAndEcho(t *testing.T) {
+	// This test writes its dedicated register. Isolate repeated runs while
+	// preserving the simulator's intentional process-local persistence.
+	key := uint32(239)<<16 | 10
+	localModbusMock.Lock()
+	previous, existed := localModbusMock.registers[key]
+	delete(localModbusMock.registers, key)
+	localModbusMock.Unlock()
+	t.Cleanup(func() {
+		localModbusMock.Lock()
+		defer localModbusMock.Unlock()
+		if existed {
+			localModbusMock.registers[key] = previous
+		} else {
+			delete(localModbusMock.registers, key)
+		}
+	})
 	r := config.Request{Protocol: "modbus", Action: "read-raw", Endpoint: "mock://local", Params: map[string]any{"unit": 239, "address": 10, "count": 1, "pdu_hex": "03000a0001"}}
 	seen := false
 	if e := Run(context.Background(), r, false, func(e Event) {

@@ -25,13 +25,14 @@ type opcuaScanner interface {
 
 type uaScanNode struct {
 	id                      *ua.NodeID
+	key                     string
 	parent, display, browse string
 	class                   ua.NodeClass
 	depth                   int
 }
 
 func (n uaScanNode) data() map[string]any {
-	return map[string]any{"node_id": n.id.String(), "parent_id": n.parent, "display_name": n.display, "browse_name": n.browse, "node_class": strings.TrimPrefix(n.class.String(), "NodeClass"), "depth": n.depth}
+	return map[string]any{"node_id": n.key, "parent_id": n.parent, "display_name": n.display, "browse_name": n.browse, "node_class": strings.TrimPrefix(n.class.String(), "NodeClass"), "depth": n.depth}
 }
 
 func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit) (retErr error) {
@@ -42,44 +43,75 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 	if maxDepth < 0 || maxDepth > 256 || maxNodes < 1 || maxNodes > 100000 || maxRefs < 1 || maxRefs > 100000 {
 		return fmt.Errorf("scan requires max_depth 0..256 (0 means unlimited depth), max_nodes 1..100000 and max_references 1..100000")
 	}
-	root, err := ua.ParseNodeID(r.String("node_id", "i=85"))
-	if err != nil {
-		return err
-	}
+	memory := &opcuaScanMemory{remaining: opcuaScanMemoryLimit}
 	count, variables, failures, duplicates, external := 0, 0, 0, 0, 0
 	reasons := []string{}
 	defer func() {
 		if retErr != nil && failures == 0 {
 			failures = 1
 		}
+		// Fixed terminal diagnostics remain visible even after ten ordinary
+		// errors or after the metadata allowance has been fully consumed.
+		for _, terminal := range []error{errOPCUAScanMemoryLimit, errOPCUAScanReleaseLimit, errOPCUAScanReleaseFailed} {
+			if errors.Is(retErr, terminal) && !strings.Contains(strings.Join(reasons, "; "), terminal.Error()) {
+				reasons = append(reasons, terminal.Error())
+			}
+		}
 		if retErr != nil && len(reasons) == 0 {
 			reasons = append(reasons, retErr.Error())
 		}
 		send(emit, "scan-summary", map[string]any{"nodes": count, "variables": variables, "complete": retErr == nil, "reason": strings.Join(reasons, "; "), "errors": failures, "duplicate_references": duplicates, "skipped_external": external, "cancelled": errors.Is(retErr, context.Canceled) || errors.Is(retErr, context.DeadlineExceeded)})
 	}()
-	recordError := func(node string, err error) {
+	recordError := func(node string, err error) error {
+		message := err.Error()
+		trial := *memory
+		if trial.bytes(len(node)) != nil || trial.bytes(len(message)) != nil {
+			bounded := error(errOPCUAScanMemoryLimit)
+			for _, terminal := range []error{context.Canceled, context.DeadlineExceeded, errOPCUAScanReleaseLimit, errOPCUAScanReleaseFailed} {
+				if errors.Is(err, terminal) {
+					bounded = errors.Join(bounded, terminal)
+				}
+			}
+			err = bounded
+			message = err.Error()
+			node = ""
+		} else {
+			*memory = trial
+			message = strings.Clone(message)
+		}
 		failures++
 		// Bound retained diagnostics on very large or inaccessible address spaces.
 		if len(reasons) < 10 {
-			reasons = append(reasons, fmt.Sprintf("%s: %v", node, err))
+			reasons = append(reasons, fmt.Sprintf("%s: %s", node, message))
 		}
-		send(emit, "scan-error", map[string]any{"node_id": node, "error": err.Error()})
+		send(emit, "scan-error", map[string]any{"node_id": node, "error": message})
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	namespaces, fingerprint, err := opcuaScanNamespaces(ctx, c)
-	if err != nil {
-		recordError(root.String(), err)
+	rootText := r.String("node_id", "i=85")
+	if err := memory.bytes(len(rootText)); err != nil {
 		return err
 	}
+	root, err := ua.ParseNodeID(rootText)
+	if err != nil {
+		return err
+	}
+	root, rootKey, err := memory.ownNodeID(root)
+	if err != nil {
+		return err
+	}
+	namespaces, fingerprint, err := opcuaScanNamespacesBounded(ctx, c, memory)
+	if err != nil {
+		return recordError(rootKey, err)
+	}
 	send(emit, "scan-namespace", map[string]any{"fingerprint": fingerprint})
-	first := uaScanNode{id: root}
+	first := uaScanNode{id: root, key: rootKey}
 	attributes := []*ua.ReadValueID{{NodeID: root, AttributeID: ua.AttributeIDNodeClass}, {NodeID: root, AttributeID: ua.AttributeIDDisplayName}, {NodeID: root, AttributeID: ua.AttributeIDBrowseName}}
 	results, err := opcuaScanMetadata(ctx, c, attributes)
 	if err != nil {
-		recordError(root.String(), err)
-		return err
+		return recordError(rootKey, err)
 	}
 	for i, v := range results {
 		if v == nil || v.Value == nil || v.Status != ua.StatusOK {
@@ -110,8 +142,19 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	queue := []uaScanNode{first}
-	seen := map[string]bool{root.String(): true}
+	first, err = memory.ownNames(first)
+	if err != nil {
+		return recordError(rootKey, err)
+	}
+	// The frontier never owns display/browse metadata. Clear consumed entries
+	// so previous IDs also stop pinning buffers while a deep scan progresses.
+	type frontierNode struct {
+		id    *ua.NodeID
+		key   string
+		depth int
+	}
+	queue := []frontierNode{{id: root, key: rootKey}}
+	seen := map[string]bool{rootKey: true}
 	emitNode := func(n uaScanNode) {
 		count++
 		if n.class == ua.NodeClassVariable {
@@ -126,7 +169,8 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 			return err
 		}
 		parent := queue[index]
-		err := opcuaScanReferences(ctx, c, parent.id, maxRefs, func(ref *ua.ReferenceDescription) error {
+		queue[index] = frontierNode{}
+		err := opcuaScanReferencesBounded(ctx, c, parent.id, maxRefs, memory, func(ref *ua.ReferenceDescription) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -140,11 +184,20 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 				external++
 				return nil
 			}
-			nodeID := ua.NewNodeIDFromExpandedNodeID(ref.NodeID)
+			nodeID, key, err := memory.ownNodeID(ref.NodeID.NodeID)
+			if err != nil {
+				return err
+			}
 			if ref.NodeID.NamespaceURI != "" {
 				namespace, ok := namespaces[ref.NodeID.NamespaceURI]
 				if !ok {
-					recordError(parent.id.String(), fmt.Errorf("unresolved local namespace URI %q", ref.NodeID.NamespaceURI))
+					if err := memory.bytes(len(ref.NodeID.NamespaceURI)); err != nil {
+						return err
+					}
+					err := recordError(parent.key, fmt.Errorf("unresolved local namespace URI %q", ref.NodeID.NamespaceURI))
+					if errors.Is(err, errOPCUAScanMemoryLimit) {
+						return err
+					}
 					return nil
 				}
 				switch nodeID.Type() {
@@ -155,8 +208,8 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 						return err
 					}
 				}
+				key = nodeID.String()
 			}
-			key := nodeID.String()
 			if seen[key] {
 				duplicates++
 				return nil
@@ -168,30 +221,36 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 			if count >= maxNodes {
 				return fmt.Errorf("scan reached max_nodes=%d", maxNodes)
 			}
-			seen[key] = true
-			child := uaScanNode{id: nodeID, parent: parent.id.String(), class: ref.NodeClass, depth: parent.depth + 1}
+			child := uaScanNode{id: nodeID, key: key, parent: parent.key, class: ref.NodeClass, depth: parent.depth + 1}
 			if ref.DisplayName != nil {
 				child.display = ref.DisplayName.Text
 			}
 			if ref.BrowseName != nil {
 				child.browse = ref.BrowseName.Name
 			}
+			child, err = memory.ownNames(child)
+			if err != nil {
+				return err
+			}
+			seen[key] = true
 			emitNode(child)
-			queue = append(queue, child)
+			queue = append(queue, frontierNode{id: nodeID, key: key, depth: child.depth})
 			return nil
 		})
 		if err != nil {
-			recordError(parent.id.String(), err)
+			err = recordError(parent.key, err)
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return errors.Join(ctx.Err(), err)
 			}
-			if count >= maxNodes {
+			if count >= maxNodes || errors.Is(err, errOPCUAScanMemoryLimit) || errors.Is(err, errOPCUAScanReleaseFailed) {
 				return err
 			}
 		}
 	}
 	if depthTruncated {
-		recordError(root.String(), fmt.Errorf("scan reached max_depth=%d", maxDepth))
+		if err := recordError(rootKey, fmt.Errorf("scan reached max_depth=%d", maxDepth)); errors.Is(err, errOPCUAScanMemoryLimit) {
+			return err
+		}
 	}
 	if failures > 0 {
 		return fmt.Errorf("OPC UA scan incomplete: %s", strings.Join(reasons, "; "))
@@ -199,9 +258,14 @@ func opcuaScan(ctx context.Context, c opcuaScanner, r config.Request, emit Emit)
 	return nil
 }
 
-// Pagination owns at most one continuation point at a time and releases it on
-// every early exit, using a fresh bounded context even when the scan is cancelled.
+// Pagination owns at most one continuation point at a time and attempts bounded
+// release on early exits with a fresh context, including cancellation. Oversized
+// tokens and unconfirmed releases remain explicit errors.
 func opcuaScanReferences(ctx context.Context, c opcuaBrowser, node *ua.NodeID, maxRefs int, visit func(*ua.ReferenceDescription) error) error {
+	return opcuaScanReferencesBounded(ctx, c, node, maxRefs, &opcuaScanMemory{remaining: opcuaScanMemoryLimit}, visit)
+}
+
+func opcuaScanReferencesBounded(ctx context.Context, c opcuaBrowser, node *ua.NodeID, maxRefs int, memory *opcuaScanMemory, visit func(*ua.ReferenceDescription) error) (retErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -214,40 +278,83 @@ func opcuaScanReferences(ctx context.Context, c opcuaBrowser, node *ua.NodeID, m
 	}
 	results := response.Results
 	var continuation []byte
-	var unexpectedPoints [][]byte
+	var unexpectedResults []*ua.BrowseResult
 	defer func() {
-		points := unexpectedPoints
-		if len(continuation) > 0 {
-			points = append(points, continuation)
-		}
-		if len(points) == 0 {
-			return
-		}
-		unique := make([][]byte, 0, len(points))
-		seen := map[string]bool{}
-		for _, point := range points {
-			if len(point) > 0 && !seen[string(point)] {
-				seen[string(point)] = true
-				unique = append(unique, point)
-			}
-		}
+		// Malformed responses can contain many points. Release in constant-size
+		// requests, without constructing another unbounded token/string list.
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_, _ = c.BrowseNext(cleanup, &ua.BrowseNextRequest{ReleaseContinuationPoints: true, ContinuationPoints: unique})
+		seen := map[[sha256.Size]byte]bool{}
+		cleanupError := func(err error) {
+			if !errors.Is(retErr, err) {
+				retErr = errors.Join(retErr, err)
+			}
+		}
+		release := func(point []byte) {
+			if len(point) == 0 {
+				return
+			}
+			if len(point) > opcuaScanCleanupTokenLimit {
+				cleanupError(errOPCUAScanReleaseLimit)
+				return
+			}
+			if cleanup.Err() != nil {
+				cleanupError(errOPCUAScanReleaseFailed)
+				return
+			}
+			key := sha256.Sum256(point)
+			if seen[key] {
+				return
+			}
+			if len(seen) < 1024 {
+				seen[key] = true
+			}
+			released, err := c.BrowseNext(cleanup, &ua.BrowseNextRequest{ReleaseContinuationPoints: true, ContinuationPoints: [][]byte{point}})
+			if err != nil || released == nil || (released.ResponseHeader != nil && released.ResponseHeader.ServiceResult != ua.StatusOK) || len(released.Results) > 1 {
+				cleanupError(errOPCUAScanReleaseFailed)
+				return
+			}
+			// Release responses may omit results. If present, the sole token's
+			// status must be Good; nil Go error alone does not confirm release.
+			if len(released.Results) == 1 && (released.Results[0] == nil || released.Results[0].StatusCode != ua.StatusOK) {
+				cleanupError(errOPCUAScanReleaseFailed)
+			}
+		}
+		for _, result := range unexpectedResults {
+			if cleanup.Err() != nil {
+				cleanupError(errOPCUAScanReleaseFailed)
+				break
+			}
+			if result != nil {
+				release(result.ContinuationPoint)
+			}
+		}
+		release(continuation)
 	}()
 	references, pages := 0, 0
-	emptyPoints := map[string]bool{}
+	emptyPoints := map[[sha256.Size]byte]bool{}
 	for {
 		if len(results) != 1 || results[0] == nil {
-			for _, result := range results {
-				if result != nil {
-					unexpectedPoints = append(unexpectedPoints, result.ContinuationPoint)
-				}
-			}
+			unexpectedResults = results
 			return fmt.Errorf("malformed scan browse response")
 		}
 		result := results[0]
+		// Keep the current decoded token borrowed for cleanup even if admission
+		// fails. Normal pagination retains only an admitted exact-length clone.
 		continuation = result.ContinuationPoint
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(continuation) > opcuaScanCleanupTokenLimit {
+			return errOPCUAScanReleaseLimit
+		}
+		if len(continuation) > 0 {
+			owned, err := memory.ownPoint(continuation)
+			if err != nil {
+				return err
+			}
+			continuation = owned
+		}
 		if result.StatusCode != ua.StatusOK {
 			return result.StatusCode
 		}
@@ -271,9 +378,12 @@ func opcuaScanReferences(ctx context.Context, c opcuaBrowser, node *ua.NodeID, m
 			return nil
 		}
 		if len(result.References) == 0 {
-			key := string(continuation)
+			key := sha256.Sum256(continuation)
 			if emptyPoints[key] {
 				return fmt.Errorf("scan browse-next repeated an empty page")
+			}
+			if err := memory.charge(128); err != nil {
+				return err
 			}
 			emptyPoints[key] = true
 		}
@@ -292,6 +402,10 @@ func opcuaScanReferences(ctx context.Context, c opcuaBrowser, node *ua.NodeID, m
 }
 
 func opcuaScanNamespaces(ctx context.Context, c opcuaReader) (map[string]uint16, string, error) {
+	return opcuaScanNamespacesBounded(ctx, c, &opcuaScanMemory{remaining: opcuaScanMemoryLimit})
+}
+
+func opcuaScanNamespacesBounded(ctx context.Context, c opcuaReader, memory *opcuaScanMemory) (map[string]uint16, string, error) {
 	res, err := c.Read(ctx, &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnNeither, NodesToRead: []*ua.ReadValueID{{NodeID: ua.NewNumericNodeID(0, id.Server_NamespaceArray), AttributeID: ua.AttributeIDValue}}})
 	if err != nil {
 		return nil, "", err
@@ -303,6 +417,16 @@ func opcuaScanNamespaces(ctx context.Context, c opcuaReader) (map[string]uint16,
 	if !ok || len(names) == 0 || len(names) > 65536 {
 		return nil, "", fmt.Errorf("invalid server NamespaceArray")
 	}
+	trial := *memory
+	if err := trial.charge(int64(len(names)) * 128); err != nil {
+		return nil, "", err
+	}
+	for _, name := range names {
+		if err := trial.bytes(len(name)); err != nil {
+			return nil, "", err
+		}
+	}
+	*memory = trial
 	namespaces := make(map[string]uint16, len(names))
 	for index, name := range names {
 		if name == "" {
@@ -311,7 +435,7 @@ func opcuaScanNamespaces(ctx context.Context, c opcuaReader) (map[string]uint16,
 		if _, duplicate := namespaces[name]; duplicate {
 			return nil, "", fmt.Errorf("invalid server NamespaceArray: duplicate namespace URI")
 		}
-		namespaces[name] = uint16(index)
+		namespaces[strings.Clone(name)] = uint16(index)
 	}
 	encoded, err := json.Marshal(names)
 	if err != nil {
