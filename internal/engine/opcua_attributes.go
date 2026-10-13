@@ -2,11 +2,11 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/Live-yum/iotools/internal/config"
-	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
 )
 
@@ -58,7 +58,79 @@ func opcuaAttributes(r config.Request) ([]ua.AttributeID, error) {
 	}
 	return out, nil
 }
-func opcuaReadAttributes(ctx context.Context, c *opcua.Client, r config.Request, emit Emit) error {
+
+type opcuaReader interface {
+	Read(context.Context, *ua.ReadRequest) (*ua.ReadResponse, error)
+}
+
+// OPCUAReadPartialError means every requested item was processed and its
+// observed value or read failure was emitted. A caller may continue a later
+// selection chunk, but must retain this error and must not report full success.
+// Cancellation, identity, session, transport and unknown service errors never
+// receive this classification.
+type OPCUAReadPartialError struct {
+	Err error
+}
+
+func (e *OPCUAReadPartialError) Error() string { return e.Err.Error() }
+func (e *OPCUAReadPartialError) Unwrap() error { return e.Err }
+
+// OPCUAReadCanContinue accepts only explicitly classified partial results.
+// In particular, a joined partial and terminal error is still terminal.
+func OPCUAReadCanContinue(err error) bool {
+	if _, ok := err.(*OPCUAReadPartialError); ok {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !OPCUAReadCanContinue(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return OPCUAReadCanContinue(wrapped.Unwrap())
+	}
+	return false
+}
+
+func opcuaRecoverableReadServiceError(err error) bool {
+	// Only explicit item/read-service failures can be carried to another chunk.
+	// Do not infer safety from an arbitrary error string or a prior good value.
+	if status, ok := err.(ua.StatusCode); ok {
+		switch status {
+		case ua.StatusBadTooManyOperations, ua.StatusBadNodeIDInvalid, ua.StatusBadNodeIDUnknown,
+			ua.StatusBadAttributeIDInvalid, ua.StatusBadIndexRangeInvalid, ua.StatusBadIndexRangeNoData,
+			ua.StatusBadDataEncodingInvalid, ua.StatusBadDataEncodingUnsupported,
+			ua.StatusBadNotReadable, ua.StatusBadUserAccessDenied, ua.StatusBadDataUnavailable:
+			return true
+		}
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !opcuaRecoverableReadServiceError(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return opcuaRecoverableReadServiceError(wrapped.Unwrap())
+	}
+	return false
+}
+
+func opcuaReadAttributes(ctx context.Context, c opcuaReader, r config.Request, emit Emit) error {
 	nodes, e := opcuaNodes(r)
 	if e != nil {
 		return e
@@ -67,27 +139,29 @@ func opcuaReadAttributes(ctx context.Context, c *opcua.Client, r config.Request,
 	if e != nil {
 		return e
 	}
-	req := &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnBoth}
+	batchSize := r.Int("read_batch_size", 100)
+	if batchSize < 1 || batchSize > 1000 {
+		return fmt.Errorf("read_batch_size must be 1..1000")
+	}
+	values := []*ua.ReadValueID{}
 	for _, n := range nodes {
 		for _, a := range attrs {
-			req.NodesToRead = append(req.NodesToRead, &ua.ReadValueID{NodeID: n, AttributeID: a})
+			values = append(values, &ua.ReadValueID{NodeID: n, AttributeID: a})
 		}
 	}
-	res, e := c.Read(ctx, req)
-	if e != nil {
-		return e
-	}
-	if res == nil || len(res.Results) != len(req.NodesToRead) {
-		return fmt.Errorf("incomplete OPC UA attribute read response")
-	}
-	good := 0
-	failed := false
-	for i, v := range res.Results {
-		if v == nil {
-			return fmt.Errorf("empty OPC UA attribute result")
+	good, failed := 0, false
+	var firstError error
+	emitResult := func(n *ua.ReadValueID, v *ua.DataValue, err error) {
+		data := map[string]any{"node_id": n.NodeID.String(), "status": "Unavailable", "has_value": false, "value": nil, "error": "", "source_timestamp": nil, "server_timestamp": nil}
+		if v != nil {
+			data = opcuaData(n.NodeID.String(), v)
 		}
-		n := req.NodesToRead[i]
-		data := opcuaData(n.NodeID.String(), v)
+		if err != nil {
+			data["error"] = err.Error()
+			if firstError == nil {
+				firstError = err
+			}
+		}
 		data["attribute"] = strings.TrimPrefix(n.AttributeID.String(), "AttributeID")
 		data["attribute_id"] = uint32(n.AttributeID)
 		if r.Action == "read" && n.AttributeID == ua.AttributeIDValue {
@@ -95,20 +169,64 @@ func opcuaReadAttributes(ctx context.Context, c *opcua.Client, r config.Request,
 		} else {
 			send(emit, "attribute", data)
 		}
-		if v.Status == ua.StatusOK {
+		if err == nil && v != nil && v.Status == ua.StatusOK {
 			good++
 		} else {
 			failed = true
 		}
 	}
+	for offset := 0; offset < len(values); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(offset+batchSize, len(values))
+		batch := values[offset:end]
+		res, err := c.Read(ctx, &ua.ReadRequest{TimestampsToReturn: ua.TimestampsToReturnBoth, NodesToRead: batch})
+		if errors.Is(err, ua.StatusBadTooManyOperations) && opcuaRecoverableReadServiceError(err) && batchSize > 1 {
+			batchSize = max(1, batchSize/2)
+			continue
+		}
+		if err != nil {
+			for _, n := range batch {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				emitResult(n, nil, err)
+			}
+			if !opcuaRecoverableReadServiceError(err) {
+				return err
+			}
+		} else {
+			for i, n := range batch {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if res == nil || i >= len(res.Results) || res.Results[i] == nil {
+					emitResult(n, nil, fmt.Errorf("incomplete OPC UA attribute read response"))
+					continue
+				}
+				emitResult(n, res.Results[i], nil)
+			}
+			if res != nil && len(res.Results) != len(batch) && firstError == nil {
+				firstError = fmt.Errorf("incomplete OPC UA attribute read response")
+			}
+		}
+		offset = end
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if firstError != nil {
+		return &OPCUAReadPartialError{Err: firstError}
+	}
 	if good == 0 || (r.Action == "read" && failed) {
-		return fmt.Errorf("OPC UA 属性读取返回非 Good 状态，请检查逐属性结果")
+		return &OPCUAReadPartialError{Err: fmt.Errorf("OPC UA 属性读取返回非 Good 状态，请检查逐属性结果")}
 	}
 	return nil
 }
 func validateOPCUAOperation(r config.Request) error {
 	switch r.Action {
-	case "node-path":
+	case "scan", "node-path":
 		_, e := ua.ParseNodeID(r.String("node_id", "i=85"))
 		return e
 	case "browse-path":
@@ -116,6 +234,9 @@ func validateOPCUAOperation(r config.Request) error {
 		return e
 	case "method-arguments":
 		_, e := ua.ParseNodeID(r.String("method_id", r.String("node_id", "")))
+		return e
+	case "subscribe":
+		_, e := opcuaNodes(r)
 		return e
 	case "read", "attributes":
 		if _, e := opcuaNodes(r); e != nil {

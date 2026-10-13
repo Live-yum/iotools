@@ -25,7 +25,7 @@ Windows PowerShell：
 
 ```powershell
 .\iotools.exe --init
-.\iotools.exe --profile local
+.\iotools.exe
 ```
 
 Linux：
@@ -33,8 +33,17 @@ Linux：
 ```sh
 chmod +x iotools
 ./iotools --init
-./iotools --profile local
+./iotools
 ```
+
+新版生成的示例声明了 `default_profile: local`，直接启动即可解析示例变量。
+显式 `--profile 名称` 优先于文件中的默认环境；F6 选择“不使用环境”后不会再回退到默认环境。
+
+旧版本 `--init` 生成的文件若提示 `unresolved variable "http"`、`"kafka"` 等，
+请继续用 `./iotools --profile local` 启动（Windows 为 `.\iotools.exe --profile local`），
+或在已有 YAML 顶层添加 `default_profile: local`，与 `version`、`profiles` 同级。
+如果已经重命名环境，请改用实际环境名。更换程序不会修改已有配置，`--init` 也不会覆盖
+已有文件；无需删除或重新生成自己的请求配置。
 
 示例只连接本机地址。按 F4 修改目标地址、请求内容或新增请求。
 打开程序、切换环境、选择请求都不会自动连接服务器；按 Enter 才会执行。
@@ -56,7 +65,7 @@ chmod +x iotools
 - MQTT：主题树、JSON/MessagePack、h历史、g图表、/搜索、o/O展开折叠；[详细操作](docs/mqtt-history.md)
 - Modbus：寄存器表/矩阵（m切换，+/-列数）、固定项、标签、趋势、快照差值
 - OPC UA：Enter下钻，a属性，f引用，r读取，s订阅，c方法表单；属性表e编辑，退格返回
-- Ctrl+U / OPC UA结果D：[浏览/属性/引用/订阅四窗](docs/opcua-workspace.md)，窄屏1–4分页
+- Ctrl+U / OPC UA结果D：[浏览/属性/引用/订阅四窗](docs/opcua-workspace.md)，窄屏1–4分页；四窗 B 进入[节点扫描、批量读值与导出记录](docs/opcua-scan.md)
 
 详细操作见 [终端交互说明](docs/tui.md)。固定项和标签可以保存回当前请求；S 保存快照，O 载入对比。
 这些操作不会擅自修改服务器数据。
@@ -65,6 +74,7 @@ chmod +x iotools
 
 ```yaml
 version: 1
+default_profile: local
 profiles:
   local:
     base: http://127.0.0.1:8080

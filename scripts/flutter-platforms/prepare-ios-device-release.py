@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the independent unsigned device job without the test-only iOS plugin.
 
-Flutter 3.35.7 includes iOS dev plugins even in Release (flutter/flutter#163874).
+Flutter includes iOS dev plugins even in Release (flutter/flutter#163874).
 Temporarily remove only integration_test, use normal pinned Flutter generation,
 and restore source manifests in finally. Generated device metadata stays available
 for the subsequent package gate. This wrapper never runs simulator builds/tests.
@@ -14,6 +14,8 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+
+from ios_release_gate import verify_cocoapods_metadata
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_PLUGINS = {"file_selector_ios": "FileSelectorPlugin", "path_provider_foundation": "PathProviderPlugin"}
@@ -83,6 +85,7 @@ def plugin_names(metadata):
 
 def verify_metadata(mobile, original_metadata):
     metadata = json.loads((mobile / ".flutter-plugins-dependencies").read_text())
+    verify_cocoapods_metadata(metadata)
     names = plugin_names(metadata)
     expected = plugin_names(original_metadata) - {"integration_test"}
     require(names == expected and REQUIRED_PLUGINS.keys() <= names,

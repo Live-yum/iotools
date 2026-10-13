@@ -28,7 +28,7 @@ class ProductionGateTests(unittest.TestCase):
         self.registrant = self.root / 'GeneratedPluginRegistrant.m'
         self.registrant.write_text('[FileSelectorPlugin registerWithRegistrar:selector]; [PathProviderPlugin registerWithRegistrar:path];')
         self.plugins = self.root / 'plugins.json'
-        self.plugins.write_text(json.dumps({'plugins': {'ios': [
+        self.plugins.write_text(json.dumps({'swift_package_manager_enabled': {'ios': False}, 'plugins': {'ios': [
             {'name': 'file_selector_ios', 'dev_dependency': False},
             {'name': 'path_provider_foundation', 'dev_dependency': False}]}}))
         (self.app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleExecutable': 'Runner', 'CFBundleSupportedPlatforms': ['iPhoneOS']}))
@@ -44,6 +44,18 @@ class ProductionGateTests(unittest.TestCase):
 
     def test_clean_bundle_keeps_essential_plugins(self):
         self.assertEqual(self.verify()['status'], 'passed')
+
+    def test_changed_or_unknown_dependency_manager_rejected(self):
+        original = json.loads(self.plugins.read_text())
+        for settings in ({'ios': True}, {}, {'ios': None}, {'ios': 0}):
+            with self.subTest(settings=settings):
+                self.plugins.write_text(json.dumps({**original, 'swift_package_manager_enabled': settings}))
+                with self.assertRaisesRegex(RuntimeError, 'Expected CocoaPods'):
+                    self.verify()
+        original.pop('swift_package_manager_enabled')
+        self.plugins.write_text(json.dumps(original))
+        with self.assertRaisesRegex(RuntimeError, 'Expected CocoaPods'):
+            self.verify()
 
     def test_active_registration_rejected(self):
         self.registrant.write_text(self.registrant.read_text() + ' IntegrationTestPlugin')
@@ -79,8 +91,22 @@ class ProductionGateTests(unittest.TestCase):
 
     def test_missing_essential_plugin_rejected(self):
         (self.app / 'Frameworks/file_selector_ios.framework/file_selector_ios').unlink()
-        with self.assertRaisesRegex(RuntimeError, 'Essential production Mach-O'):
+        with self.assertRaisesRegex(RuntimeError, 'Essential production Mach-O missing:.*file_selector_ios') as error:
             self.verify()
+        self.assertIn('found:', str(error.exception))
+
+    def test_missing_flutter_app_and_runner_each_rejected(self):
+        for relative in ('Runner', 'Frameworks/Flutter.framework/Flutter', 'Frameworks/App.framework/App'):
+            with self.subTest(relative=relative):
+                file = self.app / relative
+                data = file.read_bytes()
+                file.unlink()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'Essential production Mach-O missing') as error:
+                        self.verify()
+                    self.assertIn(relative, str(error.exception))
+                finally:
+                    file.write_bytes(data)
 
     def test_missing_linkage_rejected(self):
         (self.app / 'Runner').write_bytes(macho())

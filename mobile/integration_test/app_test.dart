@@ -1,6 +1,7 @@
 import 'runtime_adapter.dart';
 import 'action_interaction.dart';
 import 'http_fixture_diagnostics.dart';
+import 'http_phase_diagnostics.dart';
 import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -20,9 +21,14 @@ void main() {
   testWidgets(
     'Flutter HTTP native AES controls, exact wire bytes, history, SQL and privacy',
     (tester) async {
+      final phases = HTTPPhaseDiagnostics();
+      phases.mark(HTTPTestPhase.testBodyStart);
       final runtime = protocolTestRuntime();
       final engine = runtime.engine, platform = runtime.platform;
+      phases.mark(HTTPTestPhase.runtimeReady);
+      phases.mark(HTTPTestPhase.serverBindBegin);
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      phases.mark(HTTPTestPhase.serverBound);
       final received = <String>[];
       final fixture = HTTPFixtureDiagnostics();
       // Public independent OpenSSL AES-128-CBC/PKCS7 vectors, not calculated by the engine under test.
@@ -55,15 +61,23 @@ void main() {
           rethrow;
         }
       });
+      phases.mark(HTTPTestPhase.settingsSaveBegin);
       await platform.invoke('settings.save', {
         'theme': 'dark',
         'readOnly': false,
         'history': false,
         'collection': 'iotools.yaml',
       });
+      phases.mark(HTTPTestPhase.settingsSaved);
+      phases.mark(HTTPTestPhase.nativeCloseBeforeOpenBegin);
       await engine.close();
+      phases.mark(HTTPTestPhase.nativeClosedBeforeOpen);
+      phases.mark(HTTPTestPhase.nativeOpenBegin);
       await engine.open();
+      phases.mark(HTTPTestPhase.nativeOpened);
+      phases.mark(HTTPTestPhase.configGetBegin);
       final original = mapOf(await engine.command({'op': 'config.get'}));
+      phases.mark(HTTPTestPhase.configRead);
       final endpoint = 'http://127.0.0.1:${server.port}';
       final requests = [
         {
@@ -85,6 +99,7 @@ void main() {
             'timeout': '5s',
           },
       ];
+      phases.mark(HTTPTestPhase.configSaveBegin);
       await engine.command({
         'op': 'config.save',
         'source': jsonEncode({
@@ -95,18 +110,27 @@ void main() {
           'requests': requests,
         }),
       });
+      phases.mark(HTTPTestPhase.configSaved);
+      phases.mark(HTTPTestPhase.nativeCloseBeforeAppBegin);
       await engine.close();
+      phases.mark(HTTPTestPhase.nativeClosedBeforeApp);
       try {
-        await tester.pumpWidget(
-          protocolTestApp(engine, platform),
-        );
+        phases.mark(HTTPTestPhase.appPumpBegin);
+        await tester.pumpWidget(protocolTestApp(engine, platform));
+        phases.mark(HTTPTestPhase.appPumped);
         await waitFor(
           tester,
           () => find.text('Flutter AES 整体验收').evaluate().isNotEmpty,
         );
+        phases.mark(HTTPTestPhase.appReady);
         expect(find.text('POST  $endpoint/aes'), findsOneWidget);
         expect(find.textContaining(r'$%7B'), findsNothing);
-        await shot(tester, binding, 'flutter-feedback-home-resolved');
+        await shot(
+          tester,
+          binding,
+          'flutter-feedback-home-resolved',
+          phases: phases,
+        );
         final historyStatus = mapOf(
           await engine.command({'op': 'history.status'}),
         );
@@ -125,13 +149,18 @@ void main() {
           );
           expect(button.onPressed != null, historyStatus['exists'] == true);
         }
-        await shot(tester, binding, 'flutter-feedback-history-state');
+        await shot(
+          tester,
+          binding,
+          'flutter-feedback-history-state',
+          phases: phases,
+        );
         await tapKey(tester, 'nav_settings');
         await tapKey(tester, 'history_opt_in');
         await tapText(tester, '开启');
         await tapKey(tester, 'nav_requests');
         await openRequest(tester, 'Flutter AES 整体验收');
-        await shot(tester, binding, 'flutter-http-01-form');
+        await shot(tester, binding, 'flutter-http-01-form', phases: phases);
         await tapKey(tester, 'add_codec');
         await tester.enterText(
           find.byKey(const ValueKey('input_dialog')),
@@ -147,7 +176,12 @@ void main() {
           find.byKey(const ValueKey('codec_iv')),
           'fedcba9876543210',
         );
-        await shot(tester, binding, 'flutter-http-02-aes-editor');
+        await shot(
+          tester,
+          binding,
+          'flutter-http-02-aes-editor',
+          phases: phases,
+        );
         await tapKey(tester, 'codec_apply');
         await tapKey(tester, 'add_request_transform');
         await choose(tester, 'transform_type', 'encrypt');
@@ -163,16 +197,36 @@ void main() {
               .evaluate()
               .isNotEmpty,
         );
-        await shot(tester, binding, 'flutter-http-03-write-review');
+        await shot(
+          tester,
+          binding,
+          'flutter-http-03-write-review',
+          phases: phases,
+        );
         await tapText(tester, '取消');
         expect(received, isEmpty);
         await tapKey(tester, 'run_request');
         fixture.record('run_requested', path: '/aes');
+        phases.mark(HTTPTestPhase.requestConfirmationBegin);
         await tapKey(tester, 'confirm_action');
-        await waitForHTTPCompletion(tester, engine, binding, received, fixture);
+        phases.mark(HTTPTestPhase.requestConfirmed);
+        await waitForHTTPCompletion(
+          tester,
+          engine,
+          binding,
+          received,
+          fixture,
+          phases: phases,
+        );
+        phases.mark(HTTPTestPhase.httpCompleted);
         expect(received, [expected]);
         expect(find.textContaining('AES 解密成功中文'), findsWidgets);
-        await shot(tester, binding, 'flutter-http-04-decrypted-result');
+        await shot(
+          tester,
+          binding,
+          'flutter-http-04-decrypted-result',
+          phases: phases,
+        );
         for (final name in ['literal', 'chinese', 'binary']) {
           await back(tester);
           await tester.pump(const Duration(milliseconds: 350));
@@ -185,6 +239,7 @@ void main() {
             binding,
             received,
             fixture,
+            phases: phases,
           );
         }
         await tapKey(tester, 'nav_history');
@@ -199,7 +254,12 @@ void main() {
           find.textContaining(RegExp(r'20\d\d-.*T')).evaluate().isNotEmpty,
           true,
         );
-        await shot(tester, binding, 'flutter-http-05-history-literal');
+        await shot(
+          tester,
+          binding,
+          'flutter-http-05-history-literal',
+          phases: phases,
+        );
         await tapText(tester, '关闭');
         await tapText(tester, 'SQL 查询 / 事务');
         await tester.enterText(
@@ -211,7 +271,12 @@ void main() {
           tester,
           () => find.byType(DataTable).evaluate().isNotEmpty,
         );
-        await shot(tester, binding, 'flutter-http-06-sql-table');
+        await shot(
+          tester,
+          binding,
+          'flutter-http-06-sql-table',
+          phases: phases,
+        );
         await tapText(tester, '关闭');
         await tapKey(tester, 'nav_settings');
         await tapKey(tester, 'open_yaml');
@@ -302,9 +367,7 @@ void main() {
       });
       await engine.close();
       try {
-        await tester.pumpWidget(
-          protocolTestApp(engine, platform),
-        );
+        await tester.pumpWidget(protocolTestApp(engine, platform));
         await waitFor(
           tester,
           () => find.text('Flutter MQTT 主题验收').evaluate().isNotEmpty,
@@ -384,15 +447,20 @@ bool _converted = false;
 Future<void> shot(
   WidgetTester t,
   IntegrationTestWidgetsFlutterBinding b,
-  String name,
-) async {
+  String name, {
+  HTTPPhaseDiagnostics? phases,
+}) async {
+  phases?.mark(HTTPTestPhase.screenshotBegin);
   if (!_converted) {
+    phases?.mark(HTTPTestPhase.surfaceConversionBegin);
     await b.convertFlutterSurfaceToImage();
+    phases?.mark(HTTPTestPhase.surfaceConversionEnd);
     _converted = true;
     addTearDown(() => _converted = false);
   }
   await t.pump();
   await takeProtocolScreenshot(t, b, name);
+  phases?.mark(HTTPTestPhase.screenshotEnd);
 }
 
 Future<void> openRequest(WidgetTester t, String name) async {
@@ -408,8 +476,9 @@ Future<void> waitForHTTPCompletion(
   Engine engine,
   IntegrationTestWidgetsFlutterBinding binding,
   List<String> received,
-  HTTPFixtureDiagnostics fixture,
-) async {
+  HTTPFixtureDiagnostics fixture, {
+  HTTPPhaseDiagnostics? phases,
+}) async {
   final end = DateTime.now().add(const Duration(seconds: 20));
   while (find.text('已完成').evaluate().isEmpty) {
     if (find.text('执行失败').evaluate().isNotEmpty ||
@@ -423,7 +492,7 @@ Future<void> waitForHTTPCompletion(
       });
       // Emit before screenshot/native diagnostics can fail or delay capture.
       debugPrint('HTTP failure diagnostics: $diagnostics');
-      await shot(tester, binding, 'flutter-http-failure');
+      await shot(tester, binding, 'flutter-http-failure', phases: phases);
       final state = await engine.command({'op': 'state'});
       // Only this test's synthetic fixture state and public vector are emitted.
       throw TestFailure(

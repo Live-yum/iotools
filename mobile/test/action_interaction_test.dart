@@ -3,6 +3,37 @@ import 'package:flutter_test/flutter_test.dart';
 import '../integration_test/action_interaction.dart';
 
 void main() {
+  testWidgets('real tap still waits for an ordinary disabled IconButton', (
+    tester,
+  ) async {
+    var hits = 0, enabled = false;
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, set) {
+            update = set;
+            return Scaffold(
+              body: IconButton(
+                key: const ValueKey('guarded_icon'),
+                icon: const Icon(Icons.check),
+                onPressed: enabled ? () => hits++ : null,
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    final control = find.byKey(const ValueKey('guarded_icon'));
+    expect(tester.widget<IconButton>(control).onPressed, isNull);
+    Future<void>.delayed(
+      const Duration(milliseconds: 250),
+      () => update(() => enabled = true),
+    );
+    await tapReadyControl(tester, control);
+    expect(enabled, isTrue);
+    expect(hits, 1);
+  });
   testWidgets(
     'real tap waits for current route and re-enabled parent after review',
     (tester) async {

@@ -4,7 +4,7 @@
 
 ## 构建
 
-CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7、Go 版本以 go.mod 为准。不要把单独的 Flutter 壳或静态网页误认为完整产品。
+CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.44.9、Go 版本以 go.mod 为准。不要把单独的 Flutter 壳或静态网页误认为完整产品。
 
 - Linux：先运行 `python3 scripts/flutter-platforms/prepare-native-fonts.py` 准备经过哈希校验的中文/表情字体，再运行 `bash scripts/flutter-platforms/build-native.sh linux amd64`，按输出设置 `IOTOOLS_NATIVE_LIBRARY`，再构建 Flutter Linux。ARM64 要在对应原生架构构建。保留整个 bundle/lib/data，字体随 data 一起提供，需 GTK 3 等系统库
 - Windows：随包提供 CJK/emoji 字体（含普通结果、分页内容和 YAML 编辑器），需要官方 Flutter、Visual Studio C++ 桌面工具与 MinGW C 编译器；先构建 Go DLL，再构建 Flutter。CI 会带上程序本地的 Visual C++ 和 Go DLL 所需运行库，以及未改动的微软接收者条款、官方 REDIST 清单和来源记录；Windows/Linux 不打包 Android 传递依赖的可选 JNI/JVM 库
@@ -14,10 +14,30 @@ CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7�
 
 `IOTOOLS_SHA` 将写入产物和 manifest。CI 包含下载包 SHA256 与平台依赖证据。不要单凭编译成功推断所有协议或物理设备已验收。
 
+### Flutter 3.44 的 Apple 依赖管理边界
+
+Flutter 3.44 默认启用 Swift Package Manager。当前 iOS/macOS 项目已有自定义 CocoaPods、
+原生 Go 链接和 XCTest 配置，因此在 `mobile/pubspec.yaml` 的 `flutter.config` 中显式设置
+`enable-swift-package-manager: false`，沿用 Flutter 3.44.9 官方仍支持的 CocoaPods 路线。
+这只影响本项目，不改开发者全局设置，也不改插件版本、资源或依赖锁定内容。
+依据：[官方项目级配置](https://docs.flutter.dev/packages-and-plugins/swift-package-manager/for-app-developers#turn-off-swiftpm-for-a-single-project)。
+
+[f15ed14 的 iOS 设备构建](https://github.com/Live-yum/iotools/actions/runs/38380262019/job/115238700145)
+实际成功生成未签名应用，但自动添加了 SwiftPM，生成插件元数据的 iOS SwiftPM 标志为 true，
+随后在必需生产 Mach-O 检查失败。旧证据没有保存具体缺失路径，不能声称已逐一检查其二进制。
+现在依赖准备及生产包检查都要求该元数据标志明确为 false；保留 Runner、Flutter、App、
+file_selector_ios、path_provider_foundation 五个必需 Mach-O，以及 Runner 到两个插件的动态链接检查。
+任何缺失仍失败，并在证据中列出缺失和实际找到的 Mach-O 路径，不能以静态库名或注册类字符串替代。
+
+同次模拟器在完成三方设备发现后，Xcode 构建以 255 退出，旧日志不足以确定根因。
+恢复已有 CocoaPods 配置并不等于模拟器验收通过，仍须重新运行真实编译、普通启动和全部五项 XCTest。
+后续 SwiftPM 迁移应单独验证完整链接、资源、测试隔离及运行行为；官方说明 CocoaPods 注册表将于
+2026-12-02 变为只读，因此此配置是固定工具链的兼容性边界，不是永久迁移方案。
+
 iOS 宿主测试当前采用一次受控的两阶段流程：先以 `generic/platform=iOS Simulator` 执行
 `build-for-testing`，再用其原始、未修改的 `.xctestrun` 对当次选定的具体 UUID 执行
 `test-without-building`。[Apple 命令说明](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
-和[固定 Flutter 3.35.7 的说明](https://github.com/flutter/flutter/blob/adc901062556672b4138e18a4dc62a4be8f4b3c2/packages/integration_test/README.md#L321-L340)
+和[固定 Flutter 3.44.9 的说明](https://github.com/flutter/flutter/blob/6b182d2c7585eba26d4edce0f97630effd256c33/packages/integration_test/README.md)
 支持构建与执行分离；[Bitrise 官方构建测试说明](https://docs.bitrise.io/en/bitrise-ci/testing/testing-ios-apps/building-an-ios-app-for-testing)
 明确使用上述 generic simulator 构建目的地。编译成功不能代替 XCTest 执行成功。
 

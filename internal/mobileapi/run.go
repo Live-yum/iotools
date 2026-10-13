@@ -118,6 +118,11 @@ func (s *Session) run(c command) (any, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.runID, s.runDone = cancel, runID, done
+	// Every foreground run invalidates old page cursors; trees never mix.
+	s.scanResult = nil
+	if p.Request.Protocol == "opcua" && p.Request.Action == "scan" {
+		s.scanResult = &scanResult{runID: runID}
+	}
 	controller := engine.NewModbusPauseController()
 	if p.Request.Protocol == "modbus" && !p.Request.Mutates() {
 		s.modbusPause = controller
@@ -138,6 +143,7 @@ func (s *Session) run(c command) (any, error) {
 				runErr = errors.New("engine stopped after an unexpected invalid result")
 			}
 			cancel()
+			runErr = s.finishScan(runID, runErr)
 			status := "completed"
 			message := ""
 			if runErr != nil {

@@ -8,6 +8,7 @@ import '../../shared/widgets.dart';
 import 'messaging_models.dart';
 import 'kafka_entities.dart';
 import 'retained_preview.dart';
+import '../opcua/opcua_scan_result.dart';
 
 class ResultPage extends StatefulWidget {
   const ResultPage({
@@ -70,7 +71,8 @@ class _ResultPageState extends State<ResultPage> {
           ),
         if (s.dropped > 0 || s.evicted > 0)
           Text(
-            '缓冲区淘汰 ${s.dropped} 条事件 · 完整结果缓存淘汰 ${s.evicted} 项',
+            '缓冲区淘汰 ${s.dropped} 条事件 · 完整结果缓存淘汰 ${s.evicted} 项'
+            '${s.scanResult.isNotEmpty ? '；扫描节点请打开独立分页结果' : ''}',
             style: const TextStyle(color: Colors.amber),
           ),
         ActionWrap(
@@ -78,7 +80,7 @@ class _ResultPageState extends State<ResultPage> {
             OutlinedButton.icon(
               onPressed: () => copyText(context, pretty(s.events)),
               icon: const Icon(Icons.copy),
-              label: const Text('复制'),
+              label: Text(s.scanResult.isNotEmpty ? '复制执行日志' : '复制'),
             ),
             OutlinedButton.icon(
               onPressed: () => guarded(
@@ -86,7 +88,7 @@ class _ResultPageState extends State<ResultPage> {
                 () => s.exportText('result.json', exactEncode(s.events)),
               ),
               icon: const Icon(Icons.file_download_outlined),
-              label: const Text('导出'),
+              label: Text(s.scanResult.isNotEmpty ? '导出执行日志' : '导出'),
             ),
             OutlinedButton.icon(
               onPressed: s.running ? null : widget.onRerun,
@@ -95,6 +97,24 @@ class _ResultPageState extends State<ResultPage> {
             ),
           ],
         ),
+        if (s.scanResult.isNotEmpty) ...[
+          Text(
+            '${s.scanResult['finished'] != true ? '扫描中' : s.scanResult['complete'] == true ? '扫描完整' : '扫描未完成'}'
+            ' · 已保留 ${s.scanResult['node_count']} 个节点',
+          ),
+          FilledButton.icon(
+            key: const ValueKey('open_scan_result'),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => OpcuaScanResultPage(
+                session: s,
+                runId: s.resultRunId,
+              )),
+            ),
+            icon: const Icon(Icons.account_tree),
+            label: const Text('浏览完整扫描分页结果'),
+          ),
+        ],
         if (events.any((e) => e['kind'] == 'message'))
           FilledButton.icon(
             onPressed: () => Navigator.push(

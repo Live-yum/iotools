@@ -17,21 +17,25 @@ type cachedResult struct {
 }
 
 func (s *Session) cacheResultLocked(id, runID, kind string, raw []byte) {
-	for len(s.resultOrder) > 0 && (len(s.resultOrder) >= maxCachedResults || s.resultBytes+len(raw) > maxResultCacheBytes) {
-		expired := s.resultOrder[0]
-		s.resultOrder = s.resultOrder[1:]
-		old := s.results[expired]
-		s.resultBytes -= len(old.JSON)
-		delete(s.results, expired)
-		s.evictedResultCount++
-		if len(s.evictedResults) >= 256 {
-			s.evictedResults = s.evictedResults[1:]
-		}
-		s.evictedResults = append(s.evictedResults, expired)
+	for len(s.resultOrder) > 0 && (len(s.resultOrder) >= maxCachedResults || s.resultBytes+s.scanBytesLocked()+len(raw) > maxResultCacheBytes) {
+		s.evictResultLocked()
 	}
 	s.results[id] = cachedResult{RunID: runID, Kind: kind, JSON: raw}
 	s.resultOrder = append(s.resultOrder, id)
 	s.resultBytes += len(raw)
+}
+
+func (s *Session) evictResultLocked() {
+	expired := s.resultOrder[0]
+	s.resultOrder = s.resultOrder[1:]
+	old := s.results[expired]
+	s.resultBytes -= len(old.JSON)
+	delete(s.results, expired)
+	s.evictedResultCount++
+	if len(s.evictedResults) >= 256 {
+		s.evictedResults = s.evictedResults[1:]
+	}
+	s.evictedResults = append(s.evictedResults, expired)
 }
 func (s *Session) result(id string) (any, error) {
 	s.mu.Lock()

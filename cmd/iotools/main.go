@@ -159,7 +159,7 @@ func run(args []string) error {
 		if ce != nil {
 			return ce
 		}
-		fmt.Println("已创建", *path, "· 启动：iotools --profile local")
+		fmt.Println("已创建", *path, "· 默认环境：local（无需指定 --profile；自定义文件路径仍需 --file）")
 		return nil
 	}
 	if *historyScript != "" || *historyCollections || *historyCollectionAction != "" || *historyPreview || *historyApply != "" {

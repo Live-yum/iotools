@@ -69,27 +69,14 @@ collect() {
  exit "$result"
 }
 trap collect EXIT
+# The workflow action owns this emulator; keep CLI and Gradle device selection
+# consistent instead of depending on adb's implicit single-device fallback.
+export ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"
 adb shell wm density 160
-# Boot completion can precede a stable package manager/API response under
-# software emulation. Require actual readiness before Gradle caches device data.
-ready_samples=0
-ready_deadline=$((SECONDS+60))
-for attempt in $(seq 1 30); do
- sdk=
- package_path=
- if sdk=$(timeout 5s adb shell getprop ro.build.version.sdk 2>>android-evidence/device-ready.log); then sdk=${sdk//$'\r'/}; fi
- if package_path=$(timeout 5s adb shell cmd package path android 2>>android-evidence/device-ready.log); then package_path=${package_path//$'\r'/}; fi
- printf 'attempt=%s sdk=%s package=%s\n' "$attempt" "$sdk" "$package_path" >> android-evidence/device-ready.log
- if [[ "$sdk" =~ ^[0-9]{2,3}$ ]] && ((10#$sdk>=26)) && [[ "$package_path" == package:* ]]; then
-  ready_samples=$((ready_samples+1))
- else
-  ready_samples=0
- fi
- if test "$ready_samples" -eq 3; then break; fi
- if test "$SECONDS" -ge "$ready_deadline"; then break; fi
- sleep .2
-done
-if test "$ready_samples" -ne 3; then echo "Android API/package manager did not become consistently ready"; exit 75; fi
+# Display configuration can overlap a framework restart. Its persistent boot
+# property alone is insufficient; check the current AMS/PID after all changes.
+# This retains the original 60-second setup budget and never retries Gradle.
+python3 scripts/flutter/emulator_boot_readiness.py android-evidence/device-ready.log
 timeout 5s adb features > android-evidence/adb-features.txt
 # Record the renderer actually selected by the emulator, not just its requested mode.
 if test -x "${ANDROID_HOME:-}/emulator/emulator"; then
@@ -156,6 +143,16 @@ for suite in main opcua; do
   app_status=passed
  fi
  if test "$flutter_result" -eq 0 && test "$app_status" != passed; then flutter_result=1; fi
+ # The next suite force-stops/relaunches the app. Capture the native crash now,
+ # even if its PID is already gone. The collector saves only target metadata;
+ # unavailable diagnostics never replace the original suite/driver exit.
+ if test "$flutter_result" -ne 0 || test "$log_result" -ne 0; then
+  crash_evidence="android-evidence/native-crash-$suite"
+  mkdir -p "$crash_evidence"
+  printf 'status=unavailable\nreason=collector_did_not_complete\n' > "$crash_evidence/status.txt"
+  timeout --kill-after=1s 6s python3 scripts/flutter/native_crash_evidence.py "$crash_evidence" "android-evidence/flutter-$suite.log" >/dev/null 2>&1
+  printf 'collector_exit=%s\n' "$?" >> "$crash_evidence/status.txt"
+ fi
  {
   printf 'driver_exit=%s\napp_outcome=%s\nexpected_business_tests=%s\nexpected_app_passes_including_teardown=%s\neffective_exit=%s\n' "$driver_result" "$app_status" "$expected_business_tests" "$expected_app_passes" "$flutter_result"
   LC_ALL=C grep -E "${app_progress}\+[0-9]+([[:space:]]+-[0-9]+)?:[[:space:]]+(All tests passed!|Some tests failed\.)[[:space:]]*$" "android-evidence/flutter-$suite.log" || true
@@ -175,6 +172,10 @@ aot_sha="$(sha256sum "$aot" | cut -d ' ' -f 1)"
 adb shell am force-stop io.github.liveyum.iotools
 adb install -r "$aot"
 adb install -r android-evidence/aot-test/instrumentation.apk
+# Software-emulated boot may leave a recovered System UI ANR covering the app.
+# Check the actual foreground and recover only that known system dialog once.
+# Business assertions, their timeouts, and app ANRs are never bypassed.
+python3 scripts/flutter/emulator_ui_readiness.py android-evidence/aot-ui-readiness
 set +e
 start_graphics_watchdog aot-pretimeout 420
 timeout --kill-after=20s 10m adb shell am instrument -w -r -e class io.github.liveyum.iotools.AotAcceptanceTest -e apk_sha256 "$aot_sha" -e build_sha "$IOTOOLS_SHA" io.github.liveyum.iotools.test/androidx.test.runner.AndroidJUnitRunner > android-evidence/aot-instrumentation.txt 2>&1

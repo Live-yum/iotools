@@ -258,6 +258,7 @@ func (s *Session) startTask(kind string, work func(context.Context, string) erro
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.runID, s.runDone = cancel, id, done
+	s.scanResult = nil
 	if strings.HasPrefix(kind, "modbus.") {
 		s.modbusStats = map[string]any{}
 	}

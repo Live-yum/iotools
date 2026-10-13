@@ -1,50 +1,93 @@
-# Android path-provider dependency isolation
+# Android path-provider dependency review
 
-This is a controlled dependency experiment, not a demonstrated crash fix. The
-prior Android run [36933124951](https://github.com/Live-yum/iotools/actions/runs/36933124951)
-failed the business-driver, OPC UA completion and normal-entry AOT acceptance
-gates. No passing result can be inferred from removing an unused dependency.
+## Current reviewed upgrade
 
-## One intended runtime change
+The integrated dependency update uses `path_provider` 2.1.6 and pins the official
+endorsed Android implementation to `path_provider_android` **2.3.1**. This
+deliberately replaces the earlier 2.2.23 isolation experiment described below.
+It is an actual dependency upgrade, not a claim that removing or restoring JNI
+fixes a crash.
 
-Pin the official endorsed `path_provider_android` implementation to **2.2.23**
-through a normal direct dependency (no dependency override). Keep `path_provider`
-2.1.5 and its compatible platform-interface 2.1.2. The official package's
-[release history](https://pub.dev/packages/path_provider_android/changelog)
-places the JNI implementation change at 2.3.0; 2.2.23 uses the supported Java /
-Pigeon implementation and requires Flutter 3.35 / Dart 3.9. The repository's
-Flutter 3.35.7 / Dart 3.9 toolchain satisfies those requirements. The resolver
-lowers the lockfile Flutter minimum from 3.35.6 to 3.35.0 as a consequence of
-removing JNI; the actual pinned SDK is unchanged.
+`path_provider` 2.1.6 requires Flutter >=3.38 / Dart >=3.10. The repository pins
+official Flutter **3.44.9 / Dart 3.12.2**, also required by `cupertino_icons` 2.0.0.
+All Flutter workflows, release configuration and the committed lockfile must
+agree. CI runs `flutter pub get --enforce-lockfile`.
 
-`mobile/lib/core/runtime_native.dart` selects the existing `MethodChannelEngine`
-and `MethodChannelPlatform` on Android. The path-provider feature calls live in
-`NativePlatformServices`, selected on other native platforms. Flutter still
-registers endorsed Android plugins at startup, even without feature calls. The
-pin removes the external Dart JNI closure from that registration path without
-editing generated registrants, SDK code, package sources or the APK after build.
-The app's own JNI-backed Go engine remains mandatory. `file_selector_android`
-remains unchanged at 0.5.2+6.
+Android feature calls still use our `MethodChannelEngine` and
+`MethodChannelPlatform`; other native platforms use `NativePlatformServices`.
+Nevertheless, Flutter automatically registers endorsed plugins at startup.
+The 2.3.1 implementation registers a Dart `PathProviderAndroid`, while official
+`jni` and `jni_flutter` provide the native Android plugins and `libdartjni.so`.
+This startup path is part of the reviewed change even without path-provider
+feature calls. `jni` also declares Linux/Windows FFI plugins, so those platform
+build and runtime checks remain relevant.
 
-## Fail-closed comparison
+The restored closure is exactly `args`, `jni`, `jni_flutter`, `jni_util` and
+`package_config`. Full lock entries, including versions and official archive
+hashes, are recorded in `android_dependency_updates.json`. The retracted
+`jni_flutter` 1.0.4 is not selected; its 1.0.4+1 replacement is used. That patch's
+Android source is unchanged. Neither JNI Android project adds external Maven
+implementation dependencies; the effective Maven graph is still checked exactly
+against the historical evidence plus reviewed Flutter engine/ExifInterface/
+jspecify updates.
 
-`scripts/flutter/android_dependency_baseline.json` records the source lockfile
-and release Maven coordinates from the prior run, including the artifact URL,
-lock Git blob and dependency-report hash. The audit requires:
+The upstream JNI Gradle project defaults to the SDK's NDK 28.2.13676358. Our root
+Android Gradle configuration uses the supported AGP `finalizeDsl` callback to
+set that project to **28.1.13356709**, matching the existing app, native Go build
+and validated NDK provisioning. It does not edit downloaded package sources,
+generated registrants or SDK code. This configuration must also pass real CI.
 
-- Exactly path-provider Android 2.3.1 → 2.2.23
-- Only the unused `jni`, `jni_flutter`, `jni_util`, `args`, `package_config`
-  closure removed, with every other locked version unchanged
-- The actual resolver graph equal to the generated lockfile, with the official
-  Java path-provider and file-selector plugins retained
-- The resolved external Maven coordinates unchanged
-- No external Dart JNI native library or Java classes in the built normal AOT
-  APK, while the app's own `libiotools.so` remains present
+## Fail-closed checks
 
-The Android workflow enforces the committed lockfile and retains JSON evidence
-for both dependency resolution and APK packaging. These are static checks;
-unchanged mandatory emulator business tests, OPC completion checks and normal
-entry AOT tests must still pass on the exact candidate commit. Graphics backend,
-renderer, system-image selection, emulator resources and time budgets are not
-changed by this experiment. A failure must be reported as a failure rather than
-attributed to JNI, graphics, emulator initialization or memory without evidence.
+The original `android_dependency_baseline.json` and its source/evidence hashes
+remain unchanged. A separate reviewed update record explicitly identifies the
+2.2.23 -> 2.3.1 migration and restored closure. The audit now requires:
+
+- Every locked package, version, source, archive hash and dependency kind to
+  match the original evidence plus exact reviewed lock-entry updates. Unexpected
+  additions, removals and unrelated drift fail.
+- The resolver package/version graph to equal the lockfile, with exact direct
+  dependencies for path-provider Android and all three JNI packages.
+- Exactly the Android plugins `file_selector_android`, `integration_test`,
+  `path_provider_android`, `jni` and `jni_flutter`. Path-provider is Dart-only;
+  the other four are native. Critical plugin dependency edges are checked too.
+- The resolved external Maven coordinates to equal the reviewed set, with no
+  wildcard acceptance of new dependencies.
+- Exactly one `libdartjni.so` for each shipped `libiotools.so` ABI, no alternate
+  JNI native path/ABI, valid ELF64 architecture, and 16 KiB-compatible load
+  segments. The application's own native engine remains mandatory.
+- Actual DEX class definitions for both JNI plugin classes and the kept
+  `JniUtils`, `PortCleaner`, `PortContinuation`, and `PortProxyBuilder` classes.
+  String references to missing classes do not satisfy this check.
+
+Static dependency/APK checks are prerequisites, not runtime acceptance. Existing
+business-driver, OPC UA completion, normal-entry Release AOT startup, lifecycle,
+desktop and native-platform gates must pass on the final combined source. App
+crashes, missing JNI libraries/classes, unsupported toolchains and failed
+business assertions must be reported as failures. No assertion, timeout,
+renderer, system image or emulator resource is relaxed for this upgrade.
+
+## Historical isolation experiment
+
+The earlier experiment pinned `path_provider_android` 2.2.23, retained
+`path_provider` 2.1.5, and removed the unused external JNI closure. Flutter
+3.35.7 / Dart 3.9 was used initially, followed by the separately reviewed SDK
+upgrade for Cupertino icons. The app's own JNI-backed Go engine was always
+required. `file_selector_android` remained 0.5.2+6.
+
+The prior Android run
+[36933124951](https://github.com/Live-yum/iotools/actions/runs/36933124951)
+failed business-driver, OPC UA completion and normal-entry AOT gates. It did
+not demonstrate that external JNI caused those failures. Its dependency and
+Maven evidence is preserved as provenance, not promoted to passing runtime
+evidence for the current upgrade.
+
+## Official sources
+
+- [Flutter 3.44.9](https://github.com/flutter/flutter/tree/6b182d2c7585eba26d4edce0f97630effd256c33)
+- [path_provider 2.1.6 source](https://github.com/flutter/packages/blob/path_provider-v2.1.6/packages/path_provider/path_provider/pubspec.yaml)
+- [path_provider_android 2.3.1 source](https://github.com/flutter/packages/blob/path_provider_android-v2.3.1/packages/path_provider/path_provider_android/pubspec.yaml)
+- [JNI 1.1.0](https://pub.dev/packages/jni/versions/1.1.0)
+- [JNI Flutter versions and retraction](https://pub.dev/packages/jni_flutter/versions)
+- [AGP 8.9 finalizeDsl API](https://developer.android.com/reference/tools/gradle-api/8.9/com/android/build/api/variant/AndroidComponentsExtension)
+- [Android 16 KiB page-size requirements](https://developer.android.com/guide/practices/page-sizes)

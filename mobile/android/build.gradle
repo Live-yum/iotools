@@ -1,4 +1,16 @@
 allprojects { repositories { google(); mavenCentral(); maven { url 'https://jitpack.io'; content { includeGroup 'com.github.mik3y' } } } }
 rootProject.buildDir = '../build'
+// JNI's upstream build selects flutter.ndkVersion, which changed with the SDK.
+// Finalize its supported AGP DSL with the same reviewed NDK as our Go/app build.
+// Do not patch downloaded plugin sources or silently provision another NDK.
+subprojects { subproject ->
+ if (subproject.name == 'jni') {
+  subproject.plugins.withId('com.android.library') {
+   subproject.extensions.getByName('androidComponents').finalizeDsl { android ->
+    android.ndkVersion = '28.1.13356709'
+   }
+  }
+ }
+}
 subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}"; project.evaluationDependsOn(':app') }
 tasks.register('clean', Delete) { delete rootProject.buildDir }

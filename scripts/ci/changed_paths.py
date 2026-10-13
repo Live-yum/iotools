@@ -6,6 +6,9 @@ import subprocess
 import sys
 
 PATTERNS = {
+    # SDK/dependency upgrades affect every Flutter target, even on ordinary PRs.
+    'platforms': ('mobile/pubspec.*', '.github/workflows/flutter-platforms.yml',
+                  'scripts/release/release_config.py', 'scripts/ci/**'),
     'android': ('mobile/lib/**', 'mobile/test/**', 'mobile/integration_test/**',
                 'mobile/android/**', 'mobile/pubspec.*', 'internal/mobileapi/**',
                 'internal/engine/**', 'internal/config/**', 'internal/crypto/**',

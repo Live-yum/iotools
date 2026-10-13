@@ -38,7 +38,7 @@ v0.3.0 的 8db/5c66/fb719 运行不作为此版本的新代码验收。验收记
 
 TUI 原生构建、协议/单元测试和 CLI smoke 在五种目标运行；macOS Mach-O 要求单一正确架构和仅系统库。Flutter 原生 C ABI、Dart 测试、Windows 最终包 GUI 检查及各主机 Web 网关检查随新包进行。全部 Go 可执行/共享库检查嵌入 SHA 和 `go version -m` 的目标/VCS revision（Go -trimpath 不保留 -ldflags 字段）；iOS 链接 Runner 只核对嵌入 Go SHA 及现有 Mach-O/FFI/生产隔离检查，不伪称独立 Go buildinfo 支持。
 
-Flutter 固定 `3.35.7` 与完整 SDK SHA；Go 从 go.mod 固定；Android 保留 Java 17 / Gradle 8.11.1 / NDK 28.1.13356709；iOS simulator 使用已安装的 Xcode 26.2 / 17C52。设备构建保留现有系统 Xcode 选择。托管镜像、Java patch 和系统工具可更新，不声称整个编译环境逐字节可复现。
+Flutter 固定 `3.44.9` 与完整 SDK SHA；Go 从 go.mod 固定；Android 保留 Java 17 / Gradle 8.11.1 / NDK 28.1.13356709；iOS simulator 使用已安装的 Xcode 26.2 / 17C52。设备构建保留现有系统 Xcode 选择。托管镜像、Java patch 和系统工具可更新，不声称整个编译环境逐字节可复现。
 
 CocoaPods 每次生成新的工程对象 ID。门禁仅归一化新增对象 ID 与无语义格式差异，保留原对象、全部构建设置、脚本、引用和数组顺序，按审阅过的 iOS/macOS 完整工程语义摘要验收；workspace 只接受确定的 Pods 引用插入。原始文件、完整 diff、原始与归一化 hash 都保存。实测来源为 dry run 37007184755 和仅配置诊断 37008357632。除此之外任何 tracked 变化都失败，不以历史工程的随机 ID 哈希冒称跨运行字节一致。
 

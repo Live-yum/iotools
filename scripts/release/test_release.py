@@ -40,6 +40,10 @@ class SourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        # Commits can launch detached maintenance that races strict temp cleanup.
+        # Keep this fixture synchronous without changing the user's Git config.
+        r.git('config', '--local', 'maintenance.auto', 'false', root=self.root)
+        r.git('config', '--local', 'gc.auto', '0', root=self.root)
         r.git('config', 'user.email', 'test@example.invalid', root=self.root)
         r.git('config', 'user.name', 'Test', root=self.root)
         (self.root/'mobile').mkdir()
@@ -52,6 +56,19 @@ class SourceTests(unittest.TestCase):
         r.git('add', '.', root=self.root)
         r.git('commit', '-qm', 'fixture', root=self.root)
         return r.git('rev-parse', 'HEAD', root=self.root)
+    def test_fixture_disables_automatic_git_maintenance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / 'git-trace.json'
+            (self.root/'go.mod').write_text('module fixture\ngo 1.27.2\n')
+            with patch.dict(os.environ, {'GIT_TRACE2_EVENT': str(trace)}):
+                self.commit()
+            events = [json.loads(line) for line in trace.read_text(encoding='utf-8').splitlines()]
+            self.assertTrue(any(event.get('event') == 'start' and 'commit' in event.get('argv', [])
+                                for event in events), 'Git trace must include the real fixture commit')
+            children = [event.get('argv', []) for event in events if event.get('event') == 'child_start']
+            self.assertFalse(any('maintenance' in argv or 'gc' in argv for argv in children), children)
+        self.assertEqual(r.git('config', '--local', '--get', 'maintenance.auto', root=self.root), 'false')
+        self.assertEqual(r.git('config', '--local', '--get', 'gc.auto', root=self.root), '0')
     def test_exact_release_only(self):
         self.assertEqual(r.identity(self.base, root=self.root)['source_sha'], self.base)
         with self.assertRaisesRegex(RuntimeError, 'Only the reviewed'):

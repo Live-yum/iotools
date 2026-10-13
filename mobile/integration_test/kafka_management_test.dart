@@ -1,4 +1,5 @@
 import 'runtime_adapter.dart';
+import 'action_interaction.dart';
 import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -163,7 +164,7 @@ void registerKafkaManagementTests() {
         await openRequest(t, '更新测试 Connector');
         await tap(t, find.byKey(const ValueKey('edit_json')));
         await tap(t, find.text('tasks.max'));
-        await t.enterText(find.byKey(const ValueKey('input_dialog')), '2');
+        await enter(t, 'input_dialog', '2');
         await tap(t, find.text('应用').last);
         await tap(t, find.text('应用').last);
         await run(t, engine, cancel: true);
@@ -252,26 +253,28 @@ Future<void> wait(WidgetTester t, bool Function() ready) async {
 
 Future<void> tap(WidgetTester t, Finder f) async {
   debugPrintSynchronously('KAFKA_STAGE tap ${boundedFailureText(f, limit: 256)}');
-  await wait(t, () => f.evaluate().isNotEmpty);
-  await t.ensureVisible(f);
-  await t.pump();
-  await t.tap(f);
+  await tapReadyControl(t, f);
   await t.pump(const Duration(milliseconds: 400));
 }
 
 Future<void> enter(WidgetTester t, String key, String value) async {
   debugPrintSynchronously('KAFKA_STAGE enter $key');
   final f = find.byKey(ValueKey(key));
-  await wait(t, () => f.evaluate().isNotEmpty);
-  await t.ensureVisible(f);
-  await t.pump();
-  await t.enterText(f, value);
-  await t.pump();
+  await enterReadyText(t, f, value);
 }
 
 Future<void> back(WidgetTester t) async {
-  final routeBack = find.byType(BackButton).hitTestable();
-  final requestBack = find.byTooltip('返回请求列表').hitTestable();
+  // BackButton.onPressed == null means use Navigator.maybePop, not disabled.
+  // Its built IconButton owns that real callback. Target it so the shared
+  // enabled/current-route/hit-test gate still inspects the actionable control.
+  final routeBack = find
+      .descendant(of: find.byType(BackButton), matching: find.byType(IconButton))
+      .hitTestable();
+  final requestBack = find
+      .byWidgetPredicate(
+        (widget) => widget is IconButton && widget.tooltip == '返回请求列表',
+      )
+      .hitTestable();
   await wait(
     t,
     () => routeBack.evaluate().isNotEmpty || requestBack.evaluate().isNotEmpty,
@@ -315,8 +318,7 @@ Future<void> run(
 
 Future<void> openRequest(WidgetTester t, String name) async {
   final search = find.byKey(const ValueKey('request_search'));
-  await wait(t, () => search.evaluate().isNotEmpty);
-  await t.enterText(search, name);
+  await enterReadyText(t, search, name);
   await t.pump(const Duration(milliseconds: 200));
   await tap(t, find.widgetWithText(InkWell, name));
 }

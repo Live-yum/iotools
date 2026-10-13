@@ -55,7 +55,9 @@ func TestUABackgroundSubscriptionDoesNotBlockReadsAndQuits(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	both := false
 	for time.Now().Before(deadline) {
-		u.App.QueueUpdateDraw(func() {
+		// Observing state must not force an extra full-screen render. Real
+		// subscription and workspace updates already redraw the UI.
+		u.App.QueueUpdate(func() {
 			entry := u.uaSubscriptions[uaSubscriptionKey(r, node)]
 			both = entry != nil && entry.Active && entry.Count > 0 && !u.running && strings.Contains(strings.Join(u.events, ""), "value")
 		})
@@ -81,7 +83,7 @@ func TestUABackgroundSubscriptionDoesNotBlockReadsAndQuits(t *testing.T) {
 	workspaceDone := false
 	deadline = time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		u.App.QueueUpdateDraw(func() { workspaceDone = !u.uaWorkspace.loading })
+		u.App.QueueUpdate(func() { workspaceDone = !u.uaWorkspace.loading })
 		if workspaceDone {
 			break
 		}

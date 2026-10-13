@@ -46,7 +46,7 @@ def diagnostic_text(value):
     return value[:16384] + ("\n<truncated>" if len(value) > 16384 else "")
 
 
-def simulator_operation(evidence, label, *args, timeout=120):
+def simulator_operation(evidence, label, *args, timeout=120, output_filter=diagnostic_text):
     """One bounded operation; diagnostics never convert an error into success."""
     started = time.monotonic()
     record = {"command": [diagnostic_text(arg) for arg in args],
@@ -61,19 +61,81 @@ def simulator_operation(evidence, label, *args, timeout=120):
         record.update(status="timeout" if isinstance(error, subprocess.TimeoutExpired) else "failed",
                       exit_code=getattr(error, "returncode", None))
         raise
+    except Exception as error:
+        record.update(status="failed", exit_code=None, error_type=type(error).__name__)
+        raise
     finally:
         record["elapsed_seconds"] = time.monotonic() - started
         record["finished_unix"] = time.time()
-        (evidence / f"{label}.txt").write_text(diagnostic_text(output))
+        (evidence / f"{label}.txt").write_text(output_filter(output))
         (evidence / f"{label}-command.json").write_text(json.dumps(record, indent=2))
 
+
+
+def launch_event_summary(value):
+    """Rebuild allowlisted hints only; never publish arbitrary unified-log text.
+
+    Keywords are observations, not proof of a launch or crash. In particular a
+    Runner log may contain application payload; no part of that body is copied.
+    Keep the latest complete summary lines within a 16 KiB public evidence cap.
+    """
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    rows = []
+    size = 0
+    for line in str(value or "").splitlines():
+        match = re.match(
+            r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3,6}) "
+            r"\S+[ \t]+(Runner|SpringBoard|runningboardd|launchd)\[\d+:[0-9a-fA-F]+\] (.*)$", line)
+        if not match:
+            continue
+        timestamp, process, body = match.groups()
+        if process != "Runner" and "io.github.liveyum.iotools" not in body:
+            continue
+        hints = [name for name, pattern in (
+            ("launch", r"\b(?:launch|launching|launched|spawn|spawning)\b"),
+            ("exit", r"\b(?:exit|exited|termination|terminated|crash|crashed)\b"),
+            ("denial", r"\b(?:denied|deny|refused|rejected)\b"),
+            ("error", r"\b(?:error|failed|failure|timeout|timed out)\b"),
+        ) if re.search(pattern, body, re.I)]
+        if not hints:
+            continue
+        # Only fixed system error domains and bounded numeric codes. Never copy
+        # NSError descriptions, paths, URLs, assertions, or exception text.
+        domains = [domain for domain in (
+            "FBSOpenApplicationServiceErrorDomain", "RBSRequestErrorDomain",
+            "NSPOSIXErrorDomain", "NSCocoaErrorDomain", "NSOSStatusErrorDomain",
+        ) if domain in body]
+        # Associate a code only with an adjacent canonical NSError domain,
+        # not arbitrary Code= values elsewhere in an application payload.
+        codes = [int(code) for domain in domains for code in re.findall(
+            r"\bDomain=" + re.escape(domain) + r" Code=(-?\d{1,6})(?!\d)", body)][:4]
+        row = {"timestamp": timestamp, "process": process, "event_hints": hints,
+               "body": "<omitted>"}
+        if domains:
+            row["system_error_domains"] = domains
+            if codes:
+                row["system_error_codes"] = codes
+        encoded = json.dumps(row, separators=(",", ":")) + "\n"
+        rows.append(encoded)
+        size += len(encoded.encode("utf-8"))
+        while size > 16384:
+            size -= len(rows.pop(0).encode("utf-8"))
+    return "".join(rows)
 
 def simulator_failure_diagnostics(evidence):
     """Bounded read-only simulator diagnostics; their result cannot pass a failed gate."""
     udid = os.environ.get('IOTOOLS_IOS_SIMULATOR_UDID', '')
     if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', udid):
         return
+    # Post-failure diagnostics are separate from the 1200s acceptance budget.
+    # They cannot resume tests, retry launch, or change the original failure.
     commands = {
+        'failure-launch-log': ['xcrun', 'simctl', 'spawn', udid, 'log', 'show', '--last', '2m',
+                               '--style', 'compact', '--predicate',
+                               'process == "Runner" OR ((process == "SpringBoard" OR '
+                               'process == "runningboardd" OR process == "launchd") AND '
+                               'eventMessage CONTAINS[c] "io.github.liveyum.iotools")'],
         'failure-devices': ['xcrun', 'simctl', 'list', 'devices', '--json'],
         'failure-services': ['xcrun', 'simctl', 'spawn', udid, 'launchctl', 'list'],
         'failure-install-log': ['xcrun', 'simctl', 'spawn', udid, 'log', 'show', '--last', '2m',
@@ -81,8 +143,13 @@ def simulator_failure_diagnostics(evidence):
     }
     for label, command in commands.items():
         try:
-            simulator_operation(evidence, label, *command, timeout=15)
+            simulator_operation(evidence, label, *command, timeout=15,
+                                output_filter=launch_event_summary if label == "failure-launch-log" else diagnostic_text)
         except Exception as error:
+            if label == 'failure-launch-log':
+                # Its JSON metadata already records failure; keep sanitized
+                # event lines alone within their strict 16 KiB cap.
+                continue
             with (evidence / f'{label}.txt').open('a') as output:
                 output.write('\nDiagnostic unavailable: ' + type(error).__name__)
 

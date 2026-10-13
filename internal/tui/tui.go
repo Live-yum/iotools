@@ -36,6 +36,7 @@ F8               取消正在执行的请求或订阅
 F9               OPC UA 连接历史（密码不保存）
 F10              OPC UA 独立后台订阅面板；D 四窗工作区
 Ctrl+U           OPC UA 四窗工作区（r刷新，1–4切换）
+Ctrl+E           OPC UA 一键扫描/批读/CSV+JSON（先确认范围）
 F11              HTTP历史列表/查看/明确删除
 F12              本机配置轮换/返回起始配置（先预览）
 Ctrl-Y           在结果表复制所选行（明确确认后）
@@ -209,6 +210,9 @@ func New(path, profile string, readonly bool) (*UI, error) {
 		case tcell.KeyF10:
 			u.showUASubscriptions()
 			return nil
+		case tcell.KeyCtrlE:
+			u.showUAOneClick()
+			return nil
 		case tcell.KeyCtrlU:
 			u.showUAWorkspace()
 			return nil
@@ -342,6 +346,7 @@ func (u *UI) start(r config.Request) {
 	u.startCollection(r, u.collection, u.profile)
 }
 func (u *UI) startCollection(r config.Request, collection *config.Collection, profile string) {
+	collection = explicitProfileCollection(collection, profile)
 	u.mqttPreviewPending = nil
 	u.uaCopyPending = false
 	u.uaCopyValue = ""

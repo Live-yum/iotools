@@ -1,5 +1,8 @@
 import 'runtime_adapter.dart';
+import 'opcua_phase_diagnostics.dart';
 import 'action_interaction.dart';
+import 'fixture_readiness.dart';
+import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -24,18 +27,35 @@ void registerOpcuaIntegrationTests() {
         ..reset()
         ..start();
       _stage('start');
+      final phases = OPCPhaseDiagnostics();
+      phases.mark(OPCTestPhase.testBodyStart);
       final runtime = protocolTestRuntime();
       final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-      final ready = await _fixture('/ready'),
-          before = await _fixture('/metrics');
+      phases.mark(OPCTestPhase.runtimeReady);
+      phases.mark(OPCTestPhase.fixtureReadyBegin);
+      final ready = await waitForFixtureReady(
+        Uri.parse('http://127.0.0.1:48411/ready'),
+        onRetry: (attempt, error) => _stage(
+          'fixture-ready retry=$attempt '
+          '${boundedFailureText(error, limit: 1024)}',
+        ),
+      );
+      phases.mark(OPCTestPhase.fixtureReady);
+      phases.mark(OPCTestPhase.initialMetricsBegin);
+      final before = await _fixture('/metrics');
+      phases.mark(OPCTestPhase.initialMetricsRead);
       expect(ready['loopback_only'], true);
       final object = '${ready['object']}',
           temperature = '${ready['temperature']}',
           pressure = '${ready['pressure']}',
           method = '${ready['method']}';
+      phases.mark(OPCTestPhase.nativeOpenBegin);
       await engine.open();
+      phases.mark(OPCTestPhase.nativeOpened);
+      phases.mark(OPCTestPhase.configGetBegin);
       final original = uaMap(await engine.command({'op': 'config.get'}));
+      phases.mark(OPCTestPhase.configRead);
       const source = '''version: 1
 profiles:
   local: {}
@@ -52,21 +72,27 @@ requests:
       security_mode: None
       allow_insecure: true
 ''';
+      phases.mark(OPCTestPhase.configSaveBegin);
       await engine.command({'op': 'config.save', 'source': source});
+      phases.mark(OPCTestPhase.configSaved);
+      phases.mark(OPCTestPhase.nativeCloseBegin);
       await engine.close();
+      phases.mark(OPCTestPhase.nativeClosed);
       try {
-        await tester.pumpWidget(
-          protocolTestApp(engine, platform),
-        );
+        phases.mark(OPCTestPhase.appPumpBegin);
+        await tester.pumpWidget(protocolTestApp(engine, platform));
+        phases.mark(OPCTestPhase.appPumped);
         await _wait(
           tester,
           () => find.text('Flutter OPC 整体验收').evaluate().isNotEmpty,
         );
+        phases.mark(OPCTestPhase.appReady);
         _sameCounters(
           'startup remains local',
           before,
           await _fixture('/metrics'),
         );
+        phases.mark(OPCTestPhase.workspaceOpenBegin);
         await _tapText(tester, 'Flutter OPC 整体验收');
         await _tapText(tester, '工具');
         await _tapText(tester, '节点浏览、属性、方法与订阅');
@@ -77,11 +103,13 @@ requests:
               .evaluate()
               .isNotEmpty,
         );
+        phases.mark(OPCTestPhase.workspaceOpened);
         _sameCounters(
           'opening Flutter workspace remains local',
           before,
           await _fixture('/metrics'),
         );
+        phases.mark(OPCTestPhase.discoveryBegin);
         await _tap(tester, 'ua-tab-discovery');
         await _tap(tester, 'ua-refresh');
         await _wait(
@@ -97,7 +125,8 @@ requests:
           discovered['discoveries'],
           greaterThan(before['discoveries'] as int),
         );
-        await _screenshot(tester, binding, 'flutter-opc-01-discovery');
+        phases.mark(OPCTestPhase.discoveryCompleted);
+        await _screenshot(tester, binding, 'flutter-opc-01-discovery', phases);
         await _tap(tester, 'ua-select-endpoint');
         final allow = find.widgetWithText(
           SwitchListTile,
@@ -124,7 +153,7 @@ requests:
               .isNotEmpty,
         );
         await _idle(tester, engine);
-        await _screenshot(tester, binding, 'flutter-opc-02-browse');
+        await _screenshot(tester, binding, 'flutter-opc-02-browse', phases);
         final browsed = await _fixture('/metrics');
         await _tap(tester, 'ua-node-$temperature');
         await _tap(tester, 'ua-back');
@@ -150,7 +179,7 @@ requests:
           find.byKey(const ValueKey('ua-attribute-ValueRank')),
           findsOneWidget,
         );
-        await _screenshot(tester, binding, 'flutter-opc-03-attributes');
+        await _screenshot(tester, binding, 'flutter-opc-03-attributes', phases);
         await _tap(tester, 'ua-write');
         await _enter(tester, 'ua-write-value-Int32', '99');
         final beforeCancel = await _fixture('/metrics');
@@ -162,7 +191,12 @@ requests:
               .evaluate()
               .isNotEmpty,
         );
-        await _screenshot(tester, binding, 'flutter-opc-04-write-review');
+        await _screenshot(
+          tester,
+          binding,
+          'flutter-opc-04-write-review',
+          phases,
+        );
         await _tap(tester, 'ua-review-cancel');
         _sameCounters(
           'cancelled typed write is zero protocol activity',
@@ -211,7 +245,12 @@ requests:
           find.byKey(const ValueKey('ua-attribute-Value-value')),
         );
         await _pump(tester);
-        await _screenshot(tester, binding, 'flutter-opc-05-write-readback-99');
+        await _screenshot(
+          tester,
+          binding,
+          'flutter-opc-05-write-readback-99',
+          phases,
+        );
         await _tap(tester, 'ua-back');
         await _tap(tester, 'ua-tab-browse');
         await _tap(tester, 'ua-method-$method');
@@ -281,7 +320,12 @@ requests:
           find.byKey(const ValueKey('ua-method-outputs')),
         );
         await _pump(tester);
-        await _screenshot(tester, binding, 'flutter-opc-06-method-double-6-12');
+        await _screenshot(
+          tester,
+          binding,
+          'flutter-opc-06-method-double-6-12',
+          phases,
+        );
         await _tapText(tester, '关闭');
         await _jump(tester, temperature);
         await _tap(tester, 'ua-tab-subscriptions');
@@ -297,16 +341,29 @@ requests:
         await _subscriptions(tester, engine, 2);
         _stage('second-subscription-notified');
         await _tap(tester, 'ua-refresh-subscriptions');
-        await _screenshot(tester, binding, 'flutter-opc-07-two-subscriptions');
+        await _screenshot(
+          tester,
+          binding,
+          'flutter-opc-07-two-subscriptions',
+          phases,
+        );
+        phases.mark(OPCTestPhase.postSubscriptionsAttributesBegin);
         await _tap(tester, 'ua-tab-attributes');
+        phases.mark(OPCTestPhase.postSubscriptionsAttributesOpened);
+        phases.mark(OPCTestPhase.postSubscriptionsRefreshBegin);
         await _tap(tester, 'ua-refresh');
+        phases.mark(OPCTestPhase.postSubscriptionsRefreshed);
+        phases.mark(OPCTestPhase.postSubscriptionsIdleBegin);
         await _idle(tester, engine);
+        phases.mark(OPCTestPhase.postSubscriptionsIdle);
         await _subscriptions(tester, engine, 2);
+        phases.mark(OPCTestPhase.postSubscriptionsNotified);
         final subs =
             await engine
                     .command({'op': 'subscriptions.list'})
                     .timeout(const Duration(seconds: 10))
                 as List;
+        phases.mark(OPCTestPhase.subscriptionsListRead);
         final target = subs
             .map(uaMap)
             .firstWhere(
@@ -315,8 +372,12 @@ requests:
                   s['status'] == 'running',
             );
         await _tap(tester, 'ua-tab-subscriptions');
+        phases.mark(OPCTestPhase.subscriptionsTabOpened);
         await _tap(tester, 'ua-refresh-subscriptions');
+        phases.mark(OPCTestPhase.subscriptionsRefreshed);
+        phases.mark(OPCTestPhase.subscriptionStopBegin);
         await _tap(tester, 'ua-stop-${target['id']}');
+        phases.mark(OPCTestPhase.subscriptionStopped);
         await _subscriptions(tester, engine, 1);
         final remaining =
             (await engine
@@ -327,23 +388,36 @@ requests:
                 .where((s) => s['status'] == 'running')
                 .single;
         expect(remaining['node_ids'], [pressure]);
+        phases.mark(OPCTestPhase.remainingSubscriptionVerified);
         // Resize the Flutter surface to exercise responsive layout; this is not
         // reported as a physical-device rotation test.
+        phases.mark(OPCTestPhase.resizeNavigationBegin);
         await _jump(tester, object);
         await _tap(tester, 'ua-tab-browse');
+        phases.mark(OPCTestPhase.resizeNavigationComplete);
         final beforeResize = await _fixture('/metrics');
+        phases.mark(OPCTestPhase.surfaceResizeBegin);
         await binding.setSurfaceSize(const Size(1000, 700));
+        phases.mark(OPCTestPhase.surfaceResized);
         await _pump(tester, const Duration(milliseconds: 500));
         _sameCounters(
           'responsive resize does not replay requests',
           beforeResize,
           await _fixture('/metrics'),
         );
-        await _screenshot(tester, binding, 'flutter-opc-08-wide-workspace');
+        phases.mark(OPCTestPhase.resizeCountersVerified);
+        await _screenshot(
+          tester,
+          binding,
+          'flutter-opc-08-wide-workspace',
+          phases,
+        );
         await binding.setSurfaceSize(null);
+        phases.mark(OPCTestPhase.surfaceRestored);
         // Drive Flutter's lifecycle callback through the real platform pause API.
         // The separate runner may also exercise actual OS background/resume.
         _stage('background-stop-begin');
+        phases.mark(OPCTestPhase.backgroundStopBegin);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -362,12 +436,15 @@ requests:
                   .every((row) => row['status'] != 'running');
         });
         _stage('background-stop-acknowledged');
+        phases.mark(OPCTestPhase.backgroundStopped);
         final stopped = await _fixture('/metrics');
+        phases.mark(OPCTestPhase.resumeBegin);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
         await _pump(tester, const Duration(milliseconds: 600));
         await _subscriptions(tester, engine, 0);
+        phases.mark(OPCTestPhase.resumed);
         _sameCounters(
           'resume does not restart subscriptions or replay mutations',
           stopped,
@@ -385,9 +462,11 @@ requests:
           tester,
           binding,
           'flutter-opc-09-background-no-replay',
+          phases,
         );
       } finally {
         _stage('cleanup-begin');
+        phases.mark(OPCTestPhase.cleanupBegin);
         if (binding.lifecycleState == AppLifecycleState.paused)
           binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         if (binding.lifecycleState == AppLifecycleState.hidden)
@@ -403,6 +482,7 @@ requests:
         });
         await engine.close();
         _stage('cleanup-complete');
+        phases.mark(OPCTestPhase.cleanupEnd);
       }
     },
     // API29 software emulation took >5 minutes before subscriptions in the
@@ -482,9 +562,10 @@ Future<void> revealOpcuaAttribute(
   final viewport = tester.renderObject<RenderViewport>(
     find.descendant(of: body, matching: find.byType(Viewport)).first,
   );
+  final extent = viewport.scrollCacheExtent;
   final cache =
-      (viewport.cacheExtent ?? RenderAbstractViewport.defaultCacheExtent) *
-      (viewport.cacheExtentStyle == CacheExtentStyle.viewport
+      extent.value *
+      (extent.style == CacheExtentStyle.viewport
           ? position.viewportDimension
           : 1);
   // Adjacent viewport-plus-cache windows overlap, so even a short card cannot
@@ -604,15 +685,24 @@ Future<void> _screenshot(
   WidgetTester tester,
   IntegrationTestWidgetsFlutterBinding binding,
   String name,
+  OPCPhaseDiagnostics phases,
 ) async {
+  phases.mark(OPCTestPhase.screenshotBegin);
   if (Platform.isAndroid && !_surfaceConverted) {
+    phases.mark(OPCTestPhase.surfaceConversionBegin);
     await binding.convertFlutterSurfaceToImage();
+    phases.mark(OPCTestPhase.surfaceConverted);
     _surfaceConverted = true;
   }
   _stage('capture-begin:$name');
   await _pump(tester);
-  await takeProtocolScreenshot(tester, binding, name).timeout(const Duration(seconds: 30));
+  await takeProtocolScreenshot(
+    tester,
+    binding,
+    name,
+  ).timeout(const Duration(seconds: 30));
   _stage('capture-complete:$name');
+  phases.mark(OPCTestPhase.screenshotEnd);
   debugPrint('OPC_METRICS $name ${jsonEncode(await _fixture('/metrics'))}');
 }
 
