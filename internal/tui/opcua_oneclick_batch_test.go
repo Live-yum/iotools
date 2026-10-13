@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Live-yum/iotools/internal/config"
@@ -661,5 +662,60 @@ func TestUAOneClickGoodNullValueRemainsAnObservedValue(t *testing.T) {
 	row := uaScanFileCSV(t, uaScanFileRead(t, report.Services[0].CSV.Path))[0]
 	if row["has_value"] != "true" || row["value_type"] != "0" || row["value"] != "null" {
 		t.Fatalf("valid UA Null lost in CSV: %+v", row)
+	}
+}
+
+// synctest advances only a virtual clock: the CSV consumes its full 30-second
+// allowance without making this regression test wait in real time.
+func TestUAOneClickSnapshotFormatsHaveIndependentTimeouts(t *testing.T) {
+	for _, cancelNetwork := range []bool{false, true} {
+		t.Run(fmt.Sprintf("network_cancelled=%t", cancelNetwork), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				good := oneClickTestGoodRunner(t)
+				run := func(ctx context.Context, r config.Request, allowWrites bool, emit engine.Emit) error {
+					err := good(ctx, r, allowWrites, emit)
+					if cancelNetwork && r.Action == "scan" {
+						cancel()
+						return context.Canceled
+					}
+					return err
+				}
+				var formats []string
+				var fileContexts []context.Context
+				started := time.Now()
+				write := func(fileCtx context.Context, _ string, format string, _ uaScanSnapshot) error {
+					formats = append(formats, format)
+					fileContexts = append(fileContexts, fileCtx)
+					deadline, bounded := fileCtx.Deadline()
+					if !bounded || deadline.Sub(time.Now()) != 30*time.Second || fileCtx.Err() != nil {
+						t.Errorf("%s did not get its own full live 30-second budget: deadline=%s now=%s err=%v", format, deadline, time.Now(), fileCtx.Err())
+					}
+					if format == "csv" {
+						<-fileCtx.Done() // Expire CSV in virtual time.
+						return fileCtx.Err()
+					}
+					if fileCtx == fileContexts[0] {
+						t.Error("JSON reused the CSV context")
+					}
+					// JSON can still spend almost its entire independent budget.
+					time.Sleep(29 * time.Second)
+					return fileCtx.Err()
+				}
+				result := runUAOneClickService(ctx, "unused-no-files-created", 0, oneClickTestTarget(t, "separate-budgets"), run, write)
+				if fmt.Sprint(formats) != "[csv json]" || time.Since(started) != 59*time.Second {
+					t.Fatalf("unexpected write sequence/virtual duration: %v %s", formats, time.Since(started))
+				}
+				if result.Outcome != "partial" || result.CSV.Complete || !strings.Contains(result.CSV.Error, "deadline exceeded") || !result.JSON.Complete || result.JSON.Error != "" {
+					t.Fatalf("CSV timeout prevented independent successful JSON: %+v", result)
+				}
+				for _, fileCtx := range fileContexts {
+					if fileCtx.Err() == nil {
+						t.Error("file context was not cancelled after writer returned")
+					}
+				}
+			})
+		})
 	}
 }

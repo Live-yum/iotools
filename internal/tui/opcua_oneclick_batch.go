@@ -378,13 +378,18 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 	snapshot.ExportedAt = time.Now().UTC()
 	stem := uaOneClickFileStem(index, r.ID)
 	result.CSV.Path, result.JSON.Path = filepath.Join(directory, stem+".csv"), filepath.Join(directory, stem+".json")
-	fileCtx, fileCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer fileCancel()
-	if err := write(fileCtx, result.CSV.Path, "csv", snapshot); err != nil {
+	// Each format gets a fresh bounded allowance. A slow or timed-out CSV
+	// must not consume JSON's budget; both still persist after network cancel.
+	writeSnapshot := func(path, format string) error {
+		fileCtx, fileCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer fileCancel()
+		return write(fileCtx, path, format, snapshot)
+	}
+	if err := writeSnapshot(result.CSV.Path, "csv"); err != nil {
 		result.CSV.Error = err.Error()
 		addNote("CSV: " + err.Error())
 	}
-	if err := write(fileCtx, result.JSON.Path, "json", snapshot); err != nil {
+	if err := writeSnapshot(result.JSON.Path, "json"); err != nil {
 		result.JSON.Error = err.Error()
 		addNote("JSON: " + err.Error())
 	}
