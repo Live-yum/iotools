@@ -229,3 +229,50 @@ both the cross-chunk read and strict-limit bugs, then pass with the fixes.
 - Independent final source review found no remaining confirmed blocker in these
   corrections. New remote exact-head checks are still required before merge;
   the earlier Android failure remains preserved and does not count as passed.
+
+## Third-round test-fixture cleanup failure (`00321e9`)
+
+[Release-unit run 38385801911](https://github.com/Live-yum/iotools/actions/runs/38385801911/job/115257169285)
+failed `SourceTests.test_compiler_config_rejected` during strict temporary-directory
+cleanup with `ENOTEMPTY: objects`, not because its compiler-config rejection
+assertion failed. Git Trace2 on the original fixture captured detached automatic
+maintenance after commits, providing a concrete cleanup-race risk. The original
+CI filesystem writer was not traced, so this is not claimed as an exact syscall
+reproduction of that failure.
+
+Only these disposable fixture repositories now set local `maintenance.auto=false`
+and `gc.auto=0` before the first commit. User/global repository settings and strict
+cleanup are unchanged. A real-commit Trace2 regression fails with the old fixture
+and passes with the change; 650 repeated source tests (850 commits) with inherited
+auto-maintenance enabled observed no maintenance/GC children after the local
+settings. The full release-unit suite now passes 68 tests. Independent source
+review confirms Git 2.55 checks `maintenance.auto` before launching maintenance.
+Fresh CI on this correction remains required; the failed run is retained.
+
+### Third-round Android outcome and history lifecycle correction
+
+[Android job 115257225780](https://github.com/Live-yum/iotools/actions/runs/38385801818/job/115257225780)
+passed the strict JNI/ABI APK gate, independent ARM64 packaging, OPC UA suite
+(two tests), and the exact normal-entry AOT APK instrumentation test. The main
+protocol suite remained **failed** (five passed, one failed): a single HTTP AES
+request produced a 200 response/transformation, then history persistence returned
+`sql: transaction has already been committed or rolled back`. These successful
+substeps do not override the failed suite.
+
+The recipe's network/transform deadline was also controlling the subsequent
+history transaction. A deterministic real loopback HTTP + SQLite regression
+reproduces deadline expiry after receiving the full response; the old source
+fails and the corrected source stores the complete raw/transformed record once.
+History persistence now has its own bounded five-second context under the prior
+caller context. Explicit caller cancellation and outer chained-request deadlines
+still stop it. There is no HTTP resend or transaction retry. Capacity errors do
+not hide a simultaneous cancellation, and SQL failures retain the genuine context
+cause without being mislabeled by the later cleanup cancel.
+
+Five lifecycle regressions pass. Full engine/mobileapi race checks pass with both
+drivers: 260 top-level tests on the default driver and 264 on the Android bundled
+driver, each with two pre-existing explicit skips (ICMP permission and opt-in
+three-process SQLite interoperability). Both vet passes, formatting and independent
+review passed. This identifies and corrects a reproducible lifecycle defect; the
+original Android log did not record the exact context-expiry instant. Actual
+Android UI acceptance of this correction still requires fresh exact-head CI.

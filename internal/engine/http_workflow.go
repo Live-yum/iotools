@@ -318,7 +318,20 @@ func (w *httpWorkflow) run(r config.Request, chained bool, emit Emit) error {
 			if w.options.HistoryReadOnly {
 				send(emit, "history_status", map[string]any{"recorded": false, "reason": "read_only", "message": "只读保护，本次未记录", "request_id": r.ID})
 			} else if w.history != nil {
-				if err := w.history.Add(w.ctx, *entry); errors.Is(err, ErrHTTPHistoryCapacity) {
+				// The response is complete. Give local persistence its own bounded
+				// budget instead of letting the spent recipe deadline roll back an
+				// otherwise valid transaction. The caller (or enclosing recipe for
+				// a chain) still controls cancellation; never detach or retry writes.
+				historyCtx, historyCancel := context.WithTimeout(previousCtx, 5*time.Second)
+				err := w.history.Add(historyCtx, *entry)
+				historyContextErr := historyCtx.Err()
+				if err != nil {
+					// database/sql can report ErrTxDone if context cancellation's
+					// rollback wins the race with a query or Commit.
+					err = errors.Join(err, historyContextErr)
+				}
+				historyCancel()
+				if errors.Is(err, ErrHTTPHistoryCapacity) && historyContextErr == nil {
 					send(emit, "history_status", map[string]any{"recorded": false, "reason": "capacity", "message": err.Error(), "request_id": r.ID})
 				} else if err != nil {
 					return errors.Join(e, fmt.Errorf("HTTP completed but history save failed: %w", err))
