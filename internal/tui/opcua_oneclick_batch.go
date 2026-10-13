@@ -245,14 +245,49 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 	defer cancel()
 	snapshot := uaScanSnapshot{Endpoint: r.Endpoint, RootNode: result.RootNode, ScanReason: "未收到扫描完成状态", Rows: []uaScanRow{}}
 	indexes, seen := map[string]int{}, map[string]bool{}
+	// Keep a small separate reservation for terminal diagnostics even when an
+	// observation exhausts the main allowance. Neither quota is reused.
+	memory := uaOneClickMemory{remaining: uaOneClickMemoryLimit - 1<<20}
+	noteMemory := uaOneClickMemory{remaining: 1 << 20}
+	var memoryErr error
+	stopForMemory := func(err error) {
+		if memoryErr == nil {
+			memoryErr = err
+			cancel()
+		}
+	}
+	ownedEvent := func(event engine.Event) (engine.Event, bool) {
+		if memoryErr != nil {
+			return engine.Event{}, false
+		}
+		owned, err := memory.ownEvent(event)
+		if err != nil {
+			stopForMemory(err)
+			return engine.Event{}, false
+		}
+		return owned, true
+	}
 	var notes []string
 	addNote := func(s string) {
 		if s != "" && len(notes) < 20 {
-			notes = append(notes, s)
+			if err := noteMemory.bytes(len(s)); err != nil {
+				stopForMemory(err)
+				return
+			}
+			notes = append(notes, strings.Clone(s))
 		}
 	}
 	fingerprintInvalid, scanEventError := false, false
 	scanErr := run(serviceCtx, r, false, func(event engine.Event) {
+		switch event.Kind {
+		case "scan-namespace", "scan-node", "scan-error", "scan-summary":
+		default:
+			return
+		}
+		event, accepted := ownedEvent(event)
+		if !accepted {
+			return
+		}
 		m, ok := event.Data.(map[string]any)
 		if !ok {
 			return
@@ -302,8 +337,11 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 		snapshot.ScanComplete = false
 		addNote("扫描: " + scanErr.Error())
 	}
-	if scanEventError {
+	if scanEventError || memoryErr != nil {
 		snapshot.ScanComplete = false
+	}
+	if memoryErr != nil {
+		snapshot.ScanReason += "; 内存预算/值处理: " + memoryErr.Error()
 	}
 	if !snapshot.ScanComplete {
 		addNote(snapshot.ScanReason)
@@ -329,15 +367,26 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 			read.Params["node_ids"] = ids
 			read.Params["read_batch_size"] = r.Int("read_batch_size", 100)
 			chunkErr := run(serviceCtx, read, false, func(event engine.Event) {
-				if event.Kind != "value" {
+				if event.Kind != "value" || memoryErr != nil {
 					return
 				}
 				m, ok := event.Data.(map[string]any)
 				if !ok {
 					return
 				}
-				id := uaScanString(m, "node_id")
+				id, textID := m["node_id"].(string)
+				if !textID {
+					stopForMemory(errors.New("unsupported non-string OPC UA value NodeID"))
+					return
+				}
 				if !allowed[id] {
+					return
+				}
+				event, accepted := ownedEvent(event)
+				if !accepted {
+					if prior := &snapshot.Rows[indexes[id]]; prior.Kind != "" {
+						prior.Error = strings.TrimPrefix(prior.Error+"; 后续观测未接收: "+memoryErr.Error(), "; ")
+					}
 					return
 				}
 				i := indexes[id]
@@ -358,12 +407,18 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 	if serviceCtx.Err() != nil {
 		addNote("已停止/超时: " + serviceCtx.Err().Error())
 	}
+	memoryNoted := memoryErr != nil
+	if memoryNoted {
+		// This terminal reason must remain visible even after 20 prior errors.
+		notes = append(notes, "内存预算/值处理: "+memoryErr.Error())
+	}
+	unreadReason := strings.Join(notes, "; ")
 	for i := range snapshot.Rows {
 		row := &snapshot.Rows[i]
 		if row.Kind == "" {
 			result.Unread++
 			row.Status = "未读取（取消/超时/失败/未返回）"
-			row.Error = strings.Join(notes, "; ")
+			row.Error = unreadReason // one shared bounded diagnostic, not N copies
 		} else {
 			result.Read++
 			if !row.HasValue || row.Error != "" || (row.Status != "Good" && row.Status != ua.StatusOK.Error()) {
@@ -401,13 +456,16 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 		result.Outcome = "fail"
 	case !snapshot.ScanComplete && len(snapshot.Rows) == 0:
 		result.Outcome = "fail"
-	case !snapshot.ScanComplete || snapshot.NamespaceFingerprint == "" || readErr != nil || result.Unread > 0 || result.FailedValues > 0 || serviceCtx.Err() != nil || result.CSV.Error != "" || result.JSON.Error != "":
+	case !snapshot.ScanComplete || snapshot.NamespaceFingerprint == "" || readErr != nil || memoryErr != nil || result.Unread > 0 || result.FailedValues > 0 || serviceCtx.Err() != nil || result.CSV.Error != "" || result.JSON.Error != "":
 		result.Outcome = "partial"
 	default:
 		result.Outcome = "success"
 	}
 	result.CSV.Complete = result.CSV.Error == ""
 	result.JSON.Complete = result.JSON.Error == ""
+	if memoryErr != nil && !memoryNoted {
+		notes = append(notes, "内存预算/值处理: "+memoryErr.Error())
+	}
 	result.Reason, result.FinishedAt = strings.Join(notes, "; "), time.Now().UTC()
 	return result
 }

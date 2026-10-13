@@ -154,8 +154,22 @@ class _RequestFormState extends State<RequestForm> {
                           ...params,
                         };
                         if (request['protocol'] == 'opcua') {
-                          inputs['read_batch_size']?.text =
-                              params['read_batch_size']?.toString() ?? '';
+                          // Defaults merged above can populate fields whose
+                          // controllers were already mounted by another action.
+                          // Preserve edited values (and their selection) when
+                          // the merged parameter text has not changed.
+                          for (final key in [
+                            'read_batch_size',
+                            'max_depth',
+                            'max_nodes',
+                            'max_references',
+                          ]) {
+                            final controller = inputs[key];
+                            final text = params[key]?.toString() ?? '';
+                            if (controller != null && controller.text != text) {
+                              controller.text = text;
+                            }
+                          }
                         }
                       });
                       widget.onChanged(cloneMap(request));
