@@ -29,8 +29,17 @@ func (u *UI) showUAOneClick() {
 	collection := false
 	for _, r := range u.collection.Requests {
 		if r.Protocol == "opcua" && r.Action == "scan" {
-			base, collection = r, true
-			break
+			if !collection {
+				base, collection = r, true
+			}
+			// A bad first request remains a reportable collection target, but
+			// must not prevent opening the picker for later valid services.
+			if resolved, err := u.collection.Resolve(r, u.profile); err == nil {
+				if _, err := uaOneClickTargetFor(resolved); err == nil {
+					base = r
+					break
+				}
+			}
 		}
 	}
 	if !collection && u.selected >= 0 && u.selected < len(u.collection.Requests) {
@@ -48,6 +57,9 @@ func (u *UI) showUAOneClick() {
 		return
 	}
 	u.uaWorkspace.showScan()
+	if u.uaWorkspace.scan == nil {
+		return
+	}
 	u.uaWorkspace.scan.oneClickForm(collection)
 }
 

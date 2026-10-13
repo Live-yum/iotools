@@ -21,6 +21,20 @@ android {
  packaging { jniLibs { useLegacyPackaging = true } }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
+// Flutter's non-split default includes ARMv7 even when target-platform omits it.
+// Keep dependency JNI libraries aligned with the requested 64-bit Go/Flutter
+// engine ABIs. Split APKs use Flutter's split configuration, not ndk.abiFilters.
+androidComponents.finalizeDsl { androidDsl ->
+ if (!(project.findProperty('split-per-abi')?.toString()?.toBoolean() ?: false)) {
+  def abiByTarget = ['android-arm64': 'arm64-v8a', 'android-x64': 'x86_64']
+  def targets = (project.findProperty('target-platform') ?: 'android-arm64,android-x64').toString().split(',')
+  if (targets.any { !abiByTarget.containsKey(it) }) {
+   throw new GradleException('iotools supports only android-arm64 and android-x64')
+  }
+  androidDsl.defaultConfig.ndk.abiFilters.clear()
+  androidDsl.defaultConfig.ndk.abiFilters.addAll(targets.collect { abiByTarget[it] })
+ }
+}
 flutter { source '../..' }
 dependencies {
  implementation 'com.github.mik3y:usb-serial-for-android:3.11.0'

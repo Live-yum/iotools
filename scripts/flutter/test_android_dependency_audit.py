@@ -178,7 +178,7 @@ class DependencyAuditTests(unittest.TestCase):
             with self.assertRaises(ValueError): audit.dex_defined_classes(bad)
 
     def test_apk_requires_exact_jni_and_application_closure(self):
-        for bad in (None, 'jni_missing', 'app_missing', 'class_missing', 'reference_only', 'extra_abi', 'extra_path',
+        for bad in (None, 'jni_missing', 'app_missing', 'class_missing', 'reference_only', 'extra_abi', 'extra_armv7', 'extra_path',
                     'wrong_machine', 'not_elf', 'page_size', 'missing_load', 'duplicate', 'uncompressed'):
             with tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / 'test.apk'
@@ -192,6 +192,7 @@ class DependencyAuditTests(unittest.TestCase):
                         apk.writestr('lib/x86_64/libdartjni.so', native,
                                      compress_type=zipfile.ZIP_STORED if bad == 'uncompressed' else zipfile.ZIP_DEFLATED)
                     if bad == 'extra_abi': apk.writestr('lib/arm64-v8a/libdartjni.so', self.jni_elf('arm64-v8a'))
+                    if bad == 'extra_armv7': apk.writestr('lib/armeabi-v7a/libdartjni.so', b'unrequested ARMv7')
                     if bad == 'extra_path': apk.writestr('assets/libdartjni.so', native)
                     if bad == 'duplicate':
                         import warnings
@@ -214,6 +215,16 @@ class DependencyAuditTests(unittest.TestCase):
                 for index, descriptor in enumerate(sorted(audit.JNI_CLASSES), 1):
                     apk.writestr(f'classes{index}.dex', self.dex([descriptor]))
             self.assertEqual(audit.audit_apk(path)['jni_abis'], ['arm64-v8a', 'x86_64'])
+
+    def test_non_split_apk_filters_dependency_abis_to_requested_targets(self):
+        app = (audit.ROOT / 'mobile/android/app/build.gradle').read_text()
+        self.assertIn('androidComponents.finalizeDsl', app)
+        self.assertIn("project.findProperty('split-per-abi')?.toString()?.toBoolean()", app)
+        self.assertIn("['android-arm64': 'arm64-v8a', 'android-x64': 'x86_64']", app)
+        self.assertIn("project.findProperty('target-platform') ?: 'android-arm64,android-x64'", app)
+        self.assertIn('!abiByTarget.containsKey(it)', app)
+        self.assertIn('androidDsl.defaultConfig.ndk.abiFilters.clear()', app)
+        self.assertIn('androidDsl.defaultConfig.ndk.abiFilters.addAll(targets.collect { abiByTarget[it] })', app)
 
     def test_jni_uses_the_app_pinned_ndk(self):
         root = (audit.ROOT / 'mobile/android/build.gradle').read_text()

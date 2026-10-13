@@ -20,6 +20,52 @@ func clickOneClickButton(form *tview.Form, index int) {
 	form.GetButton(index).InputHandler()(tcell.NewEventKey(tcell.KeyEnter, 0, 0), func(tview.Primitive) {})
 }
 
+func TestUAOneClickRejectedScanLimitsDoNotDereferenceMissingScan(t *testing.T) {
+	for _, key := range []string{"max_depth", "max_nodes", "max_references", "read_batch_size"} {
+		t.Run(key, func(t *testing.T) {
+			u, _ := newTestUI(t)
+			r := oneClickTestRequest("invalid-limit")
+			r.Params[key] = "invalid"
+			u.collection.Requests = []config.Request{r}
+			u.showUAOneClick()
+			if u.uaWorkspace == nil || u.uaWorkspace.scan != nil || !u.pages.HasPage("modal") || u.pages.HasPage("ua-oneclick-form") || u.pages.HasPage("ua-scan") || u.running {
+				t.Fatal("invalid scan limits created or dereferenced a scan workspace")
+			}
+		})
+	}
+}
+
+func TestUAOneClickInvalidFirstTargetDoesNotBlockLaterCollectionSelection(t *testing.T) {
+	u, _ := newTestUI(t)
+	u.profile = "field"
+	u.collection.Profiles["field"] = map[string]string{"root": "ns=2;s=${literal}", "password": "FAKE${literal}", "literal": "must-not-expand-twice"}
+	bad, good := oneClickTestRequest("bad-first"), oneClickTestRequest("good-second")
+	bad.Params["max_nodes"] = "invalid"
+	good.Params["max_depth"] = 7
+	good.Params["node_id"], good.Params["password"] = "${root}", "${password}"
+	u.collection.Requests = []config.Request{bad, good}
+	u.showUAOneClick()
+	name, page := u.pages.GetFrontPage()
+	if name != "ua-oneclick-form" || u.uaWorkspace == nil || u.uaWorkspace.scan == nil {
+		t.Fatalf("invalid first target hid valid later services: page=%q", name)
+	}
+	w := u.uaWorkspace.scan
+	if w.base.ID != "good-second" || w.maxDepth != 7 || page.(*tview.Form).GetFormItemCount() != 3 || u.running || w.active {
+		t.Fatal("collection picker lost targets, used an invalid seed, or started work")
+	}
+	targets := w.oneClickTargets(true)
+	if len(targets) != 2 || targets[0].Request.ID != "bad-first" || !strings.Contains(targets[0].Error, "max_nodes") || targets[1].Request.ID != "good-second" || targets[1].Error != "" {
+		t.Fatalf("seed selection hid or sanitized an invalid target: %+v", targets)
+	}
+	if u.collection.Requests[0].Params["max_nodes"] != "invalid" {
+		t.Fatal("opening the picker rewrote invalid source limits")
+	}
+	current := w.oneClickTargets(false)
+	if w.rootNode != "ns=2;s=${literal}" || w.base.String("password", "") != "FAKE${literal}" || len(current) != 1 || current[0].Request.String("node_id", "") != "ns=2;s=${literal}" || current[0].Request.String("password", "") != "FAKE${literal}" {
+		t.Fatal("selecting the workspace seed resolved literal template syntax twice")
+	}
+}
+
 func TestUAOneClickMainShortcutProfilePreviewCancelNoIO(t *testing.T) {
 	u, screen := newTestUI(t)
 	u.profile = "field"

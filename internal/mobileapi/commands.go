@@ -24,6 +24,8 @@ type command struct {
 	ExecuteTriggers bool                      `json:"execute_triggers,omitempty"`
 	ResultID        string                    `json:"result_id,omitempty"`
 	RunID           string                    `json:"run_id,omitempty"`
+	Offset          int                       `json:"offset,omitempty"`
+	Limit           int                       `json:"limit,omitempty"`
 	SubscriptionID  string                    `json:"subscription_id,omitempty"`
 	ApplicationURI  string                    `json:"application_uri,omitempty"`
 	CertPath        string                    `json:"cert_path,omitempty"`
@@ -72,6 +74,8 @@ type command struct {
 
 func (s *Session) command(c command) (any, error) {
 	switch c.Op {
+	case "opcua.scan.page":
+		return s.scanPage(c)
 	case "result.get":
 		return s.result(c.ResultID)
 	case "modbus.pause", "modbus.resume":

@@ -65,3 +65,33 @@ func TestCollectionDefaultResolvesEveryExample(t *testing.T) {
 		t.Errorf("covered %d protocols, want %d", len(seen), len(bases))
 	}
 }
+
+// The documented CLI invocation does not supply --profile. Resolve exactly as
+// startup does, without contacting the example endpoint.
+func TestOPCUAScanExampleResolvesWithDefaultProfile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "opcua-scan.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultProfile != "local" {
+		t.Fatalf("default profile = %q, want local", c.DefaultProfile)
+	}
+	if len(c.Requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(c.Requests))
+	}
+	resolved, err := c.Resolve(c.Requests[0], c.DefaultProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Protocol != "opcua" || resolved.Action != "scan" || resolved.Endpoint != "opc.tcp://127.0.0.1:4840" {
+		t.Fatalf("unexpected resolved scan: %+v", resolved)
+	}
+	encoded, err := json.Marshal(resolved)
+	if err != nil || bytes.Contains(encoded, []byte("${")) {
+		t.Fatalf("unresolved scan: %s, error: %v", encoded, err)
+	}
+}

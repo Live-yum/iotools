@@ -153,6 +153,10 @@ class _RequestFormState extends State<RequestForm> {
                           ),
                           ...params,
                         };
+                        if (request['protocol'] == 'opcua') {
+                          inputs['read_batch_size']?.text =
+                              params['read_batch_size']?.toString() ?? '';
+                        }
                       });
                       widget.onChanged(cloneMap(request));
                     },
@@ -308,6 +312,8 @@ class _RequestFormState extends State<RequestForm> {
       );
     final attachment =
         key.endsWith('_file') && key != 'response_file' || key == 'next_config';
+    final readBatchSize =
+        request['protocol'] == 'opcua' && key == 'read_batch_size';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
@@ -320,11 +326,15 @@ class _RequestFormState extends State<RequestForm> {
             : ['body', 'payload', 'value'].contains(key)
             ? 8
             : 1,
-        keyboardType: type == 'number'
+        keyboardType: readBatchSize
+            ? TextInputType.number
+            : type == 'number'
             ? const TextInputType.numberWithOptions(signed: true, decimal: true)
             : TextInputType.text,
         decoration: InputDecoration(
           labelText: label,
+          errorText: readBatchSize ? _readBatchSizeError(value) : null,
+          errorMaxLines: readBatchSize ? 2 : null,
           helperText: spec['hint']?.toString().isNotEmpty == true
               ? spec['hint'].toString()
               : null,
@@ -343,15 +353,46 @@ class _RequestFormState extends State<RequestForm> {
               : null,
         ),
         onChanged: (v) {
-          if (v.isEmpty) {
-            change(key, null);
+          if (readBatchSize) {
+            // Retain invalid edits so the engine cannot silently run a stale
+            // valid value. It remains authoritative after template expansion.
+            setState(() => change(key, v.isEmpty ? null : v));
           } else {
-            change(key, v);
+            change(key, v.isEmpty ? null : v);
           }
         },
       ),
     );
   }
+}
+
+String? _readBatchSizeError(Object? value) {
+  if (value == null) return null; // Omission uses the engine default of 100.
+  final text = value.toString();
+  // Imported JSON numbers retain their numeric type; typed form edits are
+  // strings and must use the engine's strict decimal integer syntax.
+  final numeric = value is ExactNumber
+      ? num.tryParse(value.source)
+      : value is num
+      ? value
+      : null;
+  if (numeric != null &&
+      numeric >= 1 &&
+      numeric <= 1000 &&
+      numeric == numeric.truncateToDouble()) {
+    return null;
+  }
+  if (RegExp(r'\$\{[^{}]+\}|\{\{[\s\S]*?\}\}').hasMatch(text)) {
+    return null; // Validate templates only after the engine resolves them.
+  }
+  final number = int.tryParse(text, radix: 10);
+  if (RegExp(r'^[+-]?[0-9]+$').stringMatch(text) != text ||
+      number == null ||
+      number < 1 ||
+      number > 1000) {
+    return '请输入 1..1000 的整数；留空使用默认值 100';
+  }
+  return null;
 }
 
 bool _primary(String protocol, String key) => switch (protocol) {

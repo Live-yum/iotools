@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Live-yum/iotools/internal/config"
 	"github.com/Live-yum/iotools/internal/engine"
+	"github.com/gopcua/opcua/ua"
 )
 
 // Every engine call in this file is injected. These tests never connect to an
@@ -471,6 +473,144 @@ func TestUAOneClickOverTenThousandVariablesAreAllReadAndExported(t *testing.T) {
 	report, err := runUAOneClick(context.Background(), oneClickTestDirectory(t), []uaOneClickTarget{target}, run, writer, nil)
 	if err != nil || readCalls < 2 || len(seen) != count || !formats["csv"] || !formats["json"] || len(report.Services) != 1 || report.Success != 1 || report.Services[0].Rows != count || report.Services[0].Read != count || report.Services[0].Unread != 0 {
 		t.Fatalf("large read did not cover all variables: calls=%d seen=%d report=%+v err=%v", readCalls, len(seen), report, err)
+	}
+}
+
+func oneClickLargeTestSelection(t *testing.T, count int) (uaOneClickTarget, []string) {
+	t.Helper()
+	target := oneClickTestTarget(t, "large-partial")
+	target.Request.Params["max_nodes"] = 100000
+	target.Request.Params["auth"] = "username"
+	target.Request.Params["username"] = "same-operator"
+	ids := make([]string, count)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("ns=2;s=Value%05d", i)
+	}
+	return target, ids
+}
+
+func TestUAOneClickReportedPartialReadContinuesLaterChunks(t *testing.T) {
+	for _, mode := range []string{"bad-node", "read-error", "summary-error"} {
+		t.Run(mode, func(t *testing.T) {
+			const count = 10002
+			const firstFailure = "first chunk retained read failure"
+			target, ids := oneClickLargeTestSelection(t, count)
+			readCalls, writes := 0, 0
+			run := func(_ context.Context, r config.Request, write bool, emit engine.Emit) error {
+				if r.Action == "scan" {
+					oneClickTestScan(emit, true, "", ids...)
+					return nil
+				}
+				chunk := oneClickTestAssertRead(t, r, write)
+				offset := readCalls * 10000
+				if !reflect.DeepEqual(chunk, ids[offset:min(offset+10000, count)]) || r.String("username", "") != "same-operator" {
+					t.Fatal("later chunk changed selection or identity")
+				}
+				readCalls++
+				for i, id := range chunk {
+					event := scanValue(id, int64(42))
+					if readCalls == 1 && i == 0 && mode != "summary-error" {
+						m := event.Data.(map[string]any)
+						m["status"], m["has_value"], m["value"] = "BadNotReadable", false, nil
+						if mode == "read-error" {
+							m["status"], m["error"] = "Unavailable", firstFailure
+						}
+					}
+					emit(event)
+				}
+				if readCalls == 1 {
+					return &engine.OPCUAReadPartialError{Err: errors.New(firstFailure)}
+				}
+				return nil
+			}
+			writer := func(_ context.Context, _ string, _ string, snapshot uaScanSnapshot) error {
+				writes++
+				if len(snapshot.Rows) != count || snapshot.Rows[count-1].NodeID != ids[count-1] || !snapshot.Rows[count-1].HasValue || snapshot.Rows[count-1].Value != int64(42) {
+					t.Fatal("an early reported error dropped later readable variables")
+				}
+				if mode != "summary-error" && snapshot.Rows[0].HasValue {
+					t.Fatal("failed first value was promoted to present")
+				}
+				return nil
+			}
+			report, err := runUAOneClick(context.Background(), oneClickTestDirectory(t), []uaOneClickTarget{target}, run, writer, nil)
+			if err != nil || readCalls != 2 || writes != 2 || len(report.Services) != 1 {
+				t.Fatalf("partial result prevented the next chunk: err=%v reads=%d writes=%d report=%+v", err, readCalls, writes, report)
+			}
+			result := report.Services[0]
+			wantFailed := 1
+			if mode == "summary-error" {
+				wantFailed = 0
+			}
+			if result.Outcome != "partial" || report.Partial != 1 || report.Success != 0 || result.Read != count || result.Unread != 0 || result.FailedValues != wantFailed || !strings.Contains(result.Reason, firstFailure) {
+				t.Fatalf("later success erased earlier partial error or diagnostics: %+v", report)
+			}
+		})
+	}
+}
+
+func TestUAOneClickTerminalReadErrorsStopLaterChunksAndPreserveRows(t *testing.T) {
+	for _, mode := range []string{"namespace", "cancel", "transport", "session", "unknown", "mixed"} {
+		t.Run(mode, func(t *testing.T) {
+			const count = 20002
+			target, ids := oneClickLargeTestSelection(t, count)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			readCalls, writes := 0, 0
+			run := func(_ context.Context, r config.Request, write bool, emit engine.Emit) error {
+				if r.Action == "scan" {
+					oneClickTestScan(emit, true, "", ids...)
+					return nil
+				}
+				chunk := oneClickTestAssertRead(t, r, write)
+				readCalls++
+				if readCalls == 1 {
+					for _, id := range chunk {
+						emit(scanValue(id, int64(42)))
+					}
+					return nil
+				}
+				if readCalls > 2 {
+					t.Fatal("terminal failure started another chunk/connection")
+				}
+				if mode == "namespace" {
+					return errors.New("NamespaceArray changed; rescan required")
+				}
+				emit(scanValue(chunk[0], int64(42)))
+				switch mode {
+				case "cancel":
+					cancel()
+					return context.Canceled
+				case "transport":
+					return fmt.Errorf("read connection: %w", io.EOF)
+				case "session":
+					return ua.StatusBadSessionClosed
+				case "mixed":
+					return errors.Join(&engine.OPCUAReadPartialError{Err: ua.StatusBadNotReadable}, io.EOF)
+				default:
+					return errors.New("unknown read failure")
+				}
+			}
+			writer := func(fileCtx context.Context, _ string, _ string, snapshot uaScanSnapshot) error {
+				writes++
+				if fileCtx.Err() != nil || len(snapshot.Rows) != count || !snapshot.Rows[0].HasValue || snapshot.Rows[count-1].HasValue || snapshot.Rows[count-1].Error == "" {
+					t.Fatal("terminal stop discarded observations or unread diagnostics")
+				}
+				return nil
+			}
+			report, err := runUAOneClick(ctx, oneClickTestDirectory(t), []uaOneClickTarget{target}, run, writer, nil)
+			if (mode == "cancel" && !errors.Is(err, context.Canceled)) || (mode != "cancel" && err != nil) || readCalls != 2 || writes != 2 || len(report.Services) != 1 {
+				t.Fatalf("terminal/cancel handling changed: reads=%d writes=%d err=%v report=%+v", readCalls, writes, err, report)
+			}
+			wantRead := 10001
+			if mode == "namespace" {
+				wantRead = 10000
+			}
+			result := report.Services[0]
+			if result.Outcome != "partial" || result.Read != wantRead || result.Unread != count-wantRead || report.Success != 0 || report.Cancelled != (mode == "cancel") {
+				t.Fatalf("terminal failure incorrectly continued or succeeded: %+v", report)
+			}
+		})
 	}
 }
 

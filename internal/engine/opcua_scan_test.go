@@ -476,7 +476,7 @@ func TestOPCUAReadBatchTransportFailureAndCancellation(t *testing.T) {
 	var values []map[string]any
 	r := config.Request{Action: "read", Params: map[string]any{"node_ids": ids, "read_batch_size": 2}}
 	err := opcuaReadAttributes(context.Background(), reader, r, func(e Event) { values = append(values, e.Data.(map[string]any)) })
-	if err == nil || calls != 3 || len(values) != 5 || values[2]["status"] != "Unavailable" || values[4]["value"] != int32(1) {
+	if err == nil || OPCUAReadCanContinue(err) || calls != 2 || len(values) != 4 || values[2]["status"] != "Unavailable" || values[2]["has_value"] != false || values[3]["has_value"] != false {
 		t.Fatalf("%v %d %v", err, calls, values)
 	}
 	calls = 0

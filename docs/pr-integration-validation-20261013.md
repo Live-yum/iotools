@@ -161,3 +161,71 @@ marker was used. This allowed the previously unavailable local Flutter checks:
 Fresh Windows, Android, desktop and Apple runtime checks are required for this
 follow-up commit. The iOS simulator's prior exit 255 is not declared resolved
 before those checks run with the improved captured diagnostics.
+## Second integration findings (`8238332`)
+
+The second round passed both Windows/Linux TUI workflows, HTTP history, and the
+native desktop/web/iOS checks reported by their exact-head jobs. In particular,
+the Windows CRLF fixture and unsigned iOS production Mach-O gate now passed;
+the iOS simulator also reached and passed XCTest. This verifies recovery without
+claiming a proven root cause for the earlier simulator exit 255.
+
+[Android run 38382139335](https://github.com/Live-yum/iotools/actions/runs/38382139335/job/115244982764)
+failed the exact JNI APK closure gate after building the compact AOT APK: the
+plugin contributed `lib/armeabi-v7a/libdartjni.so` although the requested Go and
+Flutter targets were ARM64/x86_64. The gate correctly rejected this extra ABI.
+Flutter's default non-split ABI set includes ARMv7; the application now finalizes
+non-split dependency filters from the explicitly requested supported targets.
+Split APKs retain Flutter's own split configuration. The strict APK gate and its
+ELF/class checks are unchanged; an extra-ARMv7 negative fixture is added.
+Actual corrected APK packaging and runtime acceptance remain pending fresh CI.
+
+New review findings are being addressed before merge: partial per-node read
+errors must not abandon later 10,000-node chunks, mobile scans need a bounded
+lossless result path independent of the event queue, mobile read batch size must
+be editable, invalid TUI limits must not be silently coerced, unavailable read
+events must explicitly report no value, and the standalone scan example must
+select its declared local profile. These findings are not waived by green jobs.
+
+### Review corrections after the second round
+
+- An explicit typed partial-read error permits later selection chunks to run,
+  while cancellation, identity, session/transport and unknown errors stop them.
+  Earlier chunk errors remain visible after later successes. Missing read values
+  always carry `has_value: false`.
+- Mobile scan records are captured before the lossy event queue. A run-bound
+  read-only pagination API exposes up to 100,000 nodes / 16 MiB within the existing
+  combined 32 MiB result-payload budget. Oversize data or limits stop with explicit
+  incomplete status; a new run or close invalidates the cursor. Poll/state retain
+  the descriptor even if all lifecycle events were evicted.
+- Flutter displays one bounded page at a time, with exact node/parent identifiers,
+  completion status and explicit failure details. Late replies cannot populate a
+  changed run, collection, session lifecycle or disposed page. Long errors and
+  paging controls remain usable on a 320×320 test surface.
+- Mobile `read_batch_size` is an integer field with the engine's default 100 and
+  allowed range 1..1000. TUI raw scan-limit values are validated before opening or
+  cancelling anything; invalid values are not coerced to defaults. Collection
+  mode still permits later valid services after a bad first target, without
+  resolving variables twice or rewriting the bad configuration.
+- The standalone scan example selects `default_profile: local`; its regression
+  resolves the documented default invocation without contacting any endpoint.
+
+A disposable local OPC UA server test retained and paged 601 actual protocol
+nodes despite event-queue loss. Synthetic 10,000-node stress, size bounds and
+concurrent lifecycle tests exercise the transport/cache design; neither is
+industrial device or physical Kylin acceptance. Old-source overlays reproduce
+both the cross-chunk read and strict-limit bugs, then pass with the fixes.
+
+### Final local checks for this correction tree
+
+- Full Go ordinary and race suites: each 979 passing test/subtest results and
+  three explicit environment/opt-in skips; no failures. Go source hashes were
+  frozen across both final suites. Full vet, module verification/tidy-diff and
+  current govulncheck passed, with no reported vulnerabilities.
+- Full Flutter suite: 224 passed, seven existing skips, no failures; analyze clean.
+  Lockfile SHA-256 remains
+  `2cdd963a4a5305ddff4ad7d0a5bf36ba2e1a15db578c74fb207240aaf8e73ccd`.
+- Python CI/release/Flutter/platform suites passed 24/67/74/124 tests. These
+  include 17 dependency-audit unit tests, not an actual rebuilt APK.
+- Independent final source review found no remaining confirmed blocker in these
+  corrections. New remote exact-head checks are still required before merge;
+  the earlier Android failure remains preserved and does not count as passed.

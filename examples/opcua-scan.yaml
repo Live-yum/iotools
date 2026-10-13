@@ -1,6 +1,7 @@
 # 本机测试服务器示例。仅在你有权访问的服务器上执行。
 # None/allow_insecure 仅用于无凭据的回环测试，生产请使用 docs/opcua.md 的安全配置。
 version: 1
+default_profile: local
 profiles:
   local:
     ua_endpoint: opc.tcp://127.0.0.1:4840

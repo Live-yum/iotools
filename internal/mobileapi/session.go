@@ -86,6 +86,7 @@ type Session struct {
 	historyPreview               *engine.HTTPHistoryRetentionPreview
 	modbusTotals                 modbusTotals
 	results                      map[string]cachedResult
+	scanResult                   *scanResult
 	resultOrder                  []string
 	resultBytes                  int
 	evictedResults               []string
@@ -210,7 +211,7 @@ func (s *Session) stateLocked() map[string]any {
 		profiles = append(profiles, name)
 	}
 	sort.Strings(profiles)
-	return map[string]any{"path": s.path, "version": s.version, "profile": s.profile, "profiles": profiles, "requests": s.collection.Requests, "options": s.options, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "closed": s.closed, "revision": s.revision}
+	return map[string]any{"path": s.path, "version": s.version, "profile": s.profile, "profiles": profiles, "requests": s.collection.Requests, "options": s.options, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "closed": s.closed, "revision": s.revision, "scan_result": s.scanDescriptorLocked()}
 }
 
 func reply(data any, err error) string {
@@ -315,6 +316,7 @@ func (s *Session) Poll() string {
 	s.events = nil
 	s.eventBytes = 0
 	data := map[string]any{"events": events, "running": s.cancel != nil, "run_id": s.runID, "paused": s.paused, "dropped": s.dropped, "evicted_result_ids": s.evictedResults, "evicted_result_count": s.evictedResultCount}
+	data["scan_result"] = s.scanDescriptorLocked()
 	s.dropped = 0
 	s.evictedResults = nil
 	s.evictedResultCount = 0
@@ -326,6 +328,15 @@ func (s *Session) emit(runID, kind string, data any) {
 	defer s.mu.Unlock()
 	if s.closed {
 		return
+	}
+	// Capture exact scan data before event serialization, truncation or queue loss.
+	s.captureScanLocked(runID, kind, data)
+	if scan := s.scanResult; scan != nil && scan.runID == runID && scan.failure != "" &&
+		(kind == "scan-node" || kind == "scan-summary" || kind == "scan-namespace") {
+		// An oversized scan record is a failed snapshot, never a second large
+		// generic cache entry or a misleading truncated scan-node preview.
+		kind = "scan-result-error"
+		data = map[string]any{"error": scan.failure, "retained_nodes": len(scan.nodes)}
 	}
 	s.sequence++
 	ev := queuedEvent{Seq: s.sequence, RunID: runID, Time: time.Now().UTC(), Kind: kind, Data: data}
@@ -415,6 +426,7 @@ func (s *Session) Close() {
 	s.events = nil
 	s.eventBytes = 0
 	s.results = nil
+	s.scanResult = nil
 	s.resultOrder = nil
 	s.resultBytes = 0
 	s.mu.Unlock()

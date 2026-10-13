@@ -328,7 +328,7 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 			read.Params["expected_namespace_fingerprint"] = snapshot.NamespaceFingerprint
 			read.Params["node_ids"] = ids
 			read.Params["read_batch_size"] = r.Int("read_batch_size", 100)
-			readErr = run(serviceCtx, read, false, func(event engine.Event) {
+			chunkErr := run(serviceCtx, read, false, func(event engine.Event) {
 				if event.Kind != "value" {
 					return
 				}
@@ -343,9 +343,12 @@ func runUAOneClickService(ctx context.Context, directory string, index int, targ
 				i := indexes[id]
 				snapshot.Rows[i] = uaScanValueRow(snapshot.Rows[i], event)
 			})
-			if readErr != nil {
-				addNote("读取: " + readErr.Error())
-				break
+			if chunkErr != nil {
+				readErr = errors.Join(readErr, chunkErr)
+				addNote("读取: " + chunkErr.Error())
+				if !engine.OPCUAReadCanContinue(chunkErr) {
+					break
+				}
 			}
 			if serviceCtx.Err() != nil {
 				break

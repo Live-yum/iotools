@@ -60,6 +60,30 @@ func (l *uaScanLayout) Draw(screen tcell.Screen) {
 	l.Flex.Draw(screen)
 }
 
+// Only missing limits receive defaults. Match one-click validation rather than
+// Request.Int, which truncates fractions and silently defaults malformed input.
+func uaScanLimitValues(r config.Request) ([4]int, error) {
+	var values [4]int
+	for i, limit := range []struct {
+		key           string
+		def, min, max int
+	}{
+		{"max_depth", 0, 0, 256}, {"max_nodes", 10000, 1, 100000},
+		{"max_references", 1000, 1, 100000}, {"read_batch_size", 100, 1, 1000},
+	} {
+		value := limit.def
+		if raw, present := r.Params[limit.key]; present {
+			var err error
+			value, err = strconv.Atoi(fmt.Sprint(raw))
+			if err != nil || value < limit.min || value > limit.max {
+				return values, fmt.Errorf("%s 必须是 %d..%d 的整数", limit.key, limit.min, limit.max)
+			}
+		}
+		values[i] = value
+	}
+	return values, nil
+}
+
 func (p *uaWorkspace) showScan() {
 	if p.closed || p.owner.quitting {
 		return
@@ -69,18 +93,19 @@ func (p *uaWorkspace) showScan() {
 		p.scan.focusPane(p.scan.focus)
 		return
 	}
+	limits, err := uaScanLimitValues(p.base)
+	if err != nil {
+		p.owner.modal("扫描参数无效：" + err.Error() + "；请编辑请求配置后重试")
+		return
+	}
 	if p.cancel != nil {
 		p.cancel()
 		p.generation++
 		p.cancel = nil
 		p.loading = false
 	}
-	w := &uaScanWorkspace{parent: p, base: copyRequest(p.base), rootNode: p.node, maxDepth: 0, maxNodes: 10000, maxReferences: 1000, readBatch: 100, run: p.run, layoutFocus: -1, status: "尚未连接 · r配置并显式开始扫描", reason: "尚未扫描"}
+	w := &uaScanWorkspace{parent: p, base: copyRequest(p.base), rootNode: p.node, maxDepth: limits[0], maxNodes: limits[1], maxReferences: limits[2], readBatch: limits[3], run: p.run, layoutFocus: -1, status: "尚未连接 · r配置并显式开始扫描", reason: "尚未扫描"}
 	w.newRecorder = newUAScanRecorder
-	w.maxDepth = w.base.Int("max_depth", 0)
-	w.maxNodes = w.base.Int("max_nodes", 10000)
-	w.maxReferences = w.base.Int("max_references", 1000)
-	w.readBatch = w.base.Int("read_batch_size", 100)
 	if root, err := ua.ParseNodeID(w.rootNode); err == nil {
 		w.rootNode = root.String()
 	}

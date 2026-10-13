@@ -63,6 +63,18 @@ class AppSession extends ChangeNotifier {
   bool get readOnly => mapOf(state['options'])['read_only'] == true;
   bool get history => mapOf(state['options'])['history'] == true;
   bool get running => state['running'] == true;
+  JsonMap get scanResult {
+    final scan = mapOf(state['scan_result']);
+    return scan['run_id'] == resultRunId ? scan : {};
+  }
+
+  void _applyScanStatus() {
+    final scan = scanResult;
+    if (scan['finished'] == true) {
+      status = scan['complete'] == true ? '已完成' : '扫描未完成';
+      if ('${scan['error'] ?? ''}'.isNotEmpty) error = '${scan['error']}';
+    }
+  }
   bool supports(String capability) {
     final capabilities = mapOf(preferences['capabilities']);
     final platform = preferences['platform'];
@@ -338,6 +350,7 @@ class AppSession extends ChangeNotifier {
     for (final event in early) {
       _applyResultEvent(event);
     }
+    _applyScanStatus();
     notifyListeners();
   }
 
@@ -390,6 +403,11 @@ class AppSession extends ChangeNotifier {
       if (disposed || paused || epoch != _epoch) return;
       bool changed = running != (batch['running'] == true);
       bool terminal = changed;
+      if (batch.containsKey('scan_result')) {
+        final previous = exactEncode(state['scan_result']);
+        state['scan_result'] = batch['scan_result'];
+        changed = changed || previous != exactEncode(batch['scan_result']);
+      }
       for (final event in rowsOf(batch['events'])) {
         _stream.add(event);
         if (event['run_id']?.toString() != resultRunId) {
@@ -400,6 +418,7 @@ class AppSession extends ChangeNotifier {
         changed = true;
       }
       state['running'] = batch['running'] == true;
+      _applyScanStatus();
       dropped += (batch['dropped'] as num? ?? 0).toInt();
       evicted += (batch['evicted_result_count'] as num? ?? 0).toInt();
       if (changed) {
