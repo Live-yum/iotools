@@ -156,6 +156,16 @@ for suite in main opcua; do
   app_status=passed
  fi
  if test "$flutter_result" -eq 0 && test "$app_status" != passed; then flutter_result=1; fi
+ # The next suite force-stops/relaunches the app. Capture the native crash now,
+ # even if its PID is already gone. The collector saves only target metadata;
+ # unavailable diagnostics never replace the original suite/driver exit.
+ if test "$flutter_result" -ne 0 || test "$log_result" -ne 0; then
+  crash_evidence="android-evidence/native-crash-$suite"
+  mkdir -p "$crash_evidence"
+  printf 'status=unavailable\nreason=collector_did_not_complete\n' > "$crash_evidence/status.txt"
+  timeout --kill-after=1s 6s python3 scripts/flutter/native_crash_evidence.py "$crash_evidence" "android-evidence/flutter-$suite.log" >/dev/null 2>&1
+  printf 'collector_exit=%s\n' "$?" >> "$crash_evidence/status.txt"
+ fi
  {
   printf 'driver_exit=%s\napp_outcome=%s\nexpected_business_tests=%s\nexpected_app_passes_including_teardown=%s\neffective_exit=%s\n' "$driver_result" "$app_status" "$expected_business_tests" "$expected_app_passes" "$flutter_result"
   LC_ALL=C grep -E "${app_progress}\+[0-9]+([[:space:]]+-[0-9]+)?:[[:space:]]+(All tests passed!|Some tests failed\.)[[:space:]]*$" "android-evidence/flutter-$suite.log" || true

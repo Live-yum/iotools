@@ -276,3 +276,41 @@ three-process SQLite interoperability). Both vet passes, formatting and independ
 review passed. This identifies and corrects a reproducible lifecycle defect; the
 original Android log did not record the exact context-expiry instant. Actual
 Android UI acceptance of this correction still requires fresh exact-head CI.
+
+## Fourth-round result and scoped Android diagnostics
+
+The exact `773be7d` head finished with 21 successful checks, one failed Android
+check and one path-filtered skip. The other six workflows passed. Android's
+native instrumentation (18), separate OPC UA suite (2) and exact-package AOT
+suite (1) passed; these do not replace the failed main protocol suite.
+
+The [original Android failure](https://github.com/Live-yum/iotools/actions/runs/38395264558/job/115291335137)
+remains preserved: the application received SIGSEGV at the beginning of the first
+HTTP test, before any main-suite test completed. The exact Flutter BuildId
+`2b4fc1358d3b1c87b1c09f1f73b4d9a52104f685` symbols map the allocation caller to
+Dart JIT type-check stub generation (`DRT_TypeCheck`, `BuildCodeForType`,
+`SubtypeRangesForClass`). This locates the allocation that encountered the fault,
+not its root cause; earlier heap corruption remains unexcluded. Android UI
+verification of the history-context fix is consequently still incomplete.
+
+The next change is diagnostic only, not a claimed crash fix:
+
+- Closed-enum, fixture-only stages and elapsed times distinguish setup, native
+  configuration, first frame, screenshot conversion and the actual HTTP request.
+  No arbitrary payload, credentials, response data or file paths are logged.
+- Immediately after a failed suite, a bounded collector selects only the target
+  application's exact current-suite PID and reconstructs allowlisted stack
+  metadata. It excludes raw memory, registers, symbols, environment and arbitrary
+  messages. Compressed DropBox text is supported. Missing/denied evidence stays
+  explicitly unavailable; no root, permission changes or alternative access path.
+- Collection is bounded to four seconds and four MiB, with a six-second outer
+  guard. Original test/crash/driver exit status remains authoritative. There are
+  no test retries, production changes, allocator/SDK changes or relaxed gates.
+- Focused Dart tests: 10 passed; fixture opt-in tests: 3 passed. Dart analysis and
+  formatting passed. Python diagnostic/runner contracts: 41 passed; shell syntax
+  and diff checks passed. Independent review matched 17 safe frames from the
+  preserved failing evidence and verified sensitive fields are excluded.
+
+A new exact-head Android run is required to establish reproducibility and collect
+these additional stages. A passing rerun would not by itself prove the original
+SIGSEGV cause was fixed. No merge, release, or deployment has occurred.

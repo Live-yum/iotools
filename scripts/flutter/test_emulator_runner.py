@@ -13,7 +13,7 @@ RUNNER = Path(__file__).with_name('run-emulator-tests.sh')
 WORKFLOW = RUNNER.parents[2]/'.github/workflows/android.yml'
 
 class RunnerTests(unittest.TestCase):
-    def run_case(self, *, drive=0, opcua=0, stop=0, plugin=0, instrument=0, verification=0, cleanup=0, renderer=0, readiness=0,
+    def run_case(self, *, drive=0, opcua=0, stop=0, plugin=0, instrument=0, verification=0, cleanup=0, renderer=0, readiness=0, native=0,
                  drive_log='I/flutter ( 123): 16:17 +6: All tests passed!',
                  opcua_log='I/flutter ( 456): 07:20 +2: All tests passed!'):
         with tempfile.TemporaryDirectory(prefix='iotools-runner-') as directory:
@@ -56,9 +56,10 @@ if test "$1" = reverse && test "${2:-}" = --remove; then exit "$CLEANUP_RESULT";
 if test "$1" = scripts/flutter/verify-mobile.py; then exit "$PLUGIN_RESULT"; fi
 if test "$1" = scripts/flutter/verify-aot-device.py; then exit "$VERIFY_RESULT"; fi
 if test "$1" = scripts/flutter/emulator_ui_readiness.py; then exit "$READINESS_RESULT"; fi
+if test "$1" = scripts/flutter/native_crash_evidence.py; then exit "$NATIVE_RESULT"; fi
 exit 99''')
             trace = root/'trace.txt'
-            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'ANDROID_HOME':str(root/'android-sdk'), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer), 'READINESS_RESULT':str(readiness)}
+            env = os.environ | {'PATH': str(root/'bin')+os.pathsep+os.environ['PATH'], 'RUNNER_TEMP':str(root), 'ANDROID_HOME':str(root/'android-sdk'), 'TRACE':str(trace), 'IOTOOLS_SHA':'a'*40, 'DRIVE_RESULT':str(drive), 'OPCUA_RESULT':str(opcua), 'DRIVE_LOG':drive_log, 'OPCUA_LOG':opcua_log, 'STOP_RESULT':str(stop), 'PLUGIN_RESULT':str(plugin), 'INSTRUMENT_RESULT':str(instrument), 'VERIFY_RESULT':str(verification), 'CLEANUP_RESULT':str(cleanup), 'RENDERER_RESULT':str(renderer), 'READINESS_RESULT':str(readiness), 'NATIVE_RESULT':str(native)}
             result = subprocess.run(['bash',str(root/'scripts/flutter/run-emulator-tests.sh')], env=env, cwd=root, capture_output=True, timeout=15)
             recorded=trace.read_text()
             self.assertEqual(recorded.count('emulator -version'),1)
@@ -98,6 +99,9 @@ exit 99''')
                 self.assertIn(f'expected_app_passes_including_teardown={count}\n',outcome)
                 self.assertIn('app_outcome=',outcome)
                 recorded += f'\n{suite} outcome:\n{outcome}'
+                native_status=root/f'android-evidence/native-crash-{suite}/status.txt'
+                if native_status.exists():
+                    recorded += f'\n{suite} native status:\n{native_status.read_text()}'
             return result.returncode, recorded
 
     def test_unhealthy_foreground_prevents_aot_acceptance(self):
@@ -151,6 +155,26 @@ exit 99''')
         code,trace=self.run_case(drive=41)
         self.assertEqual(code,41)
         self.assertIn('verify scripts/flutter/verify-aot-device.py',trace)
+    def test_native_crash_is_collected_before_next_process_stop(self):
+        for native in (0, 1, 124):
+            with self.subTest(collector_exit=native):
+                code,trace=self.run_case(drive=134,native=native,opcua=45)
+                self.assertEqual(code,134)
+                capture=trace.index('verify scripts/flutter/native_crash_evidence.py android-evidence/native-crash-main')
+                second_stop=trace.index('adb shell am force-stop',trace.index('drive --driver='))
+                self.assertLess(capture,second_stop)
+                self.assertLess(capture,trace.index('verify scripts/flutter/verify-mobile.py'))
+                self.assertEqual(trace.count('native_crash_evidence.py android-evidence/native-crash-main'),1)
+                self.assertIn('native-crash-main android-evidence/flutter-main.log',trace)
+                self.assertIn(f'status=unavailable\nreason=collector_did_not_complete\ncollector_exit={native}\n',trace)
+    def test_app_failure_with_zero_driver_exit_still_collects_native_evidence(self):
+        code,trace=self.run_case(drive_log='All tests passed.',native=124)
+        self.assertEqual(code,1)
+        self.assertIn('native_crash_evidence.py android-evidence/native-crash-main',trace)
+    def test_passing_suites_do_not_collect_crash_history(self):
+        code,trace=self.run_case()
+        self.assertEqual(code,0)
+        self.assertNotIn('native_crash_evidence.py',trace)
     def test_failed_process_stop_never_runs_unisolated_suite(self):
         self.assertEqual(self.run_case(stop=46)[0],46)
     def test_opcua_failure_remains_failed_and_main_still_ran(self):
@@ -194,6 +218,13 @@ I/flutter ( 456): 07:20 +2: All tests passed!'''
         self.assertEqual(self.run_case(opcua_log=log)[0],0)
     def test_original_nonzero_driver_exit_wins_over_app_failure(self):
         self.assertEqual(self.run_case(opcua=45,opcua_log='I/flutter ( 456): 08:06 +1 -1: Some tests failed.')[0],45)
+
+def load_tests(loader, tests, pattern):
+    # Android preflight invokes this file directly. Broad discovery already
+    # finds the collector contracts separately, so avoid running them twice.
+    if pattern is None:
+        tests.addTests(loader.loadTestsFromName('test_native_crash_evidence'))
+    return tests
 
 if __name__ == '__main__':
     unittest.main()
