@@ -264,8 +264,17 @@ Future<void> enter(WidgetTester t, String key, String value) async {
 }
 
 Future<void> back(WidgetTester t) async {
-  final routeBack = find.byType(BackButton).hitTestable();
-  final requestBack = find.byTooltip('返回请求列表').hitTestable();
+  // BackButton.onPressed == null means use Navigator.maybePop, not disabled.
+  // Its built IconButton owns that real callback. Target it so the shared
+  // enabled/current-route/hit-test gate still inspects the actionable control.
+  final routeBack = find
+      .descendant(of: find.byType(BackButton), matching: find.byType(IconButton))
+      .hitTestable();
+  final requestBack = find
+      .byWidgetPredicate(
+        (widget) => widget is IconButton && widget.tooltip == '返回请求列表',
+      )
+      .hitTestable();
   await wait(
     t,
     () => routeBack.evaluate().isNotEmpty || requestBack.evaluate().isNotEmpty,

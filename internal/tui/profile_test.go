@@ -86,20 +86,40 @@ func TestSampleStartupDefaultAndExplicitProfilesWithoutExecution(t *testing.T) {
 }
 
 func TestStartupDoesNotGuessUndeclaredDefaultProfile(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "custom.yaml")
-	data := strings.Replace(string(sample.Collection), "default_profile: local\n", "", 1)
-	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-	u, err := New(p, "", true)
+	collection, err := config.Parse(sample.Collection)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.profile != "" {
-		t.Fatalf("guessed undeclared profile %q", u.profile)
+	// Edit the YAML field rather than matching a newline-sensitive source line:
+	// Git may check out the embedded sample with CRLF on Windows.
+	collection.DefaultProfile = ""
+	data, err := yaml.Marshal(collection)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := engine.GenerateCurl(context.Background(), explicitProfileCollection(u.collection, u.profile), u.collection.Requests[0], u.profile, false, false); err == nil {
-		t.Fatal("resolved variables without a selected profile")
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"LF", data},
+		{"CRLF", bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "custom.yaml")
+			if err := os.WriteFile(p, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			u, err := New(p, "", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.profile != "" {
+				t.Fatalf("guessed undeclared profile %q", u.profile)
+			}
+			if _, err := engine.GenerateCurl(context.Background(), explicitProfileCollection(u.collection, u.profile), u.collection.Requests[0], u.profile, false, false); err == nil {
+				t.Fatal("resolved variables without a selected profile")
+			}
+		})
 	}
 }
 

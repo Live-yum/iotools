@@ -102,3 +102,62 @@ runs cannot substitute for the final integration commit. The field EMS discovery
 error and physical industrial/Kylin device behavior are not covered by loopback,
 widget, cross-build or hosted CI evidence. No private industrial endpoint or
 configuration is included in this integration.
+
+## First integration CI findings (`f15ed14`)
+
+The first exact-head run is retained, including its failures:
+
+- [Windows TUI](https://github.com/Live-yum/iotools/actions/runs/38380262015/job/115238643516)
+  exposed an LF-only test-fixture edit. Windows checkout preserved CRLF, so the
+  test accidentally left `default_profile` declared. The fixture now removes
+  that field through the YAML model and covers both LF/CRLF. A source overlay
+  reproduced the original failure and passed with the correction; production
+  profile behavior is unchanged.
+- [Android/Flutter widget checks](https://github.com/Live-yum/iotools/actions/runs/38380262075/job/115238683703)
+  exposed a framework wrapper issue shared by desktop test jobs. BackButton has a
+  null outer callback but builds an enabled inner IconButton with Navigator's
+  default action. Kafka now selects the actual IconButton instead of the wrapper.
+  Ordinary disabled buttons must still wait until enabled; no shared readiness
+  gate or business assertion was removed.
+- [Unsigned iOS device verification](https://github.com/Live-yum/iotools/actions/runs/38380262019/job/115238700145)
+  rejected missing essential Mach-O files. Captured metadata and logs prove that
+  Flutter automatically migrated the existing CocoaPods integration to Swift
+  Package Manager, whose production plugin libraries are static. The failed run
+  did not retain the exact missing-path inventory, so the layout mismatch is an
+  inference to confirm in fresh CI. Preserve the repository's existing integration
+  explicitly rather than weaken the binary gate. This unsigned artifact is not physical-device runtime acceptance.
+- [iOS simulator build](https://github.com/Live-yum/iotools/actions/runs/38380262019/job/115238700120)
+  exited 255 without retained build diagnostics. Capture verbose output with
+  pipefail on the next run. Its exact failure cause is not inferred solely from
+  the device packaging issue.
+
+The first integration's Fast/security checks, release unit gates, Linux TUI
+checks and web/browser end-to-end checks passed. They do not override the failures
+above. Corrections require fresh exact-head platform verification before merge.
+
+### Follow-up local verification
+
+A subsequent normal official-SDK dependency invocation completed precache through
+its original source; no alternate download, permission change or synthetic cache
+marker was used. This allowed the previously unavailable local Flutter checks:
+
+- Focused actual Flutter tests: 29 passed, including real rendered BackButton
+  selection, the disabled ordinary IconButton gate, readiness redirect rejection,
+  IME/scrolling and the full OPC attribute list.
+- Full Flutter test suite: 209 passed, seven existing environment-dependent skips,
+  no failures. Skips are not runtime acceptance.
+- Full `flutter analyze --no-pub`: no issues.
+- The intentionally failing diagnostics fixture exited 1 and its verifier
+  confirmed the original failure/stack and failed outcome were preserved.
+- Enforced lockfile resolution left the lock unchanged. The real generated
+  Flutter plugin metadata passed the Android dependency/plugin audit and records
+  SwiftPM disabled for iOS/macOS. This is still not Gradle/Maven/APK acceptance.
+- The corrected Windows profile tests passed ten repetitions, the full TUI race
+  suite, Windows amd64 test-program cross-compilation, and the CRLF overlay
+  before/after reproduction. Actual Windows execution remains a CI requirement.
+- iOS-specific Python tests, CI contracts and the full platform Python suite
+  passed without removing production binary or actual XCTest gates.
+
+Fresh Windows, Android, desktop and Apple runtime checks are required for this
+follow-up commit. The iOS simulator's prior exit 255 is not declared resolved
+before those checks run with the improved captured diagnostics.

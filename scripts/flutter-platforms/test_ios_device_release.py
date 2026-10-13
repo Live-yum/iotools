@@ -14,7 +14,8 @@ spec.loader.exec_module(release)
 
 MANIFEST = (b"name: app\ndependencies:\n  prod: ^1.0.0\n"
             b"dev_dependencies:\n  flutter_test:\n    sdk: flutter\n"
-            b"  integration_test:\n    sdk: flutter\nflutter:\n  assets:\n    - lib/asset.txt\n")
+            b"  integration_test:\n    sdk: flutter\nflutter:\n"
+            b"  config:\n    enable-swift-package-manager: false\n  assets:\n    - lib/asset.txt\n")
 GRAPH = {"root": "app", "packages": [
     {"name": "app", "version": "1.0.0", "kind": "root", "source": "root",
      "directDependencies": ["prod"], "devDependencies": ["integration_test"]},
@@ -85,7 +86,8 @@ class DeviceReleaseTests(unittest.TestCase):
             names.pop()
         if include_test:
             names.append("integration_test")
-        metadata = {"plugins": {"ios": [{"name": name, "dev_dependency": name == "integration_test"} for name in names]}}
+        metadata = {"swift_package_manager_enabled": {"ios": False},
+                    "plugins": {"ios": [{"name": name, "dev_dependency": name == "integration_test"} for name in names]}}
         (mobile / ".flutter-plugins-dependencies").write_text(json.dumps(metadata))
         (mobile / ".dart_tool/package_config.json").write_text(json.dumps({"packages": [{"name": name} for name in names]}))
         text = "\n".join(f"// {name}\n[{release.REQUIRED_PLUGINS.get(name, 'IntegrationTestPlugin')} registerWithRegistrar:registry];" for name in names)
@@ -109,6 +111,11 @@ class DeviceReleaseTests(unittest.TestCase):
                     if failure == "pub":
                         raise RuntimeError("pub failed")
                     self.metadata(mobile, missing_plugin=failure == "plugin")
+                    if failure == "swiftpm":
+                        path = mobile / ".flutter-plugins-dependencies"
+                        metadata = json.loads(path.read_text())
+                        metadata["swift_package_manager_enabled"]["ios"] = True
+                        path.write_text(json.dumps(metadata))
                     return ""
                 if name == "staged-deps":
                     graph = staged_graph()
@@ -133,7 +140,7 @@ class DeviceReleaseTests(unittest.TestCase):
             report = json.loads((root / "platform-evidence/ios/device-release-dependencies.json").read_text())
             self.assertTrue(report["manifests_restored"])
             self.assertEqual(report["status"], "failed" if failure else "device_release_built_with_isolated_test_dependency")
-            if failure in ("pub", "plugin", "transitive"):
+            if failure in ("pub", "plugin", "transitive", "swiftpm"):
                 self.assertFalse(any("build" in call for call in calls))
             if not failure:
                 self.assertNotIn("IntegrationTest", (root / "platform-evidence/ios/device-release-GeneratedPluginRegistrant.m").read_text())
@@ -148,6 +155,9 @@ class DeviceReleaseTests(unittest.TestCase):
 
     def test_required_plugin_loss_prevents_build_and_restores_manifests(self):
         self.exercise_wrapper("plugin")
+
+    def test_swiftpm_drift_prevents_build_and_restores_manifests(self):
+        self.exercise_wrapper("swiftpm")
 
     def test_transitive_version_drift_prevents_build_and_restores_manifests(self):
         self.exercise_wrapper("transitive")

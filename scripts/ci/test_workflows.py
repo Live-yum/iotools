@@ -97,6 +97,13 @@ class WorkflowContracts(unittest.TestCase):
         self.assertIn('flutter test --reporter expanded', source)
         self.assertNotIn('continue-on-error', source)
 
+    def test_ios_simulator_build_retains_verbose_failure_evidence(self):
+        source = (ROOT/'.github/workflows/flutter-platforms.yml').read_text()
+        self.assertIn('set -o pipefail', source)
+        self.assertIn('flutter build ios --simulator --debug --no-codesign --verbose', source)
+        self.assertIn('2>&1 | tee ../platform-evidence/ios/simulator-build.log', source)
+        self.assertIn('path: platform-evidence/ios/', source)
+
     def test_dependency_upgrades_run_full_platform_matrix(self):
         source = (ROOT/'.github/workflows/flutter-platforms.yml').read_text()
         self.assertEqual(source.count('    needs: changes'), 4)

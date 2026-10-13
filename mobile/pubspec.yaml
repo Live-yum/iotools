@@ -29,6 +29,11 @@ dev_dependencies:
   integration_test:
     sdk: flutter
 flutter:
+  # Preserve the reviewed CocoaPods dynamic-framework and XCTest integration.
+  # Flutter 3.44 enables SwiftPM by default; migrate it separately with package
+  # and runtime acceptance rather than silently changing the native layout.
+  config:
+    enable-swift-package-manager: false
   uses-material-design: true
   assets:
     - lib/core/platform/native/assets/help.md

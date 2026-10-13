@@ -193,6 +193,13 @@ void main() {
       );
       await tester.tap(find.text('打开实体'));
       await tester.pumpAndSettle();
+      final wrapper = find.byType(BackButton);
+      expect(tester.widget<BackButton>(wrapper).onPressed, isNull);
+      final actualBack = find
+          .descendant(of: wrapper, matching: find.byType(IconButton))
+          .hitTestable();
+      expect(actualBack, findsOneWidget);
+      expect(tester.widget<IconButton>(actualBack).onPressed, isNotNull);
       await kafka.back(tester);
       await tester.pumpAndSettle();
       expect(find.text('实体浏览'), findsNothing);

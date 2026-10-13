@@ -19,6 +19,12 @@ def require(value, message):
         raise RuntimeError(message)
 
 
+def verify_cocoapods_metadata(metadata):
+    """The reviewed iOS build uses CocoaPods dynamic plugin frameworks."""
+    require(metadata.get('swift_package_manager_enabled', {}).get('ios') is False,
+            'Expected CocoaPods iOS integration; Swift Package Manager must be explicitly disabled')
+
+
 def macho_dependencies(data):
     """Parse one arm64 Mach-O slice; Flutter may wrap that single slice in FAT."""
     if data[:4] in MACHO_MAGICS[2:]:
@@ -65,6 +71,7 @@ def verify_production_bundle(app, registrant, plugin_metadata):
     require(all(f'[{token} registerWithRegistrar:'.encode() in registration for token in REQUIRED_REGISTRARS),
             'Essential production registrar missing')
     metadata = json.loads(plugin_metadata.read_text())
+    verify_cocoapods_metadata(metadata)
     plugins = metadata['plugins']['ios']
     require(REQUIRED_PLUGINS <= {p['name'] for p in plugins}, 'Essential production plugin missing')
     require(not any(p.get('dev_dependency') for p in plugins), 'Dev-only iOS plugin remains in metadata')
@@ -92,7 +99,8 @@ def verify_production_bundle(app, registrant, plugin_metadata):
                               'linked_libraries': macho_dependencies(data)}
     required = {info['CFBundleExecutable'], 'Frameworks/Flutter.framework/Flutter',
                 'Frameworks/App.framework/App'} | {f'Frameworks/{name}.framework/{name}' for name in REQUIRED_PLUGINS}
-    require(required <= binaries.keys(), 'Essential production Mach-O missing')
+    missing = sorted(required - binaries.keys())
+    require(not missing, f'Essential production Mach-O missing: {missing}; found: {sorted(binaries)}')
     links = binaries[info['CFBundleExecutable']]['linked_libraries']
     require(all(f'@rpath/{name}.framework/{name}' in links for name in REQUIRED_PLUGINS),
             'Essential production plugin linkage missing')

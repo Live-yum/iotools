@@ -266,8 +266,10 @@ jobs:
       - name: Compile and statically verify the iOS simulator test/developer artifact
         run: |
           bash scripts/flutter-platforms/build-native.sh ios-simulator arm64
+          mkdir -p platform-evidence/ios
           cd mobile
-          flutter build ios --simulator --debug --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
+          set -o pipefail
+          flutter build ios --simulator --debug --no-codesign --verbose --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA" 2>&1 | tee ../platform-evidence/ios/simulator-build.log
           cd ..
           python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
