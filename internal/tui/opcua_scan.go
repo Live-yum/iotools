@@ -117,6 +117,15 @@ func (p *uaWorkspace) showScan() {
 	w.table.SetBorder(true).SetTitle(" 2 已发现变量 · 空格选中 · a全选 ")
 	w.body = tview.NewFlex()
 	w.root = &uaScanLayout{Flex: tview.NewFlex().SetDirection(tview.FlexRow).AddItem(w.header, 4, 0, false).AddItem(w.body, 0, 1, true).AddItem(w.footer, 4, 0, false), workspace: w}
+	// Mouse clicks can focus the header/footer TextViews as well as the two
+	// panes. Keep F8 owned by this scan regardless of which child has focus.
+	w.root.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey {
+		if e.Key() == tcell.KeyF8 {
+			w.stop()
+			return nil
+		}
+		return e
+	})
 	w.tree.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey { return w.key(0, e) })
 	w.table.SetInputCapture(func(e *tcell.EventKey) *tcell.EventKey { return w.key(1, e) })
 	w.table.SetSelectedFunc(func(row, col int) {

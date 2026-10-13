@@ -69,27 +69,14 @@ collect() {
  exit "$result"
 }
 trap collect EXIT
+# The workflow action owns this emulator; keep CLI and Gradle device selection
+# consistent instead of depending on adb's implicit single-device fallback.
+export ANDROID_SERIAL="${ANDROID_SERIAL:-emulator-5554}"
 adb shell wm density 160
-# Boot completion can precede a stable package manager/API response under
-# software emulation. Require actual readiness before Gradle caches device data.
-ready_samples=0
-ready_deadline=$((SECONDS+60))
-for attempt in $(seq 1 30); do
- sdk=
- package_path=
- if sdk=$(timeout 5s adb shell getprop ro.build.version.sdk 2>>android-evidence/device-ready.log); then sdk=${sdk//$'\r'/}; fi
- if package_path=$(timeout 5s adb shell cmd package path android 2>>android-evidence/device-ready.log); then package_path=${package_path//$'\r'/}; fi
- printf 'attempt=%s sdk=%s package=%s\n' "$attempt" "$sdk" "$package_path" >> android-evidence/device-ready.log
- if [[ "$sdk" =~ ^[0-9]{2,3}$ ]] && ((10#$sdk>=26)) && [[ "$package_path" == package:* ]]; then
-  ready_samples=$((ready_samples+1))
- else
-  ready_samples=0
- fi
- if test "$ready_samples" -eq 3; then break; fi
- if test "$SECONDS" -ge "$ready_deadline"; then break; fi
- sleep .2
-done
-if test "$ready_samples" -ne 3; then echo "Android API/package manager did not become consistently ready"; exit 75; fi
+# Display configuration can overlap a framework restart. Its persistent boot
+# property alone is insufficient; check the current AMS/PID after all changes.
+# This retains the original 60-second setup budget and never retries Gradle.
+python3 scripts/flutter/emulator_boot_readiness.py android-evidence/device-ready.log
 timeout 5s adb features > android-evidence/adb-features.txt
 # Record the renderer actually selected by the emulator, not just its requested mode.
 if test -x "${ANDROID_HOME:-}/emulator/emulator"; then

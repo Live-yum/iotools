@@ -31,10 +31,100 @@ class ArtifactScopeTests(unittest.TestCase):
             with patch.dict(os.environ, {'IOTOOLS_IOS_SIMULATOR_UDID': '11111111-2222-3333-4444-555555555555'}), \
                  patch.object(verifier, 'run', side_effect=PermissionError('unavailable')) as run:
                 verifier.simulator_failure_diagnostics(Path(folder))
-            self.assertEqual(run.call_count, 3)
+            self.assertEqual(run.call_count, 4)
             self.assertTrue(all(call.kwargs['timeout'] == 15 for call in run.call_args_list))
             self.assertTrue(all(not {'install', 'boot', 'shutdown', 'erase'} & set(call.args) for call in run.call_args_list))
-            self.assertEqual(len(list(Path(folder).glob('failure-*.txt'))), 3)
+            self.assertEqual(len(list(Path(folder).glob('failure-*.txt'))), 4)
+
+    def test_launch_summary_drops_arbitrary_payload_and_keeps_only_allowlisted_fields(self):
+        raw = ('2026-10-13 13:32:01.123 Df Runner[123:abcd] launching email=private@example.com '
+               'https://private.invalid/secret /Users/private/file medical-payload\n'
+               '2026-10-13 13:32:02.123 E  SpringBoard[12:abc] io.github.liveyum.iotools denied '
+               'Error Domain=FBSOpenApplicationServiceErrorDomain Code=4 "private secret body" business Code=123456\n'
+               '2026-10-13 13:32:03.123 E SpringBoard[12:abc] other.bundle failed Code=99\n'
+               'arbitrary secret startup output\n')
+        output = verifier.launch_event_summary(raw)
+        rows = [json.loads(line) for line in output.splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['event_hints'], ['launch'])
+        self.assertEqual(rows[1]['system_error_codes'], [4])
+        for secret in ('private', 'medical', 'other.bundle', '99', 'arbitrary', 'email=', '123456'):
+            self.assertNotIn(secret, output)
+        self.assertTrue(all(row['body'] == '<omitted>' for row in rows))
+
+    def test_launch_summary_keeps_complete_latest_lines_within_16k(self):
+        raw = ''.join('2026-10-13 13:32:01.123 Df Runner[123:abc] launching secret\n' for _ in range(1000))
+        raw += '2026-10-13 13:33:02.456 A  runningboardd[12:abc] io.github.liveyum.iotools exited\n'
+        output = verifier.launch_event_summary(raw.encode())
+        self.assertLessEqual(len(output.encode()), 16384)
+        rows = [json.loads(line) for line in output.splitlines()]
+        self.assertEqual(rows[-1]['timestamp'], '2026-10-13 13:33:02.456')
+        self.assertEqual(rows[-1]['event_hints'], ['exit'])
+        self.assertNotIn('secret', output)
+
+    def test_launch_diagnostic_timeout_records_metadata_without_raw_artifact(self):
+        raw = b'2026-10-13 13:32:01.123 Df Runner[123:abc] launching private-business-payload\n'
+        with tempfile.TemporaryDirectory() as folder:
+            evidence = Path(folder)
+            def command(*args, **kwargs):
+                if 'log' in args and 'Runner' in args[-1]:
+                    raise subprocess.TimeoutExpired(args, 15, output=raw)
+                return ''
+            with patch.dict(os.environ, {'IOTOOLS_IOS_SIMULATOR_UDID': '11111111-2222-3333-4444-555555555555'}), \
+                 patch.object(verifier, 'run', side_effect=command) as run:
+                verifier.simulator_failure_diagnostics(evidence)
+            self.assertEqual(run.call_count, 4)
+            record = json.loads((evidence/'failure-launch-log-command.json').read_text())
+            self.assertEqual(record['status'], 'timeout')
+            self.assertEqual(record['timeout_seconds'], 15)
+            self.assertGreaterEqual(record['finished_unix'], record['started_unix'])
+            self.assertGreaterEqual(record['elapsed_seconds'], 0)
+            self.assertEqual(record['command'][:3], ['xcrun', 'simctl', 'spawn'])
+            self.assertIn('eventMessage CONTAINS[c] "io.github.liveyum.iotools"', record['command'][-1])
+            for path in evidence.iterdir():
+                self.assertNotIn('private-business-payload', path.read_text())
+
+    def test_normal_launch_timeout_is_one_attempt_at_60_seconds(self):
+        udid = '11111111-2222-3333-4444-555555555555'
+        original = subprocess.TimeoutExpired(['simctl', 'launch'], 60)
+        def command(*args, **kwargs):
+            if args[1:4] == ('simctl', 'list', 'devices'):
+                return json.dumps({'devices': {'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [{
+                    'name': 'iPhone SE (3rd generation)', 'udid': udid, 'isAvailable': True, 'state': 'Booted'}]}})
+            if 'launch' in args:
+                self.assertEqual(kwargs['timeout'], 60)
+                raise original
+            return ''
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(verifier, 'remaining', return_value=900), \
+             patch.object(verifier, 'run', side_effect=command) as run:
+            report = {}
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                verifier.normal_launch_simulator(Path('Runner.app'), {'CFBundleIdentifier': 'io.github.liveyum.iotools'},
+                    Path(folder), report, lambda: None, '26.2', udid, 1200)
+            self.assertIs(caught.exception, original)
+            self.assertEqual(sum('launch' in call.args for call in run.call_args_list), 1)
+            self.assertNotIn('normal_launch', report)
+            self.assertNotIn('host_tests', report)
+
+    def test_failed_launch_remains_original_failure_despite_diagnostic_failures(self):
+        original = subprocess.TimeoutExpired(['xcrun', 'simctl', 'launch'], 60)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.object(verifier, 'ROOT', root), \
+                 patch.object(verifier.platform, 'system', return_value='Darwin'), \
+                 patch.dict(os.environ, {'IOTOOLS_SHA': 'test-sha', 'IOTOOLS_IOS_SIMULATOR_UDID': '11111111-2222-3333-4444-555555555555'}), \
+                 patch.object(sys, 'argv', ['verify-ios.py', 'simulator']), \
+                 patch.object(verifier, 'verify_bundle', return_value=({'CFBundleIdentifier': 'io.github.liveyum.iotools'}, {})), \
+                 patch.object(verifier, 'test_simulator', side_effect=original), \
+                 patch.object(verifier, 'run', side_effect=subprocess.TimeoutExpired(['diagnostic'], 15)):
+                with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                    verifier.main()
+            self.assertIs(caught.exception, original)
+            report = json.loads((root/'platform-evidence/ios/simulator.json').read_text())
+            self.assertEqual(report['status'], 'failed')
+            self.assertNotIn('host_tests', report)
+            self.assertFalse(list((root/'platform-dist').glob('*')))
 
     def test_static_simulator_artifact_never_attempts_or_claims_runtime(self):
         with tempfile.TemporaryDirectory() as folder:
