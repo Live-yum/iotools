@@ -9,7 +9,47 @@ import tempfile
 from changed_paths import relevant, PATTERNS
 ROOT=Path(__file__).resolve().parents[2]
 
+def require_basic_gradle_cache(source):
+    """Inspect each setup-gradle step without borrowing inputs from other steps."""
+    lines = source.splitlines()
+    count = 0
+    for index, line in enumerate(lines):
+        match = re.match(r'^( *)(- )?uses: gradle/actions/setup-gradle@', line)
+        if not match:
+            continue
+        count += 1
+        indent = len(match[1]) + (2 if match[2] else 0)
+        step = []
+        for following in lines[index + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) < indent:
+                break
+            step.append(following)
+        if ' ' * indent + 'with:' not in step:
+            raise ValueError('setup-gradle must explicitly select basic caching')
+        providers = [entry.strip().split(':', 1)[1].strip().split('#', 1)[0].strip()
+                     for entry in step
+                     if entry.startswith(' ' * (indent + 2) + 'cache-provider:')]
+        if providers != ['basic']:
+            raise ValueError('setup-gradle must explicitly select basic caching')
+    return count
+
 class WorkflowContracts(unittest.TestCase):
+    def test_gradle_uses_only_explicit_basic_caching(self):
+        count = 0
+        for path in (ROOT/'.github/workflows').glob('*.yml'):
+            with self.subTest(path=path):
+                count += require_basic_gradle_cache(path.read_text())
+        self.assertGreater(count, 0)
+    def test_gradle_cache_guard_rejects_default_or_enhanced_provider(self):
+        step = '    - uses: gradle/actions/setup-gradle@' + 'a' * 40 + '\n'
+        for inputs in ('', '      with:\n        gradle-version: 8.11.1\n',
+                       '      with:\n        cache-provider: enhanced\n',
+                       '    - uses: unrelated/action@main\n      with:\n        cache-provider: basic\n'):
+            with self.subTest(inputs=inputs), self.assertRaises(ValueError):
+                require_basic_gradle_cache(step + inputs)
+        self.assertEqual(require_basic_gradle_cache(step + '      with:\n        cache-provider: basic\n'), 1)
+        self.assertEqual(require_basic_gradle_cache('    - name: Gradle\n  ' + step.replace('- uses:', 'uses:') +
+                                                   '      with:\n        cache-provider: basic\n'), 1)
     def test_actions_are_full_immutable_shas(self):
         for path in (ROOT/'.github/workflows').glob('*.yml'):
             for action in re.findall(r'uses:\s*([^\s#]+)',path.read_text()):
@@ -32,8 +72,43 @@ class WorkflowContracts(unittest.TestCase):
         for command in ('flutter pub get --enforce-lockfile','flutter analyze','flutter test --reporter expanded'):
             self.assertIn(command,source)
         self.assertIn('flutter test test/modbus/modbus_operation_wait_test.dart --reporter expanded',source)
-        self.assertIn('adc901062556672b4138e18a4dc62a4be8f4b3c2',source)
+        self.assertIn('6b182d2c7585eba26d4edce0f97630effd256c33',source)
         self.assertNotIn('continue-on-error',source)
+    def test_all_flutter_jobs_use_the_reviewed_sdk(self):
+        from importlib.util import spec_from_file_location, module_from_spec
+        spec = spec_from_file_location('release_config', ROOT/'scripts/release/release_config.py')
+        config = module_from_spec(spec)
+        spec.loader.exec_module(config)
+        for path in (ROOT/'.github/workflows').glob('*.yml'):
+            source = path.read_text()
+            installs = source.count('https://github.com/flutter/flutter.git')
+            if installs:
+                self.assertEqual(source.count('--branch 3.44.9 '), installs, str(path))
+                self.assertEqual(source.count(config.FLUTTER_REVISION), installs, str(path))
+        pubspec = (ROOT/'mobile/pubspec.yaml').read_text()
+        self.assertIn('sdk: ">=3.12.0 <4.0.0"', pubspec)
+        self.assertIn('flutter: ">=3.44.0"', pubspec)
+
+    def test_android_preserves_expected_failure_diagnostics(self):
+        source = (ROOT/'.github/workflows/android.yml').read_text()
+        self.assertIn('test/fixtures/failure_reporting_fixture.dart --reporter expanded', source)
+        self.assertIn('test "$fixture_status" -ne 0', source)
+        self.assertIn('verify-failure-report.py ../android-evidence/failure-reporting-fixture.log', source)
+        self.assertIn('flutter test --reporter expanded', source)
+        self.assertNotIn('continue-on-error', source)
+
+    def test_dependency_upgrades_run_full_platform_matrix(self):
+        source = (ROOT/'.github/workflows/flutter-platforms.yml').read_text()
+        self.assertEqual(source.count('    needs: changes'), 4)
+        self.assertEqual(source.count("needs.changes.outputs.relevant == 'true'"), 4)
+        self.assertIn('changed_paths.py platforms', source)
+        self.assertNotRegex(source, r'flutter pub get\s*\n')
+        for path in ('mobile/pubspec.yaml', 'mobile/pubspec.lock',
+                     '.github/workflows/flutter-platforms.yml',
+                     'scripts/release/release_config.py'):
+            self.assertTrue(relevant('platforms', [path]), path)
+        self.assertFalse(relevant('platforms', ['docs/opcua-scan.md']))
+
     def test_full_release_candidate_matrix_remains(self):
         source=(ROOT/'.github/workflows/flutter-platforms.yml').read_text()
         self.assertEqual(source.count("contains(github.event.pull_request.labels.*.name, 'release-candidate')"),4)

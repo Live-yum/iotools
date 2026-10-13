@@ -4,7 +4,7 @@
 
 ## 构建
 
-CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7、Go 版本以 go.mod 为准。不要把单独的 Flutter 壳或静态网页误认为完整产品。
+CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.44.9、Go 版本以 go.mod 为准。不要把单独的 Flutter 壳或静态网页误认为完整产品。
 
 - Linux：先运行 `python3 scripts/flutter-platforms/prepare-native-fonts.py` 准备经过哈希校验的中文/表情字体，再运行 `bash scripts/flutter-platforms/build-native.sh linux amd64`，按输出设置 `IOTOOLS_NATIVE_LIBRARY`，再构建 Flutter Linux。ARM64 要在对应原生架构构建。保留整个 bundle/lib/data，字体随 data 一起提供，需 GTK 3 等系统库
 - Windows：随包提供 CJK/emoji 字体（含普通结果、分页内容和 YAML 编辑器），需要官方 Flutter、Visual Studio C++ 桌面工具与 MinGW C 编译器；先构建 Go DLL，再构建 Flutter。CI 会带上程序本地的 Visual C++ 和 Go DLL 所需运行库，以及未改动的微软接收者条款、官方 REDIST 清单和来源记录；Windows/Linux 不打包 Android 传递依赖的可选 JNI/JVM 库
@@ -17,7 +17,7 @@ CI 定义在 `.github/workflows/flutter-platforms.yml`，固定 Flutter 3.35.7�
 iOS 宿主测试当前采用一次受控的两阶段流程：先以 `generic/platform=iOS Simulator` 执行
 `build-for-testing`，再用其原始、未修改的 `.xctestrun` 对当次选定的具体 UUID 执行
 `test-without-building`。[Apple 命令说明](https://developer.apple.com/library/archive/technotes/tn2339/_index.html)
-和[固定 Flutter 3.35.7 的说明](https://github.com/flutter/flutter/blob/adc901062556672b4138e18a4dc62a4be8f4b3c2/packages/integration_test/README.md#L321-L340)
+和[固定 Flutter 3.44.9 的说明](https://github.com/flutter/flutter/blob/6b182d2c7585eba26d4edce0f97630effd256c33/packages/integration_test/README.md)
 支持构建与执行分离；[Bitrise 官方构建测试说明](https://docs.bitrise.io/en/bitrise-ci/testing/testing-ios-apps/building-an-ios-app-for-testing)
 明确使用上述 generic simulator 构建目的地。编译成功不能代替 XCTest 执行成功。
 

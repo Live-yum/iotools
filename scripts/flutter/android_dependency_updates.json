@@ -1,0 +1,93 @@
+{
+  "schema": 2,
+  "baseline_source_commit": "0a98c8482660c5f53c0548573ef3b3bc7f1a4777",
+  "reason": "cupertino_icons 2.0.0 and path_provider 2.1.6 on official Flutter 3.44.9 / Dart 3.12.2; replace the prior Android isolation with an exact reviewed path_provider_android 2.3.1 JNI closure and mandatory real runtime acceptance",
+  "flutter_revision": "6b182d2c7585eba26d4edce0f97630effd256c33",
+  "flutter_engine_revision": "5a2a6a42cce67f965cf540fcecf616faca624aa1",
+  "sources": [
+    "https://github.com/flutter/flutter/tree/6b182d2c7585eba26d4edce0f97630effd256c33",
+    "https://pub.dev/packages/cupertino_icons/versions/2.0.0",
+    "https://storage.googleapis.com/download.flutter.io/io/flutter/flutter_embedding_release/1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1/flutter_embedding_release-1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1.pom",
+    "https://dl.google.com/dl/android/maven2/androidx/exifinterface/exifinterface/1.4.1/exifinterface-1.4.1.pom",
+    "https://pub.dev/packages/path_provider/versions/2.1.6",
+    "https://pub.dev/packages/path_provider_android/versions/2.3.1",
+    "https://pub.dev/packages/jni/versions/1.1.0",
+    "https://pub.dev/packages/jni_flutter/versions/1.0.4+1",
+    "https://pub.dev/packages/jni_util/versions/1.0.0"
+  ],
+  "lock_updates": {
+    "characters": {
+      "from": "1.4.0",
+      "to": "1.4.1",
+      "lock_entry_sha256": "e5b1e5db23f6416d79c6f8ae9e6b7f15c63383a853029aee591a469e48853591"
+    },
+    "cupertino_icons": {
+      "from": "1.0.9",
+      "to": "2.0.0",
+      "lock_entry_sha256": "7464f8195c545203808fd32144ccfc1ad132fba09f879e4c8f59184644638e06"
+    },
+    "jni_flutter": {
+      "from": "1.0.4",
+      "to": "1.0.4+1",
+      "lock_entry_sha256": "de5f843782b561618d7cbe1edabfb330934d73416902632f8149ce3f5df1bb4b"
+    },
+    "matcher": {
+      "from": "0.12.17",
+      "to": "0.12.19",
+      "lock_entry_sha256": "b6e2514b6ee41358436e803516d210e8a151af6abc0ac179fcfb4529fa809070"
+    },
+    "material_color_utilities": {
+      "from": "0.11.1",
+      "to": "0.13.0",
+      "lock_entry_sha256": "e0590427034d05774dff8e55642ce30911e0820ea68587a5f690bf9d66572bab"
+    },
+    "meta": {
+      "from": "1.16.0",
+      "to": "1.18.0",
+      "lock_entry_sha256": "cd8197396ad5f63c759e6d394f752f347becba016da490415bb12133cf39acfb"
+    },
+    "package_config": {
+      "from": "2.2.0",
+      "to": "3.0.0",
+      "lock_entry_sha256": "ef198322fa55a5b44626fc7748fd753588e966d2561b1c9761ae8a9da2ae9a5a"
+    },
+    "path_provider": {
+      "from": "2.1.5",
+      "to": "2.1.6",
+      "lock_entry_sha256": "735cd6881d211f3a7fbf9622721e1055bba2133f91d07b17cf43259623cec6fc"
+    },
+    "path_provider_android": {
+      "from": "2.3.1",
+      "to": "2.3.1",
+      "lock_entry_sha256": "56989369b48ca7275747288ac2578f7b04c2839fc4111dbd90105bb77c9b6496"
+    },
+    "test_api": {
+      "from": "0.7.6",
+      "to": "0.7.11",
+      "lock_entry_sha256": "b041cf675fd323293ff2087a4c0327095d1316bcaef317c2e20ea406a3737e46"
+    }
+  },
+  "maven_updates": {
+    "io.flutter:arm64_v8a_release:1.0.0-035316565ad77281a75305515e4682e6c4c6f7ca": "io.flutter:arm64_v8a_release:1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1",
+    "io.flutter:armeabi_v7a_release:1.0.0-035316565ad77281a75305515e4682e6c4c6f7ca": "io.flutter:armeabi_v7a_release:1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1",
+    "io.flutter:flutter_embedding_release:1.0.0-035316565ad77281a75305515e4682e6c4c6f7ca": "io.flutter:flutter_embedding_release:1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1",
+    "io.flutter:x86_64_release:1.0.0-035316565ad77281a75305515e4682e6c4c6f7ca": "io.flutter:x86_64_release:1.0.0-5a2a6a42cce67f965cf540fcecf616faca624aa1"
+  },
+  "maven_added": [
+    "androidx.exifinterface:exifinterface:1.4.1",
+    "org.jspecify:jspecify:1.0.0"
+  ],
+  "android_implementation": {
+    "from_isolation_version": "2.2.23",
+    "version": "2.3.1",
+    "archive_sha256": "69cbd515a62b94d32a7944f086b2f82b4ac40a1d45bebfc00813a430ab2dabcd",
+    "restored_closure": [
+      "args",
+      "jni",
+      "jni_flutter",
+      "jni_util",
+      "package_config"
+    ],
+    "ndk_version": "28.1.13356709"
+  }
+}

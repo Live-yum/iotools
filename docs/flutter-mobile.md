@@ -13,7 +13,7 @@ Dart 与 Android 之间传递 JSON 字符串，避免平台数值转换损失 In
 
 ## 本地开发
 
-固定工具链 Flutter 3.35.7（Dart 3.9），Android JDK 17、SDK 36（目标 API 35）、NDK 28.1.13356709 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --release --target-platform android-arm64,android-x64`。
+固定工具链 Flutter 3.44.9（Dart 3.12），Android JDK 17、SDK 36（目标 API 35）、NDK 28.1.13356709 和 Go（版本见 `go.mod`）。先在仓库根目录运行 `bash scripts/android/build-native.sh`，然后进入 `mobile` 执行 `flutter pub get`、`flutter analyze`、`flutter test` 和 `flutter build apk --release --target-platform android-arm64,android-x64`。
 
 GitHub Actions 构建 ARM64 和 x86_64 所需的 Go 原生库，检查 Android 依赖图中不包含 TUI，运行 Flutter 组件测试、实际 Android 文件适配测试和模拟器上的真实协议交互。测试服务只绑定回环地址，不扫描或连接真实工业设备。
 
@@ -31,7 +31,7 @@ USB 串口仅在用户选择设备、允许系统权限并明确打开后使用�
 
 验证包复用 CI 中的临时调试签名，不是商店正式发行签名。不同构建若使用不同临时调试证书，更新安装可能需要先卸载；卸载会删除应用私有文件，操作前应自行导出需要保留的配置和历史。
 
-当前固定 Flutter 3.35.7 使用官方支持的 Android Skia 渲染后端，debug 与普通 AOT 入口采用相同设置。API 29 软件模拟器曾在 Impeller 的原生 raster 线程崩溃；更换渲染后端后的实际运行结果需以对应构建的设备验收为准，不能用这一配置本身宣称兼容性通过。参考：[Flutter 官方 Impeller Android 配置](https://docs.flutter.dev/perf/impeller#android)。
+当前固定 Flutter 3.44.9 使用官方支持的 Android Skia 渲染后端，debug 与普通 AOT 入口采用相同设置。API 29 软件模拟器曾在 Impeller 的原生 raster 线程崩溃；更换渲染后端后的实际运行结果需以对应构建的设备验收为准，不能用这一配置本身宣称兼容性通过。参考：[Flutter 官方 Impeller Android 配置](https://docs.flutter.dev/perf/impeller#android)。
 
 Android 的历史数据库使用随 APK 编译打包的 SQLite CGo/Bionic 驱动；桌面仍用纯 Go 驱动，数据库文件格式和只读、事务、备份、迁移约束保持一致。应用不需要另行安装 SQLite。Android 构建逐个检查 ARM64/x86_64 依赖图，禁止混入使用 Linux 原始系统调用的 modernc SQLite/libc。
 

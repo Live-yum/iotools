@@ -29,6 +29,14 @@ func TestInitNeverOverwritesAndValidateDoesNotConnect(t *testing.T) {
 	if e := run([]string{"--file", p, "--validate"}); e != nil {
 		t.Fatal(e)
 	}
+	// Structural validation does not resolve variables; also exercise the real
+	// CLI renderer, which must work after --init without making any connection.
+	if e := run([]string{"--file", p, "--run", "http-get", "--dry-run"}); e != nil {
+		t.Fatal(e)
+	}
+	if e := run([]string{"--file", p, "--profile", "local", "--run", "http-post", "--dry-run"}); e != nil {
+		t.Fatal(e)
+	}
 }
 func TestAPIRejectsMissingOrPublicScope(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "api.yaml")

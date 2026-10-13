@@ -346,6 +346,7 @@ func (u *UI) start(r config.Request) {
 	u.startCollection(r, u.collection, u.profile)
 }
 func (u *UI) startCollection(r config.Request, collection *config.Collection, profile string) {
+	collection = explicitProfileCollection(collection, profile)
 	u.mqttPreviewPending = nil
 	u.uaCopyPending = false
 	u.uaCopyValue = ""

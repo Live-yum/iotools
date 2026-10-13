@@ -37,6 +37,8 @@ func (u *UI) httpConsole() {
 			return
 		}
 		queryMode := mode
+		profile := u.profile
+		collection := explicitProfileCollection(u.collection, profile)
 		var selected config.Request
 		if queryMode == 2 {
 			if u.selected < 0 || u.selected >= len(u.collection.Requests) {
@@ -61,7 +63,7 @@ func (u *UI) httpConsole() {
 			if queryMode == 0 {
 				result, err = engine.FilterJSON(ctx, query, body)
 			} else if queryMode == 2 {
-				result, err = engine.GenerateCurl(engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, Prompt: u.workflowPrompt, Select: u.workflowSelect}), u.collection, selected, u.profile, false, false)
+				result, err = engine.GenerateCurl(engine.WithHTTPWorkflowOptions(ctx, engine.HTTPWorkflowOptions{HistoryPath: u.HTTPHistoryPath, Prompt: u.workflowPrompt, Select: u.workflowSelect}), collection, selected, profile, false, false)
 			} else {
 				result, err = engine.QueryHTTPHistory(ctx, path, query)
 			}

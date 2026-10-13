@@ -1,5 +1,7 @@
 import 'runtime_adapter.dart';
 import 'action_interaction.dart';
+import 'fixture_readiness.dart';
+import 'failure_reporting.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -27,7 +29,13 @@ void registerOpcuaIntegrationTests() {
       final runtime = protocolTestRuntime();
       final engine = runtime.engine, platform = runtime.platform;
       final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-      final ready = await _fixture('/ready'),
+      final ready = await waitForFixtureReady(
+            Uri.parse('http://127.0.0.1:48411/ready'),
+            onRetry: (attempt, error) => _stage(
+              'fixture-ready retry=$attempt '
+              '${boundedFailureText(error, limit: 1024)}',
+            ),
+          ),
           before = await _fixture('/metrics');
       expect(ready['loopback_only'], true);
       final object = '${ready['object']}',
@@ -482,9 +490,10 @@ Future<void> revealOpcuaAttribute(
   final viewport = tester.renderObject<RenderViewport>(
     find.descendant(of: body, matching: find.byType(Viewport)).first,
   );
+  final extent = viewport.scrollCacheExtent;
   final cache =
-      (viewport.cacheExtent ?? RenderAbstractViewport.defaultCacheExtent) *
-      (viewport.cacheExtentStyle == CacheExtentStyle.viewport
+      extent.value *
+      (extent.style == CacheExtentStyle.viewport
           ? position.viewportDimension
           : 1);
   // Adjacent viewport-plus-cache windows overlap, so even a short card cannot

@@ -12,8 +12,26 @@ env:
   FLUTTER_SUPPRESS_ANALYTICS: 'true'
   IOTOOLS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 jobs:
+  changes:
+    name: Select cross-platform dependency changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.paths.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.IOTOOLS_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select dependency and SDK scope
+        id: paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/ci/changed_paths.py platforms "$BASE_SHA" "$IOTOOLS_SHA"
   native:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    needs: changes
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate') || needs.changes.outputs.relevant == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -41,11 +59,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Linux build dependencies
@@ -69,8 +87,8 @@ jobs:
           & scripts/flutter-platforms/verify-windows-release.ps1 -ValidateHelpers
       - name: Install pinned official Flutter
         run: |
-          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          git clone --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - name: Native core and real C ABI
         run: |
@@ -79,7 +97,7 @@ jobs:
         run: |
           python3 cmd/iotools-native/testdata/check_abi.py "$IOTOOLS_NATIVE_LIBRARY"
           cd mobile
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter analyze
           flutter test --concurrency=1 --dart-define="IOTOOLS_NATIVE_TEST_LIBRARY=$IOTOOLS_NATIVE_LIBRARY"
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
@@ -136,7 +154,7 @@ jobs:
         run: |
           $zip = Get-Item "platform-dist/iotools-flutter-windows-amd64-$env:IOTOOLS_SHA.zip"
           & scripts/flutter-platforms/verify-windows-release.ps1 -Archive $zip.FullName
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-${{ env.IOTOOLS_SHA }}
           path: |
@@ -151,7 +169,7 @@ jobs:
           suffix=''
           if test '${{ matrix.target }}' = windows; then suffix=.exe; fi
           python3 scripts/flutter-platforms/verify-web-gateway.py "platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}/iotools-web$suffix"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iotools-flutter-web-${{ matrix.target }}-${{ matrix.arch }}-${{ env.IOTOOLS_SHA }}
           path: |
@@ -159,7 +177,7 @@ jobs:
             platform-dist/web-${{ matrix.target }}-${{ matrix.arch }}-manifest.json
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: iotools-flutter-${{ matrix.target }}-${{ matrix.arch }}-evidence-${{ env.IOTOOLS_SHA }}
@@ -170,29 +188,30 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
   web-contract:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    needs: changes
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate') || needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
       - name: Install pinned Flutter
         run: |
-          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          git clone --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - name: Real browser contracts and offline web compilation
         working-directory: mobile
         run: |
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter test --platform chrome test/platform/gateway_test.dart test/platform/gateway_browser_files_test.dart --concurrency=1
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
           flutter build web --release --csp --no-web-resources-cdn --pwa-strategy=none --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
@@ -203,7 +222,7 @@ jobs:
           python3 scripts/flutter-platforms/verify-web-gateway.py platform-dist/web-linux-amd64/iotools-web
           npm install --prefix scripts/flutter-platforms --no-save --package-lock=false playwright@1.63.0
           node scripts/flutter-platforms/verify-web-browser.js platform-dist/web-linux-amd64/iotools-web
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: iotools-flutter-web-browser-evidence-${{ env.IOTOOLS_SHA }}
@@ -211,26 +230,27 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   ios:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    needs: changes
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate') || needs.changes.outputs.relevant == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Install pinned Flutter
         run: |
-          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          git clone --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - name: Prepare dependencies and original icon
         working-directory: mobile
         run: |
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
       - name: Prepare iOS workspace for read-only destination discovery
         working-directory: mobile
@@ -250,7 +270,7 @@ jobs:
           flutter build ios --simulator --debug --no-codesign --dart-define="IOTOOLS_SHA=$IOTOOLS_SHA"
           cd ..
           python3 scripts/flutter-platforms/verify-ios.py simulator-compiled
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iotools-flutter-ios-simulator-compiled-${{ env.IOTOOLS_SHA }}
           path: platform-dist/ios-simulator-compiled-*
@@ -258,7 +278,7 @@ jobs:
           retention-days: 14
       - name: Required real iOS host XCTest acceptance
         run: python3 scripts/flutter-platforms/verify-ios.py simulator
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iotools-flutter-ios-simulator-verified-${{ env.IOTOOLS_SHA }}
           path: |
@@ -267,7 +287,7 @@ jobs:
             platform-dist/ios-simulator-README.zh-CN.txt
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: iotools-flutter-ios-evidence-${{ env.IOTOOLS_SHA }}
@@ -275,26 +295,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
   ios-device:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    needs: changes
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-candidate') || needs.changes.outputs.relevant == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.IOTOOLS_SHA }}
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Install pinned Flutter
         run: |
-          git clone --depth 1 --branch 3.35.7 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = adc901062556672b4138e18a4dc62a4be8f4b3c2
+          git clone --depth 1 --branch 3.44.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 6b182d2c7585eba26d4edce0f97630effd256c33
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
       - name: Prepare device dependencies and original icon
         working-directory: mobile
         run: |
-          flutter pub get
+          flutter pub get --enforce-lockfile
           flutter test test/platform/icon_assets_test.dart --concurrency=1 --dart-define=IOTOOLS_GENERATE_PLATFORM_ICONS=true
       - name: Compile unsigned iOS device application and verify its scope
         run: |
@@ -303,13 +324,13 @@ jobs:
           bash scripts/flutter-platforms/build-native.sh ios-device arm64
           python3 scripts/flutter-platforms/prepare-ios-device-release.py
           python3 scripts/flutter-platforms/verify-ios.py device
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: iotools-flutter-ios-device-unsigned-${{ env.IOTOOLS_SHA }}
           path: platform-dist/ios-device-*
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: iotools-flutter-ios-device-evidence-${{ env.IOTOOLS_SHA }}

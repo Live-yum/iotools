@@ -51,7 +51,7 @@ func (u *UI) httpOverrideForm() {
 			form.SetTitle(" " + display(err.Error()) + " ")
 			return
 		}
-		collection, request, profile, err := engine.ApplyHTTPOverrides(u.collection, original, u.profile, options)
+		collection, request, profile, err := engine.ApplyHTTPOverrides(explicitProfileCollection(u.collection, u.profile), original, u.profile, options)
 		if err != nil {
 			form.SetTitle(" " + display(err.Error()) + " ")
 			return

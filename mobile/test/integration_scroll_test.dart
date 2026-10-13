@@ -5,6 +5,83 @@ import '../integration_test/kafka_management_test.dart' as kafka;
 
 void main() {
   testWidgets(
+    'Kafka advanced panel is centered clear of an overlapping viewport edge',
+    (tester) async {
+      WidgetController.hitTestWarningShouldBeFatal = true;
+      addTearDown(() => WidgetController.hitTestWarningShouldBeFatal = false);
+      await tester.binding.setSurfaceSize(const Size(432, 752));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      var expanded = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 1200),
+                      ExpansionTile(
+                        title: const Text('连接、安全与高级参数'),
+                        onExpansionChanged: (value) => expanded = value,
+                        children: const [Text('确认目标 Subject')],
+                      ),
+                      const SizedBox(height: 900),
+                    ],
+                  ),
+                ),
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 100,
+                  child: ColoredBox(color: Colors.black),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      final panel = find.text('连接、安全与高级参数');
+      // The old ensureVisible alignment moves the title under the overlay.
+      await tester.ensureVisible(panel);
+      await tester.pump();
+      expect(panel.hitTestable(), findsNothing);
+      await kafka.tap(tester, panel);
+      expect(expanded, isTrue);
+      expect(panel.hitTestable(), findsOneWidget);
+    },
+  );
+  testWidgets(
+    'Kafka entry reopens the real IME connection and finishes editing',
+    (tester) async {
+      final controller = TextEditingController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TextField(
+              key: const ValueKey('param_confirm_subject'),
+              controller: controller,
+            ),
+          ),
+        ),
+      );
+      tester.testTextInput.unregister();
+      try {
+        await kafka.enter(tester, 'param_confirm_subject', 'fixture-schema');
+        expect(controller.text, 'fixture-schema');
+        await kafka.enter(tester, 'param_confirm_subject', 'second-schema');
+        expect(controller.text, 'second-schema');
+        final editable = tester.widget<EditableText>(find.byType(EditableText));
+        expect(editable.focusNode.hasFocus, isFalse);
+      } finally {
+        tester.testTextInput.register();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      }
+    },
+  );
+  testWidgets(
     'workflow taps reveal controls below phone viewport before hit testing',
     (tester) async {
       WidgetController.hitTestWarningShouldBeFatal = true;
