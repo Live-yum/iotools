@@ -71,6 +71,9 @@ func (w *uaWorkspace) key(pane int, e *tcell.EventKey) *tcell.EventKey {
 		case '1', '2', '3', '4':
 			w.focusPane(int(e.Rune() - '1'))
 			return nil
+		case 'b', 'B':
+			w.showScan()
+			return nil
 		case 'r':
 			if !w.loading {
 				w.refresh()

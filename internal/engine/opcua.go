@@ -28,9 +28,9 @@ import (
 // validates the advertised certificate before any identity token is transmitted.
 func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 	switch r.Action {
-	case "node-path", "browse-path", "method-arguments", "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe":
+	case "node-path", "browse-path", "method-arguments", "discover", "scan", "browse", "references", "attributes", "read", "write", "call", "subscribe":
 	default:
-		return unsupported(r, "discover", "browse", "references", "attributes", "read", "write", "call", "subscribe")
+		return unsupported(r, "discover", "scan", "browse", "references", "attributes", "read", "write", "call", "subscribe")
 	}
 	if err := validateOPCUAOperation(r); err != nil {
 		return err
@@ -84,6 +84,11 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 		return fmt.Errorf("OPC UA connection failed: %w", err)
 	}
 	send(emit, "connected", map[string]any{"security_policy": ep.SecurityPolicyURI, "security_mode": ep.SecurityMode.String()})
+	if (r.Action == "read" || r.Action == "subscribe") && r.String("expected_namespace_fingerprint", "") != "" {
+		if err := opcuaVerifyNamespace(ctx, c, r.String("expected_namespace_fingerprint", "")); err != nil {
+			return err
+		}
+	}
 	switch r.Action {
 	case "node-path":
 		return opcuaNodeBrowsePath(ctx, c, r, emit)
@@ -97,6 +102,8 @@ func runOPCUASession(ctx context.Context, r config.Request, emit Emit) error {
 		return opcuaBrowse(ctx, c, r, emit)
 	case "method-arguments":
 		return opcuaMethodArguments(ctx, c, r, emit)
+	case "scan":
+		return opcuaScan(ctx, c, r, emit)
 	case "browse", "references":
 		return opcuaBrowse(ctx, c, r, emit)
 	case "read", "attributes":
@@ -321,8 +328,15 @@ func opcuaNodes(r config.Request) ([]*ua.NodeID, error) {
 	if len(names) == 0 {
 		names = []string{r.String("node_id", "")}
 	}
-	if len(names) > 256 {
-		return nil, fmt.Errorf("at most 256 node IDs per operation")
+	limit := 256
+	if r.Action == "read" {
+		limit = 10000
+	}
+	if r.Action == "subscribe" {
+		limit = 1000
+	}
+	if len(names) > limit {
+		return nil, fmt.Errorf("at most %d node IDs for %s", limit, r.Action)
 	}
 	out := make([]*ua.NodeID, len(names))
 	for i, n := range names {
@@ -459,17 +473,8 @@ func opcuaSubscribe(ctx context.Context, c *opcua.Client, r config.Request, emit
 	for i, n := range nodes {
 		items[i] = opcua.NewMonitoredItemCreateRequestWithDefaults(n, ua.AttributeIDValue, uint32(i+1))
 	}
-	result, err := sub.Monitor(ctx, ua.TimestampsToReturnBoth, items...)
-	if err != nil {
+	if err := opcuaMonitorBatches(ctx, sub, items); err != nil {
 		return err
-	}
-	if result == nil || len(result.Results) != len(items) {
-		return fmt.Errorf("incomplete monitor response")
-	}
-	for _, item := range result.Results {
-		if item == nil || item.StatusCode != ua.StatusOK {
-			return fmt.Errorf("server rejected monitored item")
-		}
 	}
 	count := 0
 	for {

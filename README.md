@@ -56,7 +56,7 @@ chmod +x iotools
 - MQTT：主题树、JSON/MessagePack、h历史、g图表、/搜索、o/O展开折叠；[详细操作](docs/mqtt-history.md)
 - Modbus：寄存器表/矩阵（m切换，+/-列数）、固定项、标签、趋势、快照差值
 - OPC UA：Enter下钻，a属性，f引用，r读取，s订阅，c方法表单；属性表e编辑，退格返回
-- Ctrl+U / OPC UA结果D：[浏览/属性/引用/订阅四窗](docs/opcua-workspace.md)，窄屏1–4分页
+- Ctrl+U / OPC UA结果D：[浏览/属性/引用/订阅四窗](docs/opcua-workspace.md)，窄屏1–4分页；四窗 B 进入[节点扫描、批量读值与导出记录](docs/opcua-scan.md)
 
 详细操作见 [终端交互说明](docs/tui.md)。固定项和标签可以保存回当前请求；S 保存快照，O 载入对比。
 这些操作不会擅自修改服务器数据。

@@ -1,0 +1,21 @@
+# 本机测试服务器示例。仅在你有权访问的服务器上执行。
+# None/allow_insecure 仅用于无凭据的回环测试，生产请使用 docs/opcua.md 的安全配置。
+version: 1
+profiles:
+  local:
+    ua_endpoint: opc.tcp://127.0.0.1:4840
+requests:
+  - id: ua-scan
+    name: OPC UA · 递归扫描本机节点树
+    protocol: opcua
+    action: scan
+    endpoint: ${ua_endpoint}
+    timeout: 60s
+    params:
+      node_id: i=85
+      max_nodes: 10000
+      max_depth: 0 # 0 表示不限深度
+      max_references: 1000
+      security_policy: None
+      security_mode: None
+      allow_insecure: true

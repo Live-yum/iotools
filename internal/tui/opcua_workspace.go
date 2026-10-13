@@ -14,6 +14,7 @@ import (
 )
 
 type uaWorkspace struct {
+	scan                                  *uaScanWorkspace
 	owner                                 *UI
 	base                                  config.Request
 	node                                  string
@@ -78,7 +79,7 @@ func (u *UI) showUAWorkspaceFor(base config.Request) {
 	node := base.String("node_id", "i=85")
 	w := &uaWorkspace{owner: u, base: base, node: node, run: engine.Run, status: "尚未读取 · r明确刷新", layoutFocus: -1}
 	w.header = tview.NewTextView().SetWrap(true)
-	w.footer = tview.NewTextView().SetText("Tab/1–4切换 · r刷新 · Enter浏览/详情 · 退格返回 · s订阅 S取消选中\nCtrl+Y复制 · g节点 · e属性编辑 · c方法 · F8停止读取/订阅 · Esc关闭但订阅继续")
+	w.footer = tview.NewTextView().SetText("Tab/1–4切换 · r刷新 · B全树扫描/批量读值/导出 · Enter详情 · s订阅 S取消\nCtrl+Y复制 · g节点 · e属性编辑 · c方法 · F8停止读取/订阅 · Esc关闭但订阅继续")
 	w.browse = tview.NewTreeView()
 	w.browse.SetBorder(true).SetTitle(" 1 浏览 · Enter下钻 ")
 	w.attributes = tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
@@ -205,6 +206,9 @@ func (w *uaWorkspace) close() {
 		return
 	}
 	w.closed = true
+	if w.scan != nil {
+		w.scan.close()
+	}
 	w.generation++
 	if w.cancel != nil {
 		w.cancel()
