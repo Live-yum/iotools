@@ -30,18 +30,18 @@ var protocolActions = map[string]string{
 	"mqtt":   "subscribe read-one publish preview-retained clean-retained",
 	"kafka":  "topics brokers groups group lag offsets topic-config consume produce create-topic delete-topic alter-topic expand-partitions delete-group schemas schema schema-versions register-schema delete-subject purge-subject delete-schema connectors connector update-connector pause-connector resume-connector delete-connector",
 	"modbus": "read-holding read-input read-coils read-discrete write-register write-registers write-coil write-coils write-typed read-write-registers read-device-id scan-units sweep-holding sweep-input sweep-coils sweep-discrete search-holding read-raw write-raw",
-	"opcua":  "discover browse references attributes read write call subscribe browse-path node-path method-arguments",
+	"opcua":  "discover browse scan references attributes read write call subscribe browse-path node-path method-arguments",
 }
 var protocolFields = map[string]string{
 	"http":   "headers query body json form_urlencoded form_multipart body_file body_stream response_file max_upload_bytes max_response_bytes query_filter bearer username password ca_file cert_file key_file follow_redirects max_redirects redirect_origins ignore_certificate_hosts persist crypto request_crypto request_transforms response_transform",
 	"mqtt":   "topic topics qos payload payload_encoding retain client_id username password ca_file cert_file key_file limit ignore_retained auto_reconnect reconnect_interval_ms scan_duration_ms max_topics confirm_topics confirm_token",
 	"kafka":  "topic group groups partition consume_partitions offset start_time limit filter key_filter key_prefix value_prefix key value partitions replication_factor configs tls ca_file cert_file key_file sasl username password subject version confirm_subject connector json headers body bearer key_format value_format key_subject value_subject key_version value_version schema_registry_url schema_registry_username schema_registry_password schema_registry_bearer schema_registry_ca_file schema_registry_cert_file schema_registry_key_file",
 	"modbus": "unit address count value values value_type word_order samples interval_ms read_address read_count units end_address match_value pdu_hex read_code object_id scan_type sweep_cycles sweep_recover stop_first connect_timeout_ms request_timeout_ms request_gap_ms baud data_bits parity stop_bits pins labels rules columns keymap matrix_columns write_log_file write_log_previous next_config",
-	"opcua":  "node_id node_ids browse_path object_id method_id value value_type arguments attribute attributes direction reference_type include_subtypes max_references max_events interval_ms auto_reconnect reconnect_interval_ms security_policy security_mode server_cert_sha256 allow_insecure allow_legacy_security auth username password ca_file cert_file key_file auth_cert_file auth_key_file",
+	"opcua":  "node_id node_ids browse_path object_id method_id value value_type arguments attribute attributes direction reference_type include_subtypes max_references max_depth max_nodes max_events interval_ms auto_reconnect reconnect_interval_ms security_policy security_mode server_cert_sha256 allow_insecure allow_legacy_security auth username password ca_file cert_file key_file auth_cert_file auth_key_file",
 }
 var jsonFields = "headers query json form_urlencoded form_multipart crypto request_transforms response_transform topics confirm_topics groups consume_partitions configs values units pins labels rules columns keymap write_log_previous node_ids arguments attributes redirect_origins ignore_certificate_hosts"
 var booleanFields = "retain ignore_retained auto_reconnect tls follow_redirects persist sweep_recover stop_first include_subtypes allow_insecure allow_legacy_security"
-var numberFields = "qos limit reconnect_interval_ms scan_duration_ms max_topics partition partitions replication_factor unit address count samples interval_ms read_address read_count end_address match_value read_code object_id sweep_cycles connect_timeout_ms request_timeout_ms request_gap_ms baud data_bits stop_bits matrix_columns max_references max_events max_redirects max_upload_bytes max_response_bytes"
+var numberFields = "qos limit reconnect_interval_ms scan_duration_ms max_topics partition partitions replication_factor unit address count samples interval_ms read_address read_count end_address match_value read_code object_id sweep_cycles connect_timeout_ms request_timeout_ms request_gap_ms baud data_bits stop_bits matrix_columns max_references max_depth max_nodes max_events max_redirects max_upload_bytes max_response_bytes"
 
 func containsWord(list, key string) bool { return strings.Contains(" "+list+" ", " "+key+" ") }
 func knownAction(protocol, action string) bool {
@@ -92,6 +92,12 @@ func Catalog() map[string]any {
 			}
 			if key == "value_type" {
 				hint = "使用协议的确切类型名称，例如 u16 / f32 或 UInt16 / Double"
+			}
+			if id == "opcua" && key == "max_depth" {
+				hint = "0 表示不限深度；范围 0..256"
+			}
+			if id == "opcua" && key == "max_nodes" {
+				hint = "扫描节点数量上限；范围 1..100000"
 			}
 			if key == "keymap" {
 				hint = "仅保留桌面配置兼容性，Android 不提供桌面功能键操作"
@@ -189,8 +195,12 @@ func actionDefaults(protocol, action string) map[string]any {
 		if action != "discover" {
 			p["node_id"] = "i=85"
 		}
-		if action == "browse" || action == "references" {
+		if action == "browse" || action == "references" || action == "scan" {
 			p["max_references"] = 1000
+		}
+		if action == "scan" {
+			p["max_depth"] = 0
+			p["max_nodes"] = 10000
 		}
 		if action == "subscribe" {
 			p["max_events"] = 1000

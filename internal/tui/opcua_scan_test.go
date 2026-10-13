@@ -525,9 +525,14 @@ func TestUAScanRecordErrorJoinedWithCancelStaysVisible(t *testing.T) {
 	w.key(0, tcell.NewEventKey(tcell.KeyRune, 'a', 0))
 	startScanTestApp(t, u)
 	sink := &uaScanTestSink{}
+	sink.afterWrite = func() {
+		if sink.writes == 2 { // session_start and the first notification succeed.
+			sink.writeErr = errors.New("simulated disk write failure")
+		}
+	}
 	u.App.QueueUpdateDraw(func() {
 		w.newRecorder = func(path, format, endpoint string) (*uaScanRecorder, error) {
-			return newUAScanRecorderTo(path, format, endpoint, sink, 2, uaScanFileLimit)
+			return newUAScanRecorderTo(path, format, endpoint, sink, 100, uaScanFileLimit)
 		}
 		w.run = func(ctx context.Context, r config.Request, _ bool, emit engine.Emit) error {
 			for i := 0; i < 2; i++ {
@@ -542,7 +547,7 @@ func TestUAScanRecordErrorJoinedWithCancelStaysVisible(t *testing.T) {
 	})
 	waitScanIdle(t, u, w)
 	u.App.QueueUpdateDraw(func() {
-		if !strings.Contains(w.status, "record limit") || !strings.Contains(w.status, "失败") {
+		if !strings.Contains(w.status, "simulated disk write failure") || !strings.Contains(w.status, "失败") {
 			t.Errorf("record error swallowed by cancellation: %s", w.status)
 		}
 		if w.received != 1 {

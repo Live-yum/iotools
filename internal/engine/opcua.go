@@ -367,7 +367,7 @@ func opcuaData(node string, v *ua.DataValue) map[string]any {
 			typeName += "[]"
 		}
 	}
-	return map[string]any{"value_type_name": typeName, "value_is_array": isArray, "node_id": node, "value": value, "value_type": typ, "status": v.Status.Error(), "source_timestamp": v.SourceTimestamp, "server_timestamp": v.ServerTimestamp}
+	return map[string]any{"has_value": v.Value != nil, "value_type_name": typeName, "value_is_array": isArray, "node_id": node, "value": value, "value_type": typ, "status": v.Status.Error(), "source_timestamp": v.SourceTimestamp, "server_timestamp": v.ServerTimestamp}
 }
 
 type opcuaBrowser interface {

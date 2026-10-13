@@ -215,6 +215,11 @@ func (w *uaScanWorkspace) subscribeSelected(path, format string) {
 			}
 		}
 		var recordErr error
+		recordLimitReached := false
+		stopAtRecordLimit := func() {
+			recordLimitReached = true
+			cancel()
+		}
 		writeRecord := func(row uaScanRow) bool {
 			if recorder == nil {
 				return true
@@ -222,21 +227,31 @@ func (w *uaScanWorkspace) subscribeSelected(path, format string) {
 			if recordErr != nil {
 				return false
 			}
+			// Lifecycle events also consume rows. Keep the final row available for
+			// session_end instead of poisoning the writer with its hard row limit.
+			terminal := row.Kind == "session_end"
+			if !terminal && recorder.Count() >= recorder.maxRows-1 {
+				stopAtRecordLimit()
+				return false
+			}
 			if recordErr = recorder.Write(row); recordErr != nil {
 				cancel()
 				return false
 			}
 			emit(engine.Event{Kind: "record-count", Data: recorder.Count()})
+			if !terminal && recorder.Count() >= recorder.maxRows-1 {
+				stopAtRecordLimit()
+			}
 			return true
 		}
 		lifecycle := func(kind, status string) bool {
 			return writeRecord(uaScanRow{Kind: kind, Status: status, ObservedAt: time.Now().UTC()})
 		}
-		if !lifecycle("session_start", "记录开始；NamespaceArray指纹="+r.String("expected_namespace_fingerprint", "")+"；生命周期行HasValue=false；缺少session_end表示文件可能不完整") {
+		if !lifecycle("session_start", "记录开始；NamespaceArray指纹="+r.String("expected_namespace_fingerprint", "")+"；生命周期行HasValue=false；缺少session_end表示文件可能不完整") && recordErr != nil {
 			return path, errors.Join(recordErr, recorder.Close())
 		}
 		count := 0
-		runErr := w.run(ctx, r, false, func(event engine.Event) {
+		handleEvent := func(event engine.Event) {
 			if ctx.Err() != nil || recordErr != nil {
 				return
 			}
@@ -269,19 +284,34 @@ func (w *uaScanWorkspace) subscribeSelected(path, format string) {
 				}
 			}
 			emit(event)
-		})
+		}
+		runErr := ctx.Err()
+		if runErr == nil {
+			runErr = w.run(ctx, r, false, handleEvent)
+		}
+		// This cancellation is an intentional, complete stop. Mixed cancellation
+		// and engine/I/O failures must still be reported, including close failures.
+		if recordLimitReached && uaScanOnlyCancelled(runErr) {
+			runErr = nil
+		}
 		note := fmt.Sprintf("收到%d条通知；断线后请重新扫描再订阅", count)
 		if recorder != nil {
 			terminal := "Good: 订阅结束"
+			if recordLimitReached {
+				terminal = fmt.Sprintf("Good: 已达%d行记录上限（含生命周期），订阅正常结束", recorder.maxRows)
+			}
 			if runErr != nil {
 				terminal = "订阅停止/断流: " + runErr.Error()
 			}
-			if ctx.Err() != nil && runErr == nil {
+			if ctx.Err() != nil && runErr == nil && !recordLimitReached {
 				terminal = "订阅已取消: " + ctx.Err().Error()
 			}
 			lifecycle("session_end", terminal)
 			recordErr = errors.Join(recordErr, recorder.Close())
 			note = fmt.Sprintf("%s · 已写%d行（含生命周期）/%d字节；断线后请重新扫描再订阅", path, recorder.Count(), recorder.Bytes())
+			if recordLimitReached {
+				note += fmt.Sprintf(" · 已达%d行记录上限，已停止", recorder.maxRows)
+			}
 		}
 		if count >= uaScanRecordLimit {
 			note += " · 已达10万条通知上限，已停止"

@@ -41,6 +41,8 @@ type uaScanWorkspace struct {
 	run                                          func(context.Context, config.Request, bool, engine.Emit) error
 	newRecorder                                  func(string, string, string) (*uaScanRecorder, error)
 	namespaceFingerprint                         string
+	oneClickPending                              bool
+	oneClickReport                               *uaOneClickReport
 }
 type uaScanNode struct {
 	row      uaScanRow
@@ -75,11 +77,15 @@ func (p *uaWorkspace) showScan() {
 	}
 	w := &uaScanWorkspace{parent: p, base: copyRequest(p.base), rootNode: p.node, maxDepth: 0, maxNodes: 10000, maxReferences: 1000, readBatch: 100, run: p.run, layoutFocus: -1, status: "尚未连接 · r配置并显式开始扫描", reason: "尚未扫描"}
 	w.newRecorder = newUAScanRecorder
+	w.maxDepth = w.base.Int("max_depth", 0)
+	w.maxNodes = w.base.Int("max_nodes", 10000)
+	w.maxReferences = w.base.Int("max_references", 1000)
+	w.readBatch = w.base.Int("read_batch_size", 100)
 	if root, err := ua.ParseNodeID(w.rootNode); err == nil {
 		w.rootNode = root.String()
 	}
 	w.header = tview.NewTextView().SetWrap(false)
-	w.footer = tview.NewTextView().SetWrap(false).SetText("Tab/1–2切换 · r配置/扫描 · 空格选择 · a全选已发现 · n清空\nv批量读值 · e导出CSV/JSON · s订阅(不写盘)\nl记录CSV/JSONL · S/F8停止 · i完整状态/限制\nEnter节点详情 · Esc关闭并停止 · Ctrl+C退出")
+	w.footer = tview.NewTextView().SetWrap(false).SetText("Tab/1–2切换 · r配置/扫描 · 空格选择 · a全选已发现 · n清空\nv批量读值 · e导出CSV/JSON · x当前/X集合一键导出\ns订阅 l记录CSV/JSONL · S/F8停止 · i完整状态\nEnter节点详情 · Esc关闭并停止 · Ctrl+C退出")
 	w.tree = tview.NewTreeView()
 	w.tree.SetBorder(true).SetTitle(" 1 地址空间树 · 空格选择变量 ")
 	w.table = tview.NewTable().SetSelectable(true, false).SetFixed(1, 0)
@@ -112,6 +118,7 @@ func (w *uaScanWorkspace) reset() {
 	w.received, w.recorded = 0, 0
 	w.complete = false
 	w.namespaceFingerprint = ""
+	w.oneClickReport = nil
 	w.reason = "尚未完成扫描"
 	w.tree.SetRoot(tview.NewTreeNode(display(w.rootNode)).SetReference(w.rootNode)).SetCurrentNode(nil)
 	w.table.Clear()
@@ -174,7 +181,7 @@ func (w *uaScanWorkspace) close() {
 	if w.cancel != nil {
 		w.cancel()
 	}
-	for _, name := range []string{"ua-scan", "ua-scan-form", "ua-scan-detail"} {
+	for _, name := range []string{"ua-scan", "ua-scan-form", "ua-scan-detail", "ua-oneclick-form", "ua-oneclick-confirm", "ua-oneclick-result"} {
 		w.owner().pages.RemovePage(name)
 	}
 	if w.parent.scan == w {
@@ -248,8 +255,11 @@ func (w *uaScanWorkspace) key(pane int, e *tcell.EventKey) *tcell.EventKey {
 		}
 		w.renderHeader()
 		return nil
+	case 'x', 'X':
+		w.oneClickForm(e.Rune() == 'X')
+		return nil
 	case 'i':
-		w.statusDetail()
+		w.oneClickResult()
 		return nil
 	case 'v':
 		w.readSelected()
@@ -458,7 +468,14 @@ func uaScanValueRow(row uaScanRow, event engine.Event) uaScanRow {
 	if !ok {
 		return row
 	}
-	row.HasValue = uaScanString(m, "status") != "Unavailable"
+	// A bad DataValue may have no Variant. Conversely a present UA Null
+	// Variant has a nil payload, so payload != nil is not a presence test.
+	row.HasValue, ok = m["has_value"].(bool)
+	if !ok {
+		// Older/injected engine events use an explicit wire type when a
+		// Variant exists, including TypeIDNull (0).
+		row.HasValue = m["value_type"] != nil
+	}
 	row.Error = uaScanString(m, "error")
 	row.Value = m["value"]
 	row.ValueType = m["value_type"]
