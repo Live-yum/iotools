@@ -19,7 +19,7 @@ dependencies:
   # See docs/android-dependency-isolation.md. This is not a proven crash fix.
   path_provider_android: 2.2.23
   path: ^1.9.1
-  archive: ^4.0.7
+  archive: ^4.5.2
   http: ^1.6.0
   web: ^1.1.1
 dev_dependencies:
