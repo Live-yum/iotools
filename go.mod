@@ -12,7 +12,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/rivo/tview v0.42.0
-	github.com/theory/jsonpath v0.12.1
+	github.com/theory/jsonpath v0.12.2
 	github.com/twmb/franz-go v1.22.1
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260927204940-b5a45ccfdf7e
